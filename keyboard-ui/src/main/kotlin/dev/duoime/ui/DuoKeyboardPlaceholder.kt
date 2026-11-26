@@ -1,40 +1,37 @@
-/*
- * SPDX-License-Identifier: BSD-3-Clause
- * Copyright (c) 2026 DuoIME Contributors
- */
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 DuoIME Contributors
 package dev.duoime.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import dev.duoime.ui.theme.LocalDuoColors
 
 /**
- * Bootstrap composable placeholder for `:keyboard-ui`.
+ * Lightweight pure-Foundation status banner composable inside `:keyboard-ui` (zero Material 3).
  */
 @Composable
 fun DuoKeyboardPlaceholder(statusLabel: String, modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceVariant
+    val colors = LocalDuoColors.current
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(colors.barBackground)
+            .padding(16.dp),
+        contentAlignment = Alignment.Center
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = statusLabel,
-                style = MaterialTheme.typography.bodyMedium
-            )
-        }
+        BasicText(
+            text = statusLabel,
+            style = TextStyle(color = colors.keyText, fontSize = 14.sp)
+        )
     }
 }
 

@@ -4,8 +4,35 @@ package dev.duoime.core.engine
 
 import dev.duoime.core.layout.KeyCodes
 import dev.duoime.core.model.EngineSnapshot
+import dev.duoime.core.model.InputMode
 import dev.duoime.core.model.KeyProcessResult
 import kotlinx.coroutines.flow.StateFlow
+
+/**
+ * Standard engine option keys shared across `:engine-lite` (M1) and `:engine-rime` (M2).
+ */
+object EngineOptions {
+    const val TRADITIONALIZATION: String = "traditionalization"
+    const val ASCII_MODE: String = "ascii_mode"
+    const val INCOGNITO: String = "incognito"
+    const val DISABLE_USER_DICT: String = "disable_user_dict"
+}
+
+/**
+ * Default schema identifiers shared across engine backends.
+ */
+object EngineSchemas {
+    const val PINYIN_26: String = "pinyin_26"
+    const val T9_PINYIN: String = "t9_pinyin"
+    const val DOUBLE_PINYIN_FLYPY: String = "double_pinyin_flypy"
+    const val ENGLISH: String = "english"
+
+    val DEFAULT_MODE_MAP: Map<InputMode, String> = mapOf(
+        InputMode.PINYIN_26 to PINYIN_26,
+        InputMode.PINYIN_T9 to T9_PINYIN,
+        InputMode.ENGLISH to ENGLISH
+    )
+}
 
 /**
  * Engine-facing key input event using platform-neutral keysym and modifier mask.

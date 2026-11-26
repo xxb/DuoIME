@@ -3,6 +3,8 @@
 package dev.duoime.engine.lite
 
 import dev.duoime.core.engine.EngineKeyEvent
+import dev.duoime.core.engine.EngineOptions
+import dev.duoime.core.engine.EngineSchemas
 import dev.duoime.core.engine.InputEngine
 import dev.duoime.core.layout.KeyCodes
 import dev.duoime.core.model.CandidateItem
@@ -225,15 +227,15 @@ class LiteInputEngine(
         private const val PASSTHROUGH_MODIFIER_MASK: Int =
             KeyCodes.MASK_CONTROL or KeyCodes.MASK_ALT or KeyCodes.MASK_SUPER
 
-        const val SCHEMA_PINYIN_26: String = "pinyin_26"
-        const val SCHEMA_T9_PINYIN: String = "t9_pinyin"
-        const val SCHEMA_XIAOHE: String = "double_pinyin_flypy"
-        const val SCHEMA_ENGLISH: String = "english"
+        const val SCHEMA_PINYIN_26: String = EngineSchemas.PINYIN_26
+        const val SCHEMA_T9_PINYIN: String = EngineSchemas.T9_PINYIN
+        const val SCHEMA_XIAOHE: String = EngineSchemas.DOUBLE_PINYIN_FLYPY
+        const val SCHEMA_ENGLISH: String = EngineSchemas.ENGLISH
 
-        const val OPTION_TRADITIONALIZATION: String = "traditionalization"
-        const val OPTION_ASCII_MODE: String = "ascii_mode"
-        const val OPTION_INCOGNITO: String = "incognito"
-        const val OPTION_DISABLE_USER_DICT: String = "disable_user_dict"
+        const val OPTION_TRADITIONALIZATION: String = EngineOptions.TRADITIONALIZATION
+        const val OPTION_ASCII_MODE: String = EngineOptions.ASCII_MODE
+        const val OPTION_INCOGNITO: String = EngineOptions.INCOGNITO
+        const val OPTION_DISABLE_USER_DICT: String = EngineOptions.DISABLE_USER_DICT
         const val OPTION_COMPACT_SINGLE_ROW_PAGING: String = "compact_single_row_paging"
 
         fun canonicalSchemaId(id: String): String? = when (id.trim().lowercase()) {
