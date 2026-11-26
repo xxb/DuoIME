@@ -19,6 +19,8 @@ jobs:
     name: Hygiene, Build & Artifact Gates
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      PII_COMMIT_RANGE: ${{ github.event_name == 'pull_request' && format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) || '' }}
     steps:
       - uses: actions/checkout@v4
         with:

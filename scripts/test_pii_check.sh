@@ -36,6 +36,7 @@ def run_pii(repo, extra_args=None, extra_env=None):
     env = os.environ.copy()
     env.pop("DUOIME_PII_DENYLIST_FILE", None)
     env.pop("PII_EXTRA_PATTERNS", None)
+    env.pop("PII_COMMIT_RANGE", None)
     if extra_env:
         env.update(extra_env)
     cmd = ["bash", str(pii_script)] + (extra_args or [])
@@ -128,7 +129,60 @@ subprocess.run(["git", "commit", "-m", "chore: bad email"], cwd=bad_author_repo,
 r_repo_email = run_pii(bad_author_repo, ["--repo"])
 assert r_repo_email.returncode == 1 and "commit_author_email" in (r_repo_email.stdout + r_repo_email.stderr)
 
-# 6. Extra denylist via PII_EXTRA_PATTERNS MUST FAIL and redact the pattern.
+# 6. GitHub web/merge committer & PII_COMMIT_RANGE regression tests.
+gh_web_committer = "noreply" + "@github.com"
+
+# 6a. GitHub web committer + valid noreply author PASSES --repo.
+gh_ok_repo = init_repo("gh_web_committer_ok")
+(gh_ok_repo / "ok.txt").write_text("clean\n", encoding="utf-8")
+subprocess.run(["git", "add", "ok.txt"], cwd=gh_ok_repo, check=True)
+commit_env_ok = os.environ.copy()
+commit_env_ok["GIT_COMMITTER_NAME"] = "GitHub"
+commit_env_ok["GIT_COMMITTER_EMAIL"] = gh_web_committer
+subprocess.run(["git", "commit", "-m", "chore: web merge"], cwd=gh_ok_repo, env=commit_env_ok, check=True, stdout=subprocess.DEVNULL)
+r_gh_ok = run_pii(gh_ok_repo, ["--repo"])
+assert r_gh_ok.returncode == 0, f"GitHub web committer with noreply author should pass:\n{r_gh_ok.stdout}\n{r_gh_ok.stderr}"
+
+# 6b. personal author + GitHub web committer FAILS --repo (author still strictly checked).
+gh_bad_author = init_repo("gh_web_committer_bad_author", email="person@" + "company.io")
+(gh_bad_author / "ok.txt").write_text("clean\n", encoding="utf-8")
+subprocess.run(["git", "add", "ok.txt"], cwd=gh_bad_author, check=True)
+subprocess.run(["git", "commit", "-m", "chore: bad author web merge"], cwd=gh_bad_author, env=commit_env_ok, check=True, stdout=subprocess.DEVNULL)
+r_gh_bad = run_pii(gh_bad_author, ["--repo"])
+combined_gh_bad = r_gh_bad.stdout + "\n" + r_gh_bad.stderr
+assert r_gh_bad.returncode == 1 and "commit_author_email" in combined_gh_bad
+assert "commit_committer_email" not in combined_gh_bad
+
+# 6c. GitHub web committer FAILS --staged (staged identity remains strictly *@users.noreply.github.com).
+gh_staged_repo = init_repo("gh_web_committer_staged")
+(gh_staged_repo / "ok.txt").write_text("clean\n", encoding="utf-8")
+subprocess.run(["git", "add", "ok.txt"], cwd=gh_staged_repo, check=True)
+r_gh_staged = run_pii(
+    gh_staged_repo,
+    ["--staged"],
+    extra_env={"GIT_COMMITTER_IDENT": f"GitHub <{gh_web_committer}> 0 +0000"},
+)
+assert r_gh_staged.returncode == 1 and "staged_committer_email" in (r_gh_staged.stdout + r_gh_staged.stderr)
+
+# 6d. PII_COMMIT_RANGE=base..head scopes commit scanning properly.
+range_repo = init_repo("commit_range_scope", email="legacy@" + "company.io")
+(range_repo / "base.txt").write_text("base\n", encoding="utf-8")
+subprocess.run(["git", "add", "base.txt"], cwd=range_repo, check=True)
+subprocess.run(["git", "commit", "-m", "chore: base"], cwd=range_repo, check=True, stdout=subprocess.DEVNULL)
+base_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=range_repo, check=True, stdout=subprocess.PIPE, text=True).stdout.strip()
+
+subprocess.run(["git", "config", "user.email", "123456+tester@users.noreply.github.com"], cwd=range_repo, check=True)
+(range_repo / "pr.txt").write_text("pr change\n", encoding="utf-8")
+subprocess.run(["git", "add", "pr.txt"], cwd=range_repo, check=True)
+subprocess.run(["git", "commit", "-m", "feat: clean pr commit"], cwd=range_repo, check=True, stdout=subprocess.DEVNULL)
+head_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=range_repo, check=True, stdout=subprocess.PIPE, text=True).stdout.strip()
+
+r_range_full = run_pii(range_repo, ["--repo"])
+assert r_range_full.returncode == 1, "Full repo scan should catch bad base commit"
+r_range_scoped = run_pii(range_repo, ["--repo"], extra_env={"PII_COMMIT_RANGE": f"{base_sha}..{head_sha}"})
+assert r_range_scoped.returncode == 0, f"Scoped PII_COMMIT_RANGE should pass:\n{r_range_scoped.stdout}\n{r_range_scoped.stderr}"
+
+# 7. Extra denylist via PII_EXTRA_PATTERNS MUST FAIL and redact the pattern.
 deny_repo = init_repo("extra_deny")
 secret_handle = "customSecretHostMarker99"
 (deny_repo / "note.txt").write_text(f"ref={secret_handle}\n", encoding="utf-8")

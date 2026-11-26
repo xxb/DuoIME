@@ -40,10 +40,17 @@ AAPT2_BIN=""
 SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 if [[ -n "$SDK_DIR" && -x "$SDK_DIR/build-tools/34.0.0/aapt2" ]]; then
     AAPT2_BIN="$SDK_DIR/build-tools/34.0.0/aapt2"
-elif command -v aapt2 >/dev/null 2>&1; then
+elif [[ -n "$SDK_DIR" && -d "$SDK_DIR/build-tools" ]]; then
+    AAPT2_CANDIDATE="$(find "$SDK_DIR/build-tools" -maxdepth 2 -type f -name aapt2 2>/dev/null | sort -V | tail -n 1 || true)"
+    if [[ -n "$AAPT2_CANDIDATE" && -x "$AAPT2_CANDIDATE" ]]; then
+        AAPT2_BIN="$AAPT2_CANDIDATE"
+    fi
+fi
+if [[ -z "$AAPT2_BIN" ]] && command -v aapt2 >/dev/null 2>&1; then
     AAPT2_BIN="$(command -v aapt2)"
-else
-    echo "ERROR: aapt2 binary not found in ANDROID_HOME/build-tools/34.0.0 or PATH" >&2
+fi
+if [[ -z "$AAPT2_BIN" ]]; then
+    echo "ERROR: aapt2 binary not found in ANDROID_HOME/build-tools or PATH" >&2
     exit 1
 fi
 

@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 MODE = "repo"
-COMMIT_RANGE = None
+COMMIT_RANGE = os.environ.get("PII_COMMIT_RANGE", "").strip() or None
 CHECK_COMMITS = True
 
 args = sys.argv[1:]
@@ -301,6 +301,9 @@ def check_staged_identity():
             add_finding("git-identity", 0, rule_id)
 
 
+GITHUB_WEB_COMMITTER = "noreply" + "@github.com"
+
+
 def check_commits():
     has_head = git_run("rev-parse", "--verify", "HEAD", check=False).returncode == 0
     if not has_head:
@@ -316,9 +319,11 @@ def check_commits():
         if len(parts) != 3:
             continue
         sha, ae, ce = parts
-        if not ae.strip().lower().endswith("@users.noreply.github.com"):
+        ae_lower = ae.strip().lower()
+        ce_lower = ce.strip().lower()
+        if not ae_lower.endswith("@users.noreply.github.com"):
             add_finding(f"commit:{sha}", 0, "commit_author_email")
-        if not ce.strip().lower().endswith("@users.noreply.github.com"):
+        if not (ce_lower.endswith("@users.noreply.github.com") or ce_lower == GITHUB_WEB_COMMITTER):
             add_finding(f"commit:{sha}", 0, "commit_committer_email")
 
     msg_out = git_run("log", "--format=%h%x1f%B%x1e", revspec, check=False)
