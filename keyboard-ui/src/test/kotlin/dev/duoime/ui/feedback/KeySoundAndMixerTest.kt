@@ -451,7 +451,19 @@ class KeySoundAndMixerTest {
     }
 
     @Test
-    fun `RingerModeGate fails closed when queryRingerMode throws on cold start and after invalidate`() {
+    fun `RingerModeGate fails closed when AudioManager is unavailable silent or query throws`() {
+        // Missing AudioManager resolves to RINGER_MODE_SILENT and fails closed (mute key sounds)
+        assertEquals(AudioManager.RINGER_MODE_SILENT, resolveRingerMode(null))
+        val unavailableGate = RingerModeGate(burstGapMs = 600L, maxStaleMs = 2_000L) {
+            resolveRingerMode(null)
+        }
+        assertFalse(unavailableGate.isSoundAllowed(nowMs = 1_000L))
+
+        val silentGate = RingerModeGate(burstGapMs = 600L, maxStaleMs = 2_000L) {
+            AudioManager.RINGER_MODE_SILENT
+        }
+        assertFalse(silentGate.isSoundAllowed(nowMs = 1_000L))
+
         // Cold start exception must fail closed (mute key sounds)
         val coldFailGate = RingerModeGate(burstGapMs = 600L, maxStaleMs = 2_000L) {
             throw SecurityException("AudioManager query failed")

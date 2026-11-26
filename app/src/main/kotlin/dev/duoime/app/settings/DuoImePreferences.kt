@@ -37,6 +37,25 @@ data class DuoImeSettings(
     )
 }
 
+enum class LiveSettingsPlacementAction {
+    NONE,
+    SWAP_TOGGLED,
+    RELEVANT_ENVIRONMENT_CHANGED
+}
+
+internal fun resolveLiveSettingsAction(previous: DuoImeSettings, updated: DuoImeSettings): LiveSettingsPlacementAction =
+    when {
+        updated == previous -> LiveSettingsPlacementAction.NONE
+        updated.swapToSameScreen != previous.swapToSameScreen -> LiveSettingsPlacementAction.SWAP_TOGGLED
+        updated.heightFraction != previous.heightFraction ||
+            updated.darkTheme != previous.darkTheme ||
+            updated.pairedPeerDisplayId != previous.pairedPeerDisplayId ||
+            updated.manualSystemImePin != previous.manualSystemImePin ||
+            updated.perAppInlinePackages != previous.perAppInlinePackages ->
+            LiveSettingsPlacementAction.RELEVANT_ENVIRONMENT_CHANGED
+        else -> LiveSettingsPlacementAction.NONE
+    }
+
 class DuoImePreferences(context: Context) {
     private val prefs: SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

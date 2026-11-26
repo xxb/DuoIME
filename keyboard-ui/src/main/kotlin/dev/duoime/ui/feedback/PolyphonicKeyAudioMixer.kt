@@ -31,7 +31,7 @@ internal class RingerModeGate(
     private val queryRingerMode: () -> Int
 ) {
     private var initialized: Boolean = false
-    private var cachedAllowed: Boolean = true
+    private var cachedAllowed: Boolean = false
     private var lastKeyTimeMs: Long = 0L
     private var lastQueryTimeMs: Long = 0L
 

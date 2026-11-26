@@ -94,6 +94,9 @@ private data class SoundTriggerSpec(
     val useComboEscalation: Boolean = false
 )
 
+internal fun resolveRingerMode(audioManager: AudioManager?): Int =
+    audioManager?.ringerMode ?: AudioManager.RINGER_MODE_SILENT
+
 /**
  * Low-latency tactile & acoustic feedback controller decoupled strictly via `:core` [FeedbackKey]:
  * 1. Acoustic: Lazily creates a `USAGE_ASSISTANCE_SONIFICATION` streaming `AudioTrack` on first
@@ -126,7 +129,7 @@ class KeyFeedbackController(
         runCatching { appContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager }.getOrNull()
     }
     private val ringerModeGate = RingerModeGate {
-        audioManager?.ringerMode ?: AudioManager.RINGER_MODE_NORMAL
+        resolveRingerMode(audioManager)
     }
     private val hapticDriver = AsyncHapticDriver(appContext)
     private val audioDriver = StreamingKeyAudioDriver(appContext, ::loadOrSynthesizePcm)

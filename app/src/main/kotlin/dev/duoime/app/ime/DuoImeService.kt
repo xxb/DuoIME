@@ -54,6 +54,8 @@ import dev.duoime.app.dualscreen.PlacementEvaluationSnapshot
 import dev.duoime.app.dualscreen.SystemImePinDetector
 import dev.duoime.app.settings.DuoImePreferences
 import dev.duoime.app.settings.DuoImeSettings
+import dev.duoime.app.settings.LiveSettingsPlacementAction
+import dev.duoime.app.settings.resolveLiveSettingsAction
 import dev.duoime.core.engine.InputSink
 import dev.duoime.core.policy.DisplayPlacementInput
 import dev.duoime.core.policy.PlacementDecision
@@ -384,20 +386,11 @@ class DuoImeService : InputMethodService() {
     }
 
     private fun handleSwapScreenRequested() {
-        val updated = preferences.toggleSwapToSameScreen()
-        settingsFlow.value = updated
-        cachedFeedbackOptions = updated.toFeedbackOptions()
-        // Preserve active composing state & engine snapshot across inline <-> overlay swap.
-        sessionController.onSwapScreenToggled(updated.swapToSameScreen)
+        preferences.toggleSwapToSameScreen()
     }
 
     private fun handleHeightChanged(fraction: Float) {
-        val updated = preferences.updateHeightFraction(fraction)
-        settingsFlow.value = updated
-        cachedFeedbackOptions = updated.toFeedbackOptions()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && isOverlayCurrentlyShowing()) {
-            overlayHost?.updatePresentation(updated.heightFraction, updated.darkTheme)
-        }
+        preferences.updateHeightFraction(fraction)
     }
 
     private fun hideAllKeyboardSurfaces() {
@@ -531,25 +524,20 @@ class DuoImeService : InputMethodService() {
         if (updated == previous) return
         settingsFlow.value = updated
         cachedFeedbackOptions = updated.toFeedbackOptions()
-        controller.setIncludeNumberRow(updated.includeNumberRow)
+        if (updated.includeNumberRow != previous.includeNumberRow) {
+            controller.setIncludeNumberRow(updated.includeNumberRow)
+        }
         if (updated.alwaysIncognito != previous.alwaysIncognito) {
             applyEditorInfo(lastEditorInfo)
         }
         if (!sessionController.isInputViewActive) return
 
-        val presentationChanged =
-            updated.heightFraction != previous.heightFraction ||
-                updated.darkTheme != previous.darkTheme
-        if (presentationChanged && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && isOverlayCurrentlyShowing()) {
-            overlayHost?.updatePresentation(updated.heightFraction, updated.darkTheme)
-        }
-        val placementChanged = presentationChanged ||
-            updated.swapToSameScreen != previous.swapToSameScreen ||
-            updated.pairedPeerDisplayId != previous.pairedPeerDisplayId ||
-            updated.manualSystemImePin != previous.manualSystemImePin ||
-            updated.perAppInlinePackages != previous.perAppInlinePackages
-        if (placementChanged) {
-            sessionController.onRelevantEnvironmentChanged()
+        when (resolveLiveSettingsAction(previous, updated)) {
+            LiveSettingsPlacementAction.SWAP_TOGGLED ->
+                sessionController.onSwapScreenToggled(updated.swapToSameScreen)
+            LiveSettingsPlacementAction.RELEVANT_ENVIRONMENT_CHANGED ->
+                sessionController.onRelevantEnvironmentChanged()
+            LiveSettingsPlacementAction.NONE -> Unit
         }
     }
 
