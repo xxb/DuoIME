@@ -1,0 +1,44 @@
+# Gradle & Android build outputs
+.gradle/
+.kotlin/
+**/build/
+local.properties
+.worktrees/
+.freebuff/
+
+# Android Studio / IntelliJ IDEA
+.idea/
+*.iml
+.navigation/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.hprof
+*.db
+*.sqlite
+*.sqlite3
+
+# Keystore, certificates & secrets (never commit credentials)
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+keystore.properties
+google-services.json
+.env
+.env.*
+
+# OS & temporary files
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+__pycache__/
+*.pyc
+.pytest_cache/
