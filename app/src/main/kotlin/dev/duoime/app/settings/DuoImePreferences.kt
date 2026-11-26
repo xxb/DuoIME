@@ -14,33 +14,64 @@ data class DuoImeSettings(
     val darkTheme: Boolean = true,
     val includeNumberRow: Boolean = false,
     val alwaysIncognito: Boolean = false,
-    val heightFraction: Float = DisplayPlacementPolicy.DEFAULT_HEIGHT_FRACTION
+    val heightFraction: Float = DisplayPlacementPolicy.DEFAULT_HEIGHT_FRACTION,
+    val swapToSameScreen: Boolean = false,
+    val pairedPeerDisplayId: Int? = null,
+    val manualSystemImePin: Boolean = false,
+    val perAppInlinePackages: Set<String> = emptySet()
 )
 
 class DuoImePreferences(context: Context) {
     private val prefs: SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    fun load(): DuoImeSettings = DuoImeSettings(
-        darkTheme = prefs.getBoolean(KEY_DARK_THEME, true),
-        includeNumberRow = prefs.getBoolean(KEY_NUMBER_ROW, false),
-        alwaysIncognito = prefs.getBoolean(KEY_ALWAYS_INCOGNITO, false),
-        heightFraction = DisplayPlacementPolicy.clampHeightFraction(
-            prefs.getFloat(KEY_HEIGHT_FRACTION, DisplayPlacementPolicy.DEFAULT_HEIGHT_FRACTION)
+    fun load(): DuoImeSettings {
+        val rawPeerId = prefs.getInt(KEY_PAIRED_PEER_DISPLAY_ID, NO_PAIRED_DISPLAY)
+        val packages = prefs.getStringSet(KEY_PER_APP_INLINE_PACKAGES, emptySet())
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?.toSet()
+            .orEmpty()
+        return DuoImeSettings(
+            darkTheme = prefs.getBoolean(KEY_DARK_THEME, true),
+            includeNumberRow = prefs.getBoolean(KEY_NUMBER_ROW, false),
+            alwaysIncognito = prefs.getBoolean(KEY_ALWAYS_INCOGNITO, false),
+            heightFraction = DisplayPlacementPolicy.clampHeightFraction(
+                prefs.getFloat(KEY_HEIGHT_FRACTION, DisplayPlacementPolicy.DEFAULT_HEIGHT_FRACTION)
+            ),
+            swapToSameScreen = prefs.getBoolean(KEY_SWAP_TO_SAME_SCREEN, false),
+            pairedPeerDisplayId = rawPeerId.takeIf { it != NO_PAIRED_DISPLAY },
+            manualSystemImePin = prefs.getBoolean(KEY_MANUAL_SYSTEM_IME_PIN, false),
+            perAppInlinePackages = packages
         )
-    )
+    }
 
     fun save(settings: DuoImeSettings) {
+        val sanitizedPackages = settings.perAppInlinePackages
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .toSet()
         prefs.edit()
             .putBoolean(KEY_DARK_THEME, settings.darkTheme)
             .putBoolean(KEY_NUMBER_ROW, settings.includeNumberRow)
             .putBoolean(KEY_ALWAYS_INCOGNITO, settings.alwaysIncognito)
             .putFloat(KEY_HEIGHT_FRACTION, DisplayPlacementPolicy.clampHeightFraction(settings.heightFraction))
+            .putBoolean(KEY_SWAP_TO_SAME_SCREEN, settings.swapToSameScreen)
+            .putInt(KEY_PAIRED_PEER_DISPLAY_ID, settings.pairedPeerDisplayId ?: NO_PAIRED_DISPLAY)
+            .putBoolean(KEY_MANUAL_SYSTEM_IME_PIN, settings.manualSystemImePin)
+            .putStringSet(KEY_PER_APP_INLINE_PACKAGES, sanitizedPackages)
             .apply()
     }
 
     fun updateHeightFraction(fraction: Float): DuoImeSettings {
         val updated = load().copy(heightFraction = DisplayPlacementPolicy.clampHeightFraction(fraction))
+        save(updated)
+        return updated
+    }
+
+    fun toggleSwapToSameScreen(): DuoImeSettings {
+        val current = load()
+        val updated = current.copy(swapToSameScreen = !current.swapToSameScreen)
         save(updated)
         return updated
     }
@@ -51,6 +82,11 @@ class DuoImePreferences(context: Context) {
         private const val KEY_NUMBER_ROW = "include_number_row"
         private const val KEY_ALWAYS_INCOGNITO = "always_incognito"
         private const val KEY_HEIGHT_FRACTION = "height_fraction"
+        private const val KEY_SWAP_TO_SAME_SCREEN = "swap_to_same_screen"
+        private const val KEY_PAIRED_PEER_DISPLAY_ID = "paired_peer_display_id"
+        private const val KEY_MANUAL_SYSTEM_IME_PIN = "manual_system_ime_pin"
+        private const val KEY_PER_APP_INLINE_PACKAGES = "per_app_inline_packages"
+        private const val NO_PAIRED_DISPLAY = -1
 
         /**
          * Fraction of the single-screen window height allocated to the Inline keyboard at 100%

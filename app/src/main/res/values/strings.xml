@@ -3,8 +3,66 @@
     <string name="app_name">DuoIME</string>
     <string name="ime_name">DuoIME</string>
     <string name="subtype_pinyin">Chinese / English (DuoIME)</string>
+
+    <string name="app_subtitle">Offline dual-screen Compose IME • Engine: %1$s</string>
+
+    <string name="pin_banner_text">System \'Pin IME\' is active — tap to open DuoIME settings for smart dual-screen swap</string>
+
+    <string name="card_setup_title">1. Setup DuoIME</string>
+    <string name="status_ime_enabled">Enabled</string>
+    <string name="status_ime_disabled">Not enabled yet</string>
+    <string name="status_ime_selected">Active default IME</string>
+    <string name="status_ime_unselected">Not selected as active IME</string>
+    <string name="status_ime_summary">System IME: %1$s • %2$s</string>
+    <string name="btn_enable_ime">Enable IME</string>
+    <string name="btn_select_ime">Select IME</string>
+
+    <string name="card_overlay_title">2. Opposite-Screen Overlay Permission</string>
+    <string name="status_overlay_api_unsupported">Requires Android 11 (API 30+) — using Inline mode</string>
+    <string name="status_overlay_granted">Granted — ready for opposite-screen overlay</string>
+    <string name="status_overlay_denied">Not granted — currently falling back to Inline mode</string>
+    <string name="status_overlay_summary">Display over other apps: %1$s</string>
+    <string name="btn_grant_overlay">Grant Overlay Permission</string>
+
+    <string name="card_pin_title">3. System \'Pin IME\' Check</string>
+    <string name="status_pin_active">Active (ime_fixed=1) — OS is locking the keyboard to one screen</string>
+    <string name="status_pin_off">Off (ime_fixed=0) — DuoIME can manage dual-screen placement freely</string>
+    <string name="status_pin_unknown">Not readable on this ROM — use manual toggle below if OS pins keyboard</string>
+    <string name="status_pin_summary">Detected status: %1$s</string>
+    <string name="pin_instructions">On Retroid Pocket Duo, open Handheld / Dual-Screen Settings → Keyboard and turn OFF \'Pin IME / Show keyboard on second screen\' to unlock smart swap &amp; free height.</string>
+    <string name="toggle_manual_pin">System pins keyboard (manual fallback)</string>
+
+    <string name="card_calibration_title">4. Calibrate Dual Displays</string>
+    <string name="status_paired_peer">Paired built-in peer: Display #%1$d</string>
+    <string name="status_unpaired_peer">Auto-detect built-in peer (not calibrated yet)</string>
+    <string name="display_state_on">ON</string>
+    <string name="display_state_off">OFF</string>
+    <string name="display_list_item">• Display #%1$d: %2$d×%3$d [%4$s, %5$s]</string>
+    <string name="btn_pair_display">Pair Display #%1$d</string>
+    <string name="btn_no_peer_found">No Peer Screen Found</string>
+    <string name="btn_clear_pairing">Clear Pairing</string>
+
+    <string name="card_scratchpad_title">5. Typing Scratchpad</string>
+    <string name="scratchpad_label">Tap here to test dual-screen overlay, swap, 26-key, T9, EN</string>
+
+    <string name="card_prefs_title">6. Keyboard Preferences</string>
+    <string name="pref_dark_theme">OLED Dark Theme</string>
+    <string name="pref_number_row">Show Number Row (QWERTY)</string>
+    <string name="pref_always_incognito">Always Incognito (No Learning)</string>
+    <string name="pref_same_screen">Keep Keyboard on Same Screen</string>
+    <string name="pref_height_label">Keyboard Height: %1$d%%</string>
     <string name="height_preset_compact">S</string>
     <string name="height_preset_standard">M</string>
     <string name="height_preset_tall">L</string>
     <string name="pref_height_range_subtitle">Same screen ≈%1$d–%2$d%% · Opposite %3$d–%4$d%%</string>
+
+    <string name="card_overrides_title">7. Per-App Inline Overrides</string>
+    <string name="overrides_description">Force Inline mode for specific package names (e.g. banking apps that block overlays).</string>
+    <string name="overrides_package_hint">com.example.app</string>
+    <string name="btn_add_package">Add</string>
+    <string name="overrides_empty">No per-app overrides configured.</string>
+
+    <string name="card_privacy_title">Privacy &amp; Open Source</string>
+    <string name="privacy_summary">Zero INTERNET permission, allowBackup=false, and password fields automatically fall back to Inline English mode with user learning disabled.</string>
+    <string name="license_summary">Licensed under BSD-3-Clause with MIT and Apache-2.0 notices preserved for bundled :engine-lite dictionaries and ported components.</string>
 </resources>

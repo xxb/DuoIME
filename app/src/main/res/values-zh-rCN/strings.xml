@@ -3,8 +3,66 @@
     <string name="app_name">DuoIME</string>
     <string name="ime_name">DuoIME</string>
     <string name="subtype_pinyin">中文 / 英文 (DuoIME)</string>
+
+    <string name="app_subtitle">离线双屏 Compose 输入法 • 引擎：%1$s</string>
+
+    <string name="pin_banner_text">系统“固定输入法到副屏”已开启 — 点击打开 DuoIME 设置以启用智能双屏换屏</string>
+
+    <string name="card_setup_title">1. 启用 DuoIME</string>
+    <string name="status_ime_enabled">已启用</string>
+    <string name="status_ime_disabled">尚未启用</string>
+    <string name="status_ime_selected">当前默认输入法</string>
+    <string name="status_ime_unselected">未设为当前输入法</string>
+    <string name="status_ime_summary">系统输入法：%1$s • %2$s</string>
+    <string name="btn_enable_ime">启用输入法</string>
+    <string name="btn_select_ime">切换输入法</string>
+
+    <string name="card_overlay_title">2. 对屏悬浮窗权限</string>
+    <string name="status_overlay_api_unsupported">需要 Android 11 (API 30+) — 当前使用同屏模式</string>
+    <string name="status_overlay_granted">已授权 — 支持对屏悬浮键盘</string>
+    <string name="status_overlay_denied">未授权 — 当前自动回退为同屏模式</string>
+    <string name="status_overlay_summary">显示在其他应用上层：%1$s</string>
+    <string name="btn_grant_overlay">授予悬浮窗权限</string>
+
+    <string name="card_pin_title">3. 系统“固定副屏输入法”检测</string>
+    <string name="status_pin_active">已开启 (ime_fixed=1) — 系统正将键盘锁定在单屏</string>
+    <string name="status_pin_off">已关闭 (ime_fixed=0) — DuoIME 可自由控制双屏显示</string>
+    <string name="status_pin_unknown">当前系统无法读取 — 若系统锁定副屏请手动打开下方开关</string>
+    <string name="status_pin_summary">当前检测状态：%1$s</string>
+    <string name="pin_instructions">在 Retroid Pocket Duo 上，请前往掌机/双屏设置 → 键盘，关闭“固定输入法到副屏”开关，以解锁一键换屏与自由高度调节。</string>
+    <string name="toggle_manual_pin">系统锁定输入法位置（手动回退）</string>
+
+    <string name="card_calibration_title">4. 双屏配对校准</string>
+    <string name="status_paired_peer">已配对内置副屏：Display #%1$d</string>
+    <string name="status_unpaired_peer">自动识别内置副屏（尚未校准）</string>
+    <string name="display_state_on">亮屏</string>
+    <string name="display_state_off">息屏</string>
+    <string name="display_list_item">• Display #%1$d：%2$d×%3$d [%4$s, %5$s]</string>
+    <string name="btn_pair_display">配对 Display #%1$d</string>
+    <string name="btn_no_peer_found">未检测到可用副屏</string>
+    <string name="btn_clear_pairing">清除配对</string>
+
+    <string name="card_scratchpad_title">5. 输入测试框</string>
+    <string name="scratchpad_label">点击此处测试双屏悬浮、一键换屏、26键、九键、英文</string>
+
+    <string name="card_prefs_title">6. 键盘偏好设置</string>
+    <string name="pref_dark_theme">OLED 深色主题</string>
+    <string name="pref_number_row">显示顶部数字行（26键）</string>
+    <string name="pref_always_incognito">始终无痕模式（禁用词频学习）</string>
+    <string name="pref_same_screen">键盘保持同屏显示</string>
+    <string name="pref_height_label">键盘高度：%1$d%%</string>
     <string name="height_preset_compact">矮</string>
     <string name="height_preset_standard">中</string>
     <string name="height_preset_tall">高</string>
     <string name="pref_height_range_subtitle">同屏约 %1$d–%2$d%% · 对屏 %3$d–%4$d%%</string>
+
+    <string name="card_overrides_title">7. 单应用强制同屏列表</string>
+    <string name="overrides_description">为指定包名强制使用同屏模式（例如禁止悬浮窗的银行/支付应用）。</string>
+    <string name="overrides_package_hint">com.example.app</string>
+    <string name="btn_add_package">添加</string>
+    <string name="overrides_empty">暂无强制同屏应用。</string>
+
+    <string name="card_privacy_title">隐私与开源许可</string>
+    <string name="privacy_summary">零网络权限、禁用云备份 (allowBackup=false)，密码输入框自动回退至同屏英文并关闭词频学习。</string>
+    <string name="license_summary">采用 BSD-3-Clause 开源协议，完整保留内置 :engine-lite 词库与移植组件的 MIT / Apache-2.0 声明。</string>
 </resources>
