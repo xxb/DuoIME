@@ -525,7 +525,7 @@ class KeyboardControllerTest {
         assertEquals(listOf("commit:raw", "compose:<clear>", "commit:!"), sink.events)
         controller.close()
 
-        // Persistent issue survives typing and clears on dismiss; subsequent runtime failure surfaces TRANSIENT
+        // Persistent fallback issue survives both transient runtime recovery AND subsequent good keys
         val flaky = FlakyFakeEngine(failNextKey = true)
         val errController = KeyboardController(
             scope = this,
@@ -535,20 +535,39 @@ class KeyboardControllerTest {
         )
         errController.attachSink(RecordingInputSink())
         advanceUntilIdle()
+        val persistentTag = errController.uiState.value.engineIssue?.tag
+        assertEquals(EngineIssueKind.PERSISTENT, errController.uiState.value.engineIssue?.kind)
+
+        // Throwing key on fallback engine must NOT downgrade PERSISTENT to TRANSIENT
+        errController.dispatchKeyAction(KeyAction.Engine(KeyCodes.keysymForChar('a')))
+        advanceUntilIdle()
+        assertEquals(EngineIssueKind.PERSISTENT, errController.uiState.value.engineIssue?.kind)
+        assertEquals(persistentTag, errController.uiState.value.engineIssue?.tag)
+
+        // Subsequent good key must still preserve PERSISTENT until explicit dismiss
+        errController.dispatchKeyAction(KeyAction.Engine(KeyCodes.keysymForChar('b')))
+        advanceUntilIdle()
         assertEquals(EngineIssueKind.PERSISTENT, errController.uiState.value.engineIssue?.kind)
 
         errController.dismissEngineError()
         advanceUntilIdle()
         assertNull(errController.uiState.value.engineIssue)
-
-        errController.dispatchKeyAction(KeyAction.Engine(KeyCodes.keysymForChar('a')))
-        advanceUntilIdle()
-        assertEquals(EngineIssueKind.TRANSIENT, errController.uiState.value.engineIssue?.kind)
-
-        errController.dispatchKeyAction(KeyAction.Engine(KeyCodes.keysymForChar('b')))
-        advanceUntilIdle()
-        assertNull(errController.uiState.value.engineIssue)
         errController.close()
+
+        // Both primary and fallback init failure reports both error tags in PERSISTENT tag
+        val doubleFailController = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { throw IllegalStateException("primary") },
+            fallbackEngineFactory = { throw IllegalArgumentException("fallback") }
+        )
+        advanceUntilIdle()
+        assertEquals(EngineIssueKind.PERSISTENT, doubleFailController.uiState.value.engineIssue?.kind)
+        assertEquals(
+            "Plain: IllegalStateException/IllegalArgumentException",
+            doubleFailController.uiState.value.engineIssue?.tag
+        )
+        doubleFailController.close()
     }
 
     @Test

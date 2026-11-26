@@ -263,8 +263,11 @@ class KeyboardController(
                 return fallbackEngine
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
-                engineIssue = EngineIssue(EngineIssueKind.PERSISTENT, "Plain: $primaryTag")
+            } catch (fallbackError: Throwable) {
+                engineIssue = EngineIssue(
+                    EngineIssueKind.PERSISTENT,
+                    "Plain: $primaryTag/${errorTag(fallbackError)}"
+                )
                 uiMode = InputMode.ENGLISH
                 lastNonSymbolMode = InputMode.ENGLISH
                 return PassThroughEngine()
@@ -294,7 +297,9 @@ class KeyboardController(
 
     @Suppress("TooGenericExceptionCaught")
     private suspend fun recoverFromEventFailure(engine: InputEngine, error: Throwable) {
-        engineIssue = EngineIssue(EngineIssueKind.TRANSIENT, "Recovered: ${errorTag(error)}")
+        if (engineIssue?.kind != EngineIssueKind.PERSISTENT) {
+            engineIssue = EngineIssue(EngineIssueKind.TRANSIENT, "Recovered: ${errorTag(error)}")
+        }
         try {
             engine.reset()
         } catch (cancelled: CancellationException) {
