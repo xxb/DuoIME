@@ -164,6 +164,7 @@ data class KeyFeedbackOptions(
     val soundEnabled: Boolean = false,
     val soundVolume: Float = DEFAULT_SOUND_VOLUME,
     val soundStyle: KeySoundStyle = KeySoundStyle.MECHANICAL,
+    val followSystemRingerMode: Boolean = false,
     val bandConfig: BandInstrumentConfig = BandInstrumentConfig()
 ) {
     fun clamped(): KeyFeedbackOptions = copy(

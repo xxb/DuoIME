@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -97,12 +98,12 @@ fun DuoToolbar(
             .background(colors.barBackground)
             .padding(horizontal = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         LazyRow(
             modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(horizontal = 2.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (!issueTag.isNullOrBlank()) {
@@ -196,17 +197,18 @@ fun DuoToolbar(
 private fun EngineIssueChip(tag: String, colors: DuoColorTokens, onDismiss: () -> Unit) {
     val warningStyle = TextStyle(
         color = colors.warningText,
-        fontSize = 11.sp,
+        fontSize = 12.sp,
         fontWeight = FontWeight.SemiBold
     )
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
+            .height(38.dp)
+            .clip(RoundedCornerShape(8.dp))
             .background(colors.warningBackground)
-            .widthIn(max = 140.dp)
+            .widthIn(max = 148.dp)
             .semantics { contentDescription = "Dismiss engine warning: $tag" }
             .clickable(onClick = onDismiss)
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
@@ -231,10 +233,12 @@ private fun ToolbarChip(label: String, selected: Boolean, colors: DuoColorTokens
     val fg = if (selected) colors.chipSelectedText else colors.chipText
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
+            .defaultMinSize(minWidth = 40.dp)
+            .height(38.dp)
+            .clip(RoundedCornerShape(8.dp))
             .background(bg)
             .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            .padding(horizontal = 10.dp),
         contentAlignment = Alignment.Center
     ) {
         BasicText(
@@ -242,7 +246,7 @@ private fun ToolbarChip(label: String, selected: Boolean, colors: DuoColorTokens
             maxLines = 1,
             style = TextStyle(
                 color = fg,
-                fontSize = 12.sp,
+                fontSize = 13.sp,
                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
             )
         )

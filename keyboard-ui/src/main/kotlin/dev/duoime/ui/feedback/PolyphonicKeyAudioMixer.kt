@@ -20,6 +20,15 @@ import java.util.concurrent.locks.LockSupport
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
+internal fun resolveAudioUsage(followSystemRingerMode: Boolean): Int = if (followSystemRingerMode) {
+    AudioAttributes.USAGE_ASSISTANCE_SONIFICATION
+} else {
+    AudioAttributes.USAGE_GAME
+}
+
+internal fun shouldAllowSound(followSystemRingerMode: Boolean, nowMs: Long, ringerModeGate: RingerModeGate): Boolean =
+    !followSystemRingerMode || ringerModeGate.isSoundAllowed(nowMs)
+
 /**
  * Pure-Kotlin burst-cached ringer mode gate matching AOSP IME expectations:
  * mutes key sounds whenever `AudioManager.ringerMode != RINGER_MODE_NORMAL`, while reading
@@ -248,6 +257,7 @@ private class AudioStreamSession(
     )
     val burstPcm = ShortArray(burstFrames)
     var track: AudioTrack? = null
+    var activeAudioUsage: Int = resolveAudioUsage(followSystemRingerMode = false)
     var trackPlaying: Boolean = false
     var targetLeadFrames: Int = (burstFrames * DEFAULT_LEAD_BURSTS)
         .coerceIn(TARGET_LEAD_MIN_FRAMES, TARGET_LEAD_MAX_FRAMES)
@@ -291,8 +301,11 @@ private class AudioStreamSession(
 
 /**
  * Lazily-initialized low-latency `AudioTrack` streaming driver running on a high-priority daemon
- * audio thread (`DuoIME-KeyAudio`) with `USAGE_ASSISTANCE_SONIFICATION`.
+ * audio thread (`DuoIME-KeyAudio`).
  *
+ * - Uses `USAGE_GAME` (media volume) by default so key sounds work reliably on handhelds/tablets
+ *   kept in silent mode, and seamlessly switches to `USAGE_ASSISTANCE_SONIFICATION` when
+ *   `followSystemRingerMode` is enabled.
  * - Never creates a worker thread or `AudioTrack` at construction (`Service.onCreate`).
  * - Pauses cleanly after the silent tail during active typing sessions.
  * - Releases the `AudioTrack` after the idle tail when [releaseAfterIdleTail] is called
@@ -307,13 +320,21 @@ internal class StreamingKeyAudioDriver(
     private val queuedCount = AtomicInteger(0)
     private val released = AtomicBoolean(false)
     private val releaseTrackWhenIdle = AtomicBoolean(false)
+    private val requestedAudioUsage = AtomicInteger(resolveAudioUsage(followSystemRingerMode = false))
     private val workerLock = Any()
 
     @Volatile
     private var workerThread: Thread? = null
 
-    fun enqueue(style: KeySoundStyle, slot: KeySoundSlot, gain: Float, rate: Float) {
+    fun enqueue(
+        style: KeySoundStyle,
+        slot: KeySoundSlot,
+        gain: Float,
+        rate: Float,
+        useSonificationUsage: Boolean = false
+    ) {
         if (released.get()) return
+        requestedAudioUsage.set(resolveAudioUsage(useSonificationUsage))
         releaseTrackWhenIdle.set(false)
         val thread = ensureWorkerStarted() ?: return
         noteQueue.offer(QueuedAudioNote(style = style, slot = slot, gain = gain, rate = rate))
@@ -411,7 +432,7 @@ internal class StreamingKeyAudioDriver(
             startThresholdFrames = session.startThresholdFrames,
             awaitingPlaybackStart = session.awaitingPlaybackStart
         )
-        while (!released.get() && queuedFrames < queuedLimit && session.hasWork(noteQueue.isEmpty())) {
+        while (shouldContinueStreaming(session) && queuedFrames < queuedLimit) {
             drainNotesIntoEngine(session)
             val written = writeNextChunk(track, session)
             if (written < 0) {
@@ -422,20 +443,28 @@ internal class StreamingKeyAudioDriver(
             queuedFrames += written
         }
 
-        if (session.hasWork(noteQueue.isEmpty()) && !released.get()) {
+        if (shouldContinueStreaming(session)) {
             LockSupport.parkNanos(ACTIVE_POLL_NANOS)
         }
         return true
     }
 
+    private fun shouldContinueStreaming(session: AudioStreamSession): Boolean = !released.get() &&
+        requestedAudioUsage.get() == session.activeAudioUsage &&
+        session.hasWork(noteQueue.isEmpty())
+
     private fun ensureTrack(session: AudioStreamSession): AudioTrack? {
+        val desiredUsage = requestedAudioUsage.get()
         session.track?.let { existing ->
-            if (existing.state == AudioTrack.STATE_INITIALIZED) return existing
+            if (existing.state == AudioTrack.STATE_INITIALIZED && session.activeAudioUsage == desiredUsage) {
+                return existing
+            }
             releaseTrack(session)
         }
         val bufBytes = session.bufferFrames * BYTES_PER_MONO_16BIT_FRAME
-        val created = createPersistentAudioTrack(session.outputRateHz, bufBytes) ?: return null
+        val created = createPersistentAudioTrack(session.outputRateHz, bufBytes, desiredUsage) ?: return null
         session.track = created
+        session.activeAudioUsage = desiredUsage
         session.trackPlaying = false
         configureTrackStartThreshold(created, session, session.targetLeadFrames)
         session.resetBufferCursors(readUnsignedHeadFrames(created), readUnderrunCount(created))
@@ -612,34 +641,35 @@ internal class StreamingKeyAudioDriver(
         return maxOf(minFrames, burstFrames * DEFAULT_BUFFER_BURSTS)
     }
 
-    private fun createPersistentAudioTrack(outputRateHz: Int, bufBytes: Int): AudioTrack? =
-        buildTrackWithMode(outputRateHz, bufBytes, AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
-            ?: buildTrackWithMode(outputRateHz, bufBytes, AudioTrack.PERFORMANCE_MODE_NONE)
+    private fun createPersistentAudioTrack(outputRateHz: Int, bufBytes: Int, audioUsage: Int): AudioTrack? =
+        buildTrackWithMode(outputRateHz, bufBytes, AudioTrack.PERFORMANCE_MODE_LOW_LATENCY, audioUsage)
+            ?: buildTrackWithMode(outputRateHz, bufBytes, AudioTrack.PERFORMANCE_MODE_NONE, audioUsage)
 
-    private fun buildTrackWithMode(outputRateHz: Int, bufBytes: Int, perfMode: Int): AudioTrack? = runCatching {
-        val attrs = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
-            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-            .build()
-        val format = AudioFormat.Builder()
-            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-            .setSampleRate(outputRateHz)
-            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-            .build()
-        val track = AudioTrack.Builder()
-            .setAudioAttributes(attrs)
-            .setAudioFormat(format)
-            .setTransferMode(AudioTrack.MODE_STREAM)
-            .setBufferSizeInBytes(bufBytes)
-            .setPerformanceMode(perfMode)
-            .build()
-        if (track.state == AudioTrack.STATE_INITIALIZED) {
-            track
-        } else {
-            runCatching { track.release() }
-            null
-        }
-    }.getOrNull()
+    private fun buildTrackWithMode(outputRateHz: Int, bufBytes: Int, perfMode: Int, audioUsage: Int): AudioTrack? =
+        runCatching {
+            val attrs = AudioAttributes.Builder()
+                .setUsage(audioUsage)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+            val format = AudioFormat.Builder()
+                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                .setSampleRate(outputRateHz)
+                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                .build()
+            val track = AudioTrack.Builder()
+                .setAudioAttributes(attrs)
+                .setAudioFormat(format)
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .setBufferSizeInBytes(bufBytes)
+                .setPerformanceMode(perfMode)
+                .build()
+            if (track.state == AudioTrack.STATE_INITIALIZED) {
+                track
+            } else {
+                runCatching { track.release() }
+                null
+            }
+        }.getOrNull()
 
     private fun readUnsignedHeadFrames(track: AudioTrack): Long =
         runCatching { track.playbackHeadPosition.toLong() and UINT32_MASK }.getOrDefault(0L)

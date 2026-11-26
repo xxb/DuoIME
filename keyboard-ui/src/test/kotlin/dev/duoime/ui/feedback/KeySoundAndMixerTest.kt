@@ -5,6 +5,7 @@
  */
 package dev.duoime.ui.feedback
 
+import android.media.AudioAttributes
 import android.media.AudioManager
 import dev.duoime.core.layout.BuiltInLayouts
 import dev.duoime.core.layout.KeyCodes
@@ -485,10 +486,38 @@ class KeySoundAndMixerTest {
     }
 
     @Test
-    fun `KeyFeedbackOptions defaults keep sound OFF and haptics ON`() {
+    fun `audio usage defaults to USAGE_GAME and switches to sonification with fail-closed ringer gate`() {
+        assertEquals(AudioAttributes.USAGE_GAME, resolveAudioUsage(followSystemRingerMode = false))
+        assertEquals(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION, resolveAudioUsage(followSystemRingerMode = true))
+
+        var silentQueries = 0
+        val silentGate = RingerModeGate {
+            silentQueries++
+            AudioManager.RINGER_MODE_SILENT
+        }
+        assertTrue(shouldAllowSound(followSystemRingerMode = false, nowMs = 1_000L, ringerModeGate = silentGate))
+        assertEquals("Media-channel default must not query or block on ringerMode", 0, silentQueries)
+        assertFalse(shouldAllowSound(followSystemRingerMode = true, nowMs = 1_000L, ringerModeGate = silentGate))
+        assertEquals(1, silentQueries)
+
+        val unavailableGate = RingerModeGate { resolveRingerMode(null) }
+        assertTrue(shouldAllowSound(followSystemRingerMode = false, nowMs = 1_000L, ringerModeGate = unavailableGate))
+        assertFalse(shouldAllowSound(followSystemRingerMode = true, nowMs = 1_000L, ringerModeGate = unavailableGate))
+
+        val throwingGate = RingerModeGate { throw SecurityException("AudioManager denied") }
+        assertTrue(shouldAllowSound(followSystemRingerMode = false, nowMs = 1_000L, ringerModeGate = throwingGate))
+        assertFalse(shouldAllowSound(followSystemRingerMode = true, nowMs = 1_000L, ringerModeGate = throwingGate))
+
+        val normalGate = RingerModeGate { AudioManager.RINGER_MODE_NORMAL }
+        assertTrue(shouldAllowSound(followSystemRingerMode = true, nowMs = 1_000L, ringerModeGate = normalGate))
+    }
+
+    @Test
+    fun `KeyFeedbackOptions defaults keep sound OFF haptics ON and followSystemRingerMode OFF`() {
         val defaults = KeyFeedbackOptions()
         assertFalse(defaults.soundEnabled)
         assertTrue(defaults.hapticEnabled)
+        assertFalse(defaults.followSystemRingerMode)
         assertEquals(KeyFeedbackOptions.DEFAULT_HAPTIC_STRENGTH, defaults.hapticStrength)
         assertEquals(KeySoundStyle.MECHANICAL, defaults.soundStyle)
     }

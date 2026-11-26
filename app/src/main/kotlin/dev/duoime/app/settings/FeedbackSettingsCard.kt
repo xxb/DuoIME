@@ -75,34 +75,24 @@ internal fun FeedbackSettingsCard(settings: DuoImeSettings, onSettingsChanged: (
                         feedbackController.playPreview(
                             style = settings.soundStyle,
                             volume = settings.soundVolume,
-                            previewStep = previewStep++
+                            previewStep = previewStep++,
+                            followSystemRingerMode = settings.followSystemRingerMode
                         )
                     }
                 }
             )
 
-            Text(
-                text = stringResource(R.string.pref_sound_ringer_hint),
-                style = MaterialTheme.typography.bodySmall
-            )
-
             if (settings.soundEnabled) {
                 SoundSettingsSection(
                     settings = settings,
-                    onVolumeChanged = { vol -> onSettingsChanged(settings.copy(soundVolume = vol)) },
-                    onStyleSelected = { style ->
-                        onSettingsChanged(settings.copy(soundStyle = style))
+                    isSystemRingerMuted = settings.followSystemRingerMode && feedbackController.isSystemRingerMuted(),
+                    onSettingsChanged = onSettingsChanged,
+                    onPreviewSound = { style, followRinger ->
                         feedbackController.playPreview(
                             style = style,
                             volume = settings.soundVolume,
-                            previewStep = previewStep++
-                        )
-                    },
-                    onPreviewSound = {
-                        feedbackController.playPreview(
-                            style = settings.soundStyle,
-                            volume = settings.soundVolume,
-                            previewStep = previewStep++
+                            previewStep = previewStep++,
+                            followSystemRingerMode = followRinger
                         )
                     }
                 )
@@ -136,9 +126,9 @@ private fun HapticStrengthSection(strength: Int, onStrengthChanged: (Int) -> Uni
 @Composable
 private fun SoundSettingsSection(
     settings: DuoImeSettings,
-    onVolumeChanged: (Float) -> Unit,
-    onStyleSelected: (KeySoundStyle) -> Unit,
-    onPreviewSound: () -> Unit
+    isSystemRingerMuted: Boolean,
+    onSettingsChanged: (DuoImeSettings) -> Unit,
+    onPreviewSound: (KeySoundStyle, Boolean) -> Unit
 ) {
     val volumePct = (KeyFeedbackOptions.clampSoundVolume(settings.soundVolume) * 100f).roundToInt()
     Text(
@@ -147,10 +137,30 @@ private fun SoundSettingsSection(
     )
     Slider(
         value = KeyFeedbackOptions.clampSoundVolume(settings.soundVolume),
-        onValueChange = onVolumeChanged,
-        onValueChangeFinished = onPreviewSound,
+        onValueChange = { vol -> onSettingsChanged(settings.copy(soundVolume = vol)) },
+        onValueChangeFinished = { onPreviewSound(settings.soundStyle, settings.followSystemRingerMode) },
         valueRange = KeyFeedbackOptions.MIN_SOUND_VOLUME..KeyFeedbackOptions.MAX_SOUND_VOLUME
     )
+
+    SettingSwitchRow(
+        title = stringResource(R.string.pref_sound_follow_ringer),
+        checked = settings.followSystemRingerMode,
+        onCheckedChange = { follow ->
+            onSettingsChanged(settings.copy(followSystemRingerMode = follow))
+            onPreviewSound(settings.soundStyle, follow)
+        }
+    )
+    Text(
+        text = stringResource(R.string.pref_sound_follow_ringer_desc),
+        style = MaterialTheme.typography.bodySmall
+    )
+    if (isSystemRingerMuted) {
+        Text(
+            text = stringResource(R.string.pref_sound_ringer_muted_warning),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error
+        )
+    }
 
     Text(
         text = stringResource(R.string.pref_sound_style_label),
@@ -163,13 +173,16 @@ private fun SoundSettingsSection(
         KeySoundStyle.entries.forEach { style ->
             FilterChip(
                 selected = settings.soundStyle == style,
-                onClick = { onStyleSelected(style) },
+                onClick = {
+                    onSettingsChanged(settings.copy(soundStyle = style))
+                    onPreviewSound(style, settings.followSystemRingerMode)
+                },
                 label = { Text(stringResource(soundStyleLabelRes(style))) }
             )
         }
     }
 
-    OutlinedButton(onClick = onPreviewSound) {
+    OutlinedButton(onClick = { onPreviewSound(settings.soundStyle, settings.followSystemRingerMode) }) {
         Text(text = stringResource(R.string.btn_preview_sound))
     }
 }

@@ -91,19 +91,22 @@ private data class SoundTriggerSpec(
     val volume: Float,
     val baseRate: Float,
     val minGapNs: Long,
-    val useComboEscalation: Boolean = false
+    val useComboEscalation: Boolean = false,
+    val useSonificationUsage: Boolean = false
 )
 
 internal fun resolveRingerMode(audioManager: AudioManager?): Int =
-    audioManager?.ringerMode ?: AudioManager.RINGER_MODE_SILENT
+    runCatching { audioManager?.ringerMode }.getOrNull() ?: AudioManager.RINGER_MODE_SILENT
 
 /**
  * Low-latency tactile & acoustic feedback controller decoupled strictly via `:core` [FeedbackKey]:
- * 1. Acoustic: Lazily creates a `USAGE_ASSISTANCE_SONIFICATION` streaming `AudioTrack` on first
- *    sound (never in `Service.onCreate`), mixes `44.1 kHz` PCM banks in software on a dedicated
- *    `URGENT_AUDIO` thread, respects `AudioManager.ringerMode == RINGER_MODE_NORMAL` lazily per
- *    typing burst, pauses after silent tails during typing, and releases the `AudioTrack` after the
- *    idle tail via [onInputHidden] (`onWindowHidden` / `onFinishInputView`) or immediately on [release].
+ * 1. Acoustic: Lazily creates a streaming `AudioTrack` on first sound (never in `Service.onCreate`),
+ *    defaulting to `USAGE_GAME` (media volume) for handhelds/tablets and optionally switching to
+ *    `USAGE_ASSISTANCE_SONIFICATION` with burst-cached fail-closed `AudioManager.ringerMode` gating
+ *    when `followSystemRingerMode` is enabled. Mixes `44.1 kHz` PCM banks in software on a dedicated
+ *    `URGENT_AUDIO` thread, pauses after silent tails during typing, and releases the `AudioTrack`
+ *    after the idle tail via [onInputHidden] (`onWindowHidden` / `onFinishInputView`) or immediately
+ *    on [release].
  * 2. Haptic: Dispatches pre-cached capability-tiered waveforms off the UI thread when `VIBRATE` is
  *    granted, and falls back to `View.performHapticFeedback` (no permission required) for embed hosts.
  */
@@ -138,6 +141,8 @@ class KeyFeedbackController(
         fallbackViewRef.set(view?.let(::WeakReference))
     }
 
+    fun isSystemRingerMuted(): Boolean = resolveRingerMode(audioManager) != AudioManager.RINGER_MODE_NORMAL
+
     fun onKeyPress(key: FeedbackKey, options: KeyFeedbackOptions) {
         if (released.get()) return
         val profile = KeySoundSynthesizer.classifyKey(key)
@@ -157,7 +162,8 @@ class KeyFeedbackController(
                     volume = options.soundVolume,
                     baseRate = resolved.rate,
                     minGapNs = 1_500_000L,
-                    useComboEscalation = resolved.style == KeySoundStyle.ARCADE_COMBO
+                    useComboEscalation = resolved.style == KeySoundStyle.ARCADE_COMBO,
+                    useSonificationUsage = options.followSystemRingerMode
                 )
             )
         }
@@ -186,23 +192,33 @@ class KeyFeedbackController(
                     style = effectiveStyle,
                     volume = (options.soundVolume * 0.55f).coerceIn(0.04f, 1.0f),
                     baseRate = if (isBackspace) 0.96f else 1.02f,
-                    minGapNs = 30_000_000L
+                    minGapNs = 30_000_000L,
+                    useSonificationUsage = options.followSystemRingerMode
                 )
             )
         }
     }
 
+    @Suppress("LongParameterList")
     fun playPreview(
         style: KeySoundStyle,
         volume: Float = KeyFeedbackOptions.DEFAULT_SOUND_VOLUME,
         slot: KeySoundSlot = KeySoundSlot.ALPHA,
         bandConfig: BandInstrumentConfig = BandInstrumentConfig(),
-        previewStep: Int = 0
+        previewStep: Int = 0,
+        followSystemRingerMode: Boolean = false
     ) {
         if (released.get()) return
-        ringerModeGate.invalidate()
+        if (followSystemRingerMode) {
+            ringerModeGate.invalidate()
+        }
         if (style.isBandMode) {
-            playBandPreview(volume = volume, bandConfig = bandConfig, previewStep = previewStep)
+            playBandPreview(
+                volume = volume,
+                bandConfig = bandConfig,
+                previewStep = previewStep,
+                followSystemRingerMode = followSystemRingerMode
+            )
             return
         }
         val (targetSlot, targetRate) = resolvePreviewTarget(
@@ -216,7 +232,8 @@ class KeyFeedbackController(
                 style = style,
                 volume = volume,
                 baseRate = targetRate,
-                minGapNs = 10_000_000L
+                minGapNs = 10_000_000L,
+                useSonificationUsage = followSystemRingerMode
             )
         )
     }
@@ -251,7 +268,12 @@ class KeyFeedbackController(
         }
     }
 
-    private fun playBandPreview(volume: Float, bandConfig: BandInstrumentConfig, previewStep: Int) {
+    private fun playBandPreview(
+        volume: Float,
+        bandConfig: BandInstrumentConfig,
+        previewStep: Int,
+        followSystemRingerMode: Boolean
+    ) {
         val zones = KeyInstrumentZone.entries
         val zone = zones[previewStep.mod(zones.size)]
         val zoneStyle = bandConfig.styleFor(zone)
@@ -272,7 +294,8 @@ class KeyFeedbackController(
             volume = volume,
             slot = zoneSlot,
             bandConfig = bandConfig,
-            previewStep = zoneStep
+            previewStep = zoneStep,
+            followSystemRingerMode = followSystemRingerMode
         )
     }
 
@@ -301,7 +324,7 @@ class KeyFeedbackController(
     private fun triggerSound(request: SoundTriggerSpec) {
         if (released.get()) return
         val nowNs = System.nanoTime()
-        if (!ringerModeGate.isSoundAllowed(nowNs / NANOS_PER_MILLI)) return
+        if (!shouldAllowSound(request.useSonificationUsage, nowNs / NANOS_PER_MILLI, ringerModeGate)) return
         ensureSoundBankPreload(request.style)
 
         val coercedSlot = KeySoundPitchRouter.coerceSlotForStyle(request.slot, request.style)
@@ -326,7 +349,8 @@ class KeyFeedbackController(
             style = request.style,
             slot = coercedSlot,
             gain = gain,
-            rate = effectiveRate
+            rate = effectiveRate,
+            useSonificationUsage = request.useSonificationUsage
         )
     }
 

@@ -61,7 +61,9 @@
     <string name="pref_haptic_enabled">Key Haptic Feedback</string>
     <string name="pref_haptic_strength_label">Haptic Strength: %1$d / 5</string>
     <string name="pref_sound_enabled">Key Sound Effects</string>
-    <string name="pref_sound_ringer_hint">Key sounds use system sonification audio and automatically mute in Silent or Vibrate mode.</string>
+    <string name="pref_sound_follow_ringer">Follow system silent/vibrate mode</string>
+    <string name="pref_sound_follow_ringer_desc">OFF uses Media volume (works on handhelds and tablets in silent mode); ON mutes automatically when the system ringer is Silent or Vibrate.</string>
+    <string name="pref_sound_ringer_muted_warning">System is currently in Silent or Vibrate mode — key sounds are muted while this option is ON.</string>
     <string name="pref_sound_volume_label">Sound Volume: %1$d%%</string>
     <string name="pref_sound_style_label">Sound Style</string>
     <string name="btn_preview_sound">Preview Sound</string>

@@ -27,10 +27,13 @@ import org.junit.Test
 class FeedbackSettingsTest {
 
     @Test
-    fun defaultsKeepSoundOffAndHapticsOn() {
+    fun defaultsKeepSoundOffHapticsOnAndFollowSystemRingerOff() {
         val defaults = DuoImeSettings()
         assertFalse("Key sound must default to OFF", defaults.soundEnabled)
         assertTrue("Key haptics must default to ON", defaults.hapticEnabled)
+        assertFalse("Follow system ringer mode must default to OFF", defaults.followSystemRingerMode)
+        assertFalse(defaults.toFeedbackOptions().followSystemRingerMode)
+        assertTrue(defaults.copy(followSystemRingerMode = true).toFeedbackOptions().followSystemRingerMode)
         assertEquals(KeyFeedbackOptions.DEFAULT_HAPTIC_STRENGTH, defaults.hapticStrength)
         assertEquals(KeySoundStyle.MECHANICAL, defaults.soundStyle)
         assertEquals(KeyFeedbackOptions.DEFAULT_SOUND_VOLUME, defaults.soundVolume, 0.0001f)
@@ -80,6 +83,7 @@ class FeedbackSettingsTest {
                     soundEnabled = true,
                     soundStyle = KeySoundStyle.GRAND_PIANO,
                     soundVolume = 0.8f,
+                    followSystemRingerMode = true,
                     includeNumberRow = true,
                     alwaysIncognito = true
                 )

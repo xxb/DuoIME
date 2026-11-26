@@ -8,9 +8,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -22,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.duoime.core.model.ChineseVariant
@@ -56,7 +61,7 @@ fun CandidateBar(snapshot: EngineSnapshot, callbacks: CandidateBarCallbacks, mod
             .fillMaxWidth()
             .height(dimensions.candidateBarHeight)
             .background(colors.barBackground)
-            .padding(horizontal = 6.dp),
+            .padding(horizontal = 6.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
@@ -64,19 +69,24 @@ fun CandidateBar(snapshot: EngineSnapshot, callbacks: CandidateBarCallbacks, mod
             BasicText(
                 text = snapshot.preedit,
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 style = TextStyle(
                     color = colors.preeditText,
-                    fontSize = 13.sp,
+                    fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold
                 ),
-                modifier = Modifier.padding(horizontal = 4.dp)
+                modifier = Modifier
+                    .widthIn(max = 112.dp)
+                    .padding(horizontal = 6.dp)
             )
         }
 
         LazyRow(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight(),
             contentPadding = PaddingValues(horizontal = 2.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             itemsIndexed(
@@ -128,20 +138,19 @@ fun SyllableChipRail(snapshot: EngineSnapshot, onSelectSyllable: (Int) -> Unit, 
         modifier = modifier
             .fillMaxWidth()
             .height(dimensions.syllableBarHeight)
-            .background(colors.barBackground),
+            .background(colors.barBackground)
+            .padding(horizontal = 6.dp, vertical = 3.dp),
         contentAlignment = Alignment.CenterStart
     ) {
         if (snapshot.syllables.isNotEmpty()) {
             LazyRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 6.dp),
+                modifier = Modifier.fillMaxSize(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 if (snapshot.selectedSyllableIndex >= 0) {
                     item(key = "clear_syllable") {
-                        CandidateChip(
+                        SyllableChip(
                             text = "×",
                             highlighted = false,
                             colors = colors,
@@ -153,7 +162,7 @@ fun SyllableChipRail(snapshot: EngineSnapshot, onSelectSyllable: (Int) -> Unit, 
                     items = snapshot.syllables,
                     key = { idx, syl -> "$idx:$syl" }
                 ) { idx, syl ->
-                    CandidateChip(
+                    SyllableChip(
                         text = syl,
                         highlighted = idx == snapshot.selectedSyllableIndex,
                         colors = colors,
@@ -171,10 +180,12 @@ private fun CandidateChip(text: String, highlighted: Boolean, colors: DuoColorTo
     val fg = if (highlighted) colors.chipSelectedText else colors.chipText
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
+            .defaultMinSize(minWidth = 56.dp)
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(8.dp))
             .background(bg)
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 4.dp),
+            .padding(horizontal = 14.dp),
         contentAlignment = Alignment.Center
     ) {
         BasicText(
@@ -182,7 +193,33 @@ private fun CandidateChip(text: String, highlighted: Boolean, colors: DuoColorTo
             maxLines = 1,
             style = TextStyle(
                 color = fg,
-                fontSize = 14.sp,
+                fontSize = 20.sp,
+                fontWeight = if (highlighted) FontWeight.SemiBold else FontWeight.Normal
+            )
+        )
+    }
+}
+
+@Composable
+private fun SyllableChip(text: String, highlighted: Boolean, colors: DuoColorTokens, onClick: () -> Unit) {
+    val bg = if (highlighted) colors.chipSelectedBackground else colors.chipBackground
+    val fg = if (highlighted) colors.chipSelectedText else colors.chipText
+    Box(
+        modifier = Modifier
+            .defaultMinSize(minWidth = 48.dp)
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(7.dp))
+            .background(bg)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        BasicText(
+            text = text,
+            maxLines = 1,
+            style = TextStyle(
+                color = fg,
+                fontSize = 16.sp,
                 fontWeight = if (highlighted) FontWeight.SemiBold else FontWeight.Normal
             )
         )
@@ -193,10 +230,12 @@ private fun CandidateChip(text: String, highlighted: Boolean, colors: DuoColorTo
 private fun SmallBarButton(label: String, enabled: Boolean, colors: DuoColorTokens, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
+            .defaultMinSize(minWidth = 44.dp)
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(8.dp))
             .background(colors.chipBackground)
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            .padding(horizontal = 10.dp),
         contentAlignment = Alignment.Center
     ) {
         BasicText(
@@ -204,7 +243,7 @@ private fun SmallBarButton(label: String, enabled: Boolean, colors: DuoColorToke
             maxLines = 1,
             style = TextStyle(
                 color = if (enabled) colors.chipText else colors.keySecondaryText,
-                fontSize = 13.sp,
+                fontSize = 17.sp,
                 fontWeight = FontWeight.Medium
             )
         )

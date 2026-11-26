@@ -45,9 +45,9 @@ data class DuoDimensionTokens(
     val keyVerticalGap: Dp = 6.dp,
     val gridHorizontalPadding: Dp = 6.dp,
     val gridVerticalPadding: Dp = 6.dp,
-    val toolbarHeight: Dp = 40.dp,
-    val candidateBarHeight: Dp = 40.dp,
-    val syllableBarHeight: Dp = 30.dp
+    val toolbarHeight: Dp = 52.dp,
+    val candidateBarHeight: Dp = 52.dp,
+    val syllableBarHeight: Dp = 42.dp
 )
 
 val DuoDarkColors: DuoColorTokens = DuoColorTokens(

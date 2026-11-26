@@ -26,14 +26,16 @@ data class DuoImeSettings(
     val hapticStrength: Int = KeyFeedbackOptions.DEFAULT_HAPTIC_STRENGTH,
     val soundEnabled: Boolean = false,
     val soundStyle: KeySoundStyle = KeySoundStyle.MECHANICAL,
-    val soundVolume: Float = KeyFeedbackOptions.DEFAULT_SOUND_VOLUME
+    val soundVolume: Float = KeyFeedbackOptions.DEFAULT_SOUND_VOLUME,
+    val followSystemRingerMode: Boolean = false
 ) {
     fun toFeedbackOptions(): KeyFeedbackOptions = KeyFeedbackOptions(
         hapticEnabled = hapticEnabled,
         hapticStrength = KeyFeedbackOptions.clampHapticStrength(hapticStrength),
         soundEnabled = soundEnabled,
         soundVolume = KeyFeedbackOptions.clampSoundVolume(soundVolume),
-        soundStyle = soundStyle
+        soundStyle = soundStyle,
+        followSystemRingerMode = followSystemRingerMode
     )
 }
 
@@ -86,7 +88,8 @@ class DuoImePreferences(context: Context) {
             soundStyle = KeySoundStyle.fromNameOrDefault(prefs.getString(KEY_SOUND_STYLE, null)),
             soundVolume = KeyFeedbackOptions.clampSoundVolume(
                 prefs.getFloat(KEY_SOUND_VOLUME, KeyFeedbackOptions.DEFAULT_SOUND_VOLUME)
-            )
+            ),
+            followSystemRingerMode = prefs.getBoolean(KEY_FOLLOW_SYSTEM_RINGER_MODE, false)
         )
     }
 
@@ -109,6 +112,7 @@ class DuoImePreferences(context: Context) {
             .putBoolean(KEY_SOUND_ENABLED, settings.soundEnabled)
             .putString(KEY_SOUND_STYLE, settings.soundStyle.name)
             .putFloat(KEY_SOUND_VOLUME, KeyFeedbackOptions.clampSoundVolume(settings.soundVolume))
+            .putBoolean(KEY_FOLLOW_SYSTEM_RINGER_MODE, settings.followSystemRingerMode)
             .apply()
     }
 
@@ -156,6 +160,7 @@ class DuoImePreferences(context: Context) {
         private const val KEY_SOUND_ENABLED = "sound_enabled"
         private const val KEY_SOUND_STYLE = "sound_style"
         private const val KEY_SOUND_VOLUME = "sound_volume"
+        private const val KEY_FOLLOW_SYSTEM_RINGER_MODE = "follow_system_ringer_mode"
         private const val NO_PAIRED_DISPLAY = -1
 
         /**
