@@ -113,5 +113,17 @@ class EngineAndSinkContractTest {
             FeedbackKey(action = KeyAction.SwitchMode(InputMode.PINYIN_26), label = "中", zone = FeedbackZone.ACTION)
         assertTrue(context.incognito)
         assertEquals("中", feedback.label)
+
+        // PassThroughEngine contract: never composes, passes all keys/selections through safely
+        val passthrough: InputEngine = PassThroughEngine()
+        assertEquals(EngineSnapshot.EMPTY, passthrough.state.value)
+        assertEquals(KeyProcessResult.PassThrough, passthrough.onKey(EngineKeyEvent.fromChar('a')))
+        assertEquals(KeyProcessResult.PassThrough, passthrough.selectCandidate(0))
+        assertFalse(passthrough.selectSyllable(0))
+        assertFalse(passthrough.page(true))
+        assertFalse(passthrough.selectSchema(EngineSchemas.PINYIN_26))
+        passthrough.setOption(EngineOptions.INCOGNITO, true)
+        passthrough.reset()
+        assertEquals(EngineSnapshot.EMPTY, passthrough.state.value)
     }
 }

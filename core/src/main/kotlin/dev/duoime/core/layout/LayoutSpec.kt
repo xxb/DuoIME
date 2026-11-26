@@ -171,7 +171,7 @@ object BuiltInLayouts {
                     KeySpec(
                         id = "sym_back",
                         label = "返回",
-                        action = KeyAction.SwitchMode(InputMode.PINYIN_26),
+                        action = KeyAction.SwitchMode(InputMode.SYMBOLS),
                         weight = 1.5f,
                         zone = FeedbackZone.ACTION
                     ),

@@ -6,7 +6,9 @@ import dev.duoime.core.layout.KeyCodes
 import dev.duoime.core.model.EngineSnapshot
 import dev.duoime.core.model.InputMode
 import dev.duoime.core.model.KeyProcessResult
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Standard engine option keys shared across `:engine-lite` (M1) and `:engine-rime` (M2).
@@ -80,4 +82,29 @@ interface InputEngine {
     fun selectSchema(id: String): Boolean
 
     fun reset()
+}
+
+/**
+ * Zero-allocation fallback [InputEngine] that declines every key (`PassThrough`) with an empty
+ * snapshot. Keeps the keyboard functional for direct text, Backspace, Space, Enter, and host
+ * actions even if both primary and fallback engines fail to initialize.
+ */
+class PassThroughEngine : InputEngine {
+    override val state: StateFlow<EngineSnapshot> = EMPTY_STATE
+
+    override fun onKey(event: EngineKeyEvent): KeyProcessResult = KeyProcessResult.PassThrough
+
+    override fun selectCandidate(indexOnPage: Int): KeyProcessResult = KeyProcessResult.PassThrough
+
+    override fun page(forward: Boolean): Boolean = false
+
+    override fun setOption(name: String, on: Boolean) = Unit
+
+    override fun selectSchema(id: String): Boolean = false
+
+    override fun reset() = Unit
+
+    companion object {
+        private val EMPTY_STATE: StateFlow<EngineSnapshot> = MutableStateFlow(EngineSnapshot.EMPTY).asStateFlow()
+    }
 }

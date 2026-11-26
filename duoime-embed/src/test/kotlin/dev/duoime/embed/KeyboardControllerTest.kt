@@ -377,4 +377,110 @@ class KeyboardControllerTest {
         assertEquals(listOf(0.75f, 0.90f, 0.60f), recordedHeights)
         controller.close()
     }
+
+    @Test
+    fun totalEngineAndFallbackFailureInstallsPassThroughEngineAndStaysUsable() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val sink = RecordingInputSink(SinkCapabilities.STANDARD_IME)
+        var swaps = 0
+
+        val controller = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { error("Primary engine failed") },
+            fallbackEngineFactory = { error("Fallback engine also failed") },
+            hostCallbacks = KeyboardHostCallbacks(onSwapScreenRequested = { swaps++ })
+        )
+        controller.attachSink(sink)
+        advanceUntilIdle()
+
+        assertTrue("Keyboard must stay enabled via PassThroughEngine", controller.uiState.value.isEngineReady)
+        assertNotNull(controller.uiState.value.engineError)
+        assertEquals(InputMode.ENGLISH, controller.uiState.value.activeLayout.mode)
+
+        controller.dispatchKeyAction(KeyAction.Text("h"))
+        controller.dispatchKeyAction(KeyAction.Space)
+        controller.dispatchKeyAction(KeyAction.Backspace)
+        controller.dispatchKeyAction(KeyAction.Enter)
+        controller.dispatchKeyAction(KeyAction.SwapScreen)
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf("commit:h", "commit: ", "delete:1", "key:${KeyCodes.KEYCODE_ENTER}:0"),
+            sink.events
+        )
+        assertEquals(1, swaps)
+        controller.close()
+    }
+
+    @Test
+    fun passThroughMidPreeditCommitsRawPreeditAndEmptyBackspaceDeletesOneChar() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val sink = RecordingInputSink(SinkCapabilities.STANDARD_IME)
+        val controller = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { LiteInputEngine.createDefault() }
+        )
+        controller.attachSink(sink)
+        advanceUntilIdle()
+
+        // Empty backspace deletes 1 char cleanly without spurious composing clear
+        controller.dispatchKeyAction(KeyAction.Backspace)
+        advanceUntilIdle()
+        assertEquals(listOf("delete:1"), sink.events)
+
+        // Compose "nihao", then dispatch a Ctrl+C chord -> engine returns PassThrough while still composing
+        sink.events.clear()
+        typeEngineChars(controller, "nihao")
+        advanceUntilIdle()
+        assertTrue(controller.uiState.value.snapshot.isComposing)
+        sink.events.clear()
+
+        controller.dispatchKeyAction(
+            KeyAction.Engine(keysym = KeyCodes.keysymForChar('c'), mask = KeyCodes.MASK_CONTROL)
+        )
+        advanceUntilIdle()
+
+        assertFalse(
+            "Preedit must be reset after mid-preedit PassThrough",
+            controller.uiState.value.snapshot.isComposing
+        )
+        assertEquals(listOf("commit:ni'hao", "compose:<clear>"), sink.events)
+        controller.close()
+    }
+
+    @Test
+    fun symbolsModeToggleRestoresLastNonSymbolMode() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val sink = RecordingInputSink(SinkCapabilities.STANDARD_IME)
+        val controller = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { LiteInputEngine.createDefault() }
+        )
+        controller.attachSink(sink)
+        advanceUntilIdle()
+
+        // T9 -> SYMBOLS -> SYMBOLS toggle restores T9
+        controller.dispatchKeyAction(KeyAction.SwitchMode(InputMode.PINYIN_T9))
+        advanceUntilIdle()
+        assertEquals(InputMode.PINYIN_T9, controller.uiState.value.activeLayout.mode)
+
+        controller.dispatchKeyAction(KeyAction.SwitchMode(InputMode.SYMBOLS))
+        advanceUntilIdle()
+        assertEquals(InputMode.SYMBOLS, controller.uiState.value.activeLayout.mode)
+
+        controller.dispatchKeyAction(KeyAction.SwitchMode(InputMode.SYMBOLS))
+        advanceUntilIdle()
+        assertEquals(InputMode.PINYIN_T9, controller.uiState.value.activeLayout.mode)
+
+        // ENGLISH -> SYMBOLS -> SYMBOLS toggle restores ENGLISH
+        controller.dispatchKeyAction(KeyAction.SwitchMode(InputMode.ENGLISH))
+        controller.dispatchKeyAction(KeyAction.SwitchMode(InputMode.SYMBOLS))
+        controller.dispatchKeyAction(KeyAction.SwitchMode(InputMode.SYMBOLS))
+        advanceUntilIdle()
+        assertEquals(InputMode.ENGLISH, controller.uiState.value.activeLayout.mode)
+        controller.close()
+    }
 }

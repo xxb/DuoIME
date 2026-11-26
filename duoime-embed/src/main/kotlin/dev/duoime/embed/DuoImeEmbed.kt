@@ -56,7 +56,8 @@ fun DuoImeKeyboard(
         isReady = state.isEngineReady,
         heightFraction = state.heightFraction,
         isOverlayMode = state.isOverlayMode,
-        extensionButtons = state.editorContext.extension?.toolbarButtons.orEmpty()
+        extensionButtons = state.editorContext.extension?.toolbarButtons.orEmpty(),
+        engineError = state.engineError
     )
 
     DuoTheme(darkTheme = darkTheme) {
