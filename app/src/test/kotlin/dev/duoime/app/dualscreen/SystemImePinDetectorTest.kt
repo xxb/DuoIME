@@ -15,9 +15,11 @@ class SystemImePinDetectorTest {
         assertNull(SystemImePinDetector.parsePinValue(null))
         assertNull(SystemImePinDetector.parsePinValue(2))
 
+        // Authoritative OS detection always overrides manual fallback
+        assertEquals(false, SystemImePinDetector.resolveEffectivePin(detectedPin = false, manualOverride = true))
+        assertEquals(true, SystemImePinDetector.resolveEffectivePin(detectedPin = true, manualOverride = false))
         assertEquals(true, SystemImePinDetector.resolveEffectivePin(detectedPin = null, manualOverride = true))
-        assertEquals(true, SystemImePinDetector.resolveEffectivePin(detectedPin = false, manualOverride = true))
-        assertEquals(false, SystemImePinDetector.resolveEffectivePin(detectedPin = false, manualOverride = false))
         assertNull(SystemImePinDetector.resolveEffectivePin(detectedPin = null, manualOverride = false))
+        assertEquals(false, SystemImePinDetector.resolveEffectivePin(detectedPin = false, manualOverride = false))
     }
 }

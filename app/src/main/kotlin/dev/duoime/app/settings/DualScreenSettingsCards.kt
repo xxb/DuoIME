@@ -92,7 +92,7 @@ internal fun SystemPinImeCard(
                 text = stringResource(R.string.pin_instructions),
                 style = MaterialTheme.typography.bodySmall
             )
-            if (detectedSystemPin == null) {
+            if (detectedSystemPin == null || manualPinEnabled) {
                 SettingSwitchRow(
                     title = stringResource(R.string.toggle_manual_pin),
                     checked = manualPinEnabled,

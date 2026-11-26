@@ -22,7 +22,7 @@ object SystemImePinDetector {
     }
 
     fun resolveEffectivePin(detectedPin: Boolean?, manualOverride: Boolean): Boolean? =
-        if (manualOverride) true else detectedPin
+        detectedPin ?: if (manualOverride) true else null
 
     fun readSystemImePin(contentResolver: ContentResolver): Boolean? {
         val primary = readSystemIntOrNull(contentResolver, KEY_IME_FIXED)

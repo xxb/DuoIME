@@ -106,6 +106,20 @@ class DisplayClassifierTest {
             state = DisplayClassifier.STATE_ON,
             reflectedType = DisplayClassifier.TYPE_EXTERNAL
         )
+        val unknownDefault = RawDisplayInfo(
+            displayId = DisplayClassifier.DEFAULT_DISPLAY_ID,
+            flags = 0,
+            state = DisplayClassifier.STATE_ON,
+            reflectedType = null,
+            description = ""
+        )
+        val unknownSecondary = RawDisplayInfo(
+            displayId = 8,
+            flags = DisplayClassifier.FLAG_PRESENTATION,
+            state = DisplayClassifier.STATE_ON,
+            reflectedType = null,
+            description = "Display id 8: wireless display"
+        )
         val unknownStateBuiltIn = retroidDisplay2().copy(state = DisplayClassifier.STATE_UNKNOWN)
         val onSuspendBuiltIn = retroidDisplay2().copy(state = DisplayClassifier.STATE_ON_SUSPEND)
 
@@ -114,6 +128,8 @@ class DisplayClassifierTest {
         assertEquals(DisplayKind.VIRTUAL, DisplayClassifier.classifyKind(wifiViaDescription))
         assertEquals(DisplayKind.VIRTUAL, DisplayClassifier.classifyKind(overlayViaDescription))
         assertEquals(DisplayKind.EXTERNAL, DisplayClassifier.classifyKind(externalViaReflection))
+        assertEquals(DisplayKind.BUILT_IN, DisplayClassifier.classifyKind(unknownDefault))
+        assertEquals(DisplayKind.PRESENTATION_ONLY, DisplayClassifier.classifyKind(unknownSecondary))
 
         assertFalse(DisplayClassifier.isDisplayActive(unknownStateBuiltIn.state))
         assertFalse(DisplayClassifier.isDisplayActive(DisplayClassifier.STATE_OFF))
@@ -123,28 +139,36 @@ class DisplayClassifierTest {
 
     @Test
     fun calibratedPairedPeerPrioritizesBuiltInPeerAndRejectsLaterCastingDisplays() {
-        val newlyConnectedCast = RawDisplayInfo(
+        val newlyConnectedUnknown = RawDisplayInfo(
             displayId = 9,
             flags = DisplayClassifier.FLAG_PRESENTATION,
             state = DisplayClassifier.STATE_ON,
             reflectedType = null,
             description = "Display id 9: wireless display"
         )
-        val raw = listOf(retroidDisplay0(), newlyConnectedCast, retroidDisplay2())
+        val thirdInternalDisplay = RawDisplayInfo(
+            displayId = 10,
+            flags = DisplayClassifier.FLAG_TRUSTED,
+            state = DisplayClassifier.STATE_ON,
+            reflectedType = DisplayClassifier.TYPE_INTERNAL,
+            description = "Display id 10: type INTERNAL"
+        )
+        val raw = listOf(retroidDisplay0(), newlyConnectedUnknown, thirdInternalDisplay, retroidDisplay2())
 
-        // Without calibration, findCalibratablePeerDisplay finds an active non-default built-in peer
         val candidatesCalibrated = DisplayClassifier.classifyDisplays(raw, pairedPeerDisplayId = 2)
 
-        // Paired Display #2 must be prioritized first and remain BUILT_IN; Display #9 demoted to EXTERNAL
+        // Paired Display #2 must be prioritized first and remain BUILT_IN; unknown #9 stays PRESENTATION_ONLY
+        // and uncalibrated internal #10 is demoted to EXTERNAL once calibrated.
         assertEquals(2, candidatesCalibrated.first().displayId)
         assertEquals(DisplayKind.BUILT_IN, candidatesCalibrated.first().kind)
-        val castCandidate = candidatesCalibrated.first { it.displayId == 9 }
-        assertEquals(DisplayKind.EXTERNAL, castCandidate.kind)
+        assertEquals(DisplayKind.PRESENTATION_ONLY, candidatesCalibrated.first { it.displayId == 9 }.kind)
+        assertEquals(DisplayKind.EXTERNAL, candidatesCalibrated.first { it.displayId == 10 }.kind)
 
-        // Even if Display #2 turns OFF, Display #9 (added after calibration) must NOT hijack the overlay
+        // Even if Display #2 turns OFF, Display #9/#10 (not paired) must NOT hijack the overlay
         val rawPeerOff = listOf(
             retroidDisplay0(),
-            newlyConnectedCast,
+            newlyConnectedUnknown,
+            thirdInternalDisplay,
             retroidDisplay2().copy(state = DisplayClassifier.STATE_OFF)
         )
         val decision = DisplayPlacementPolicy.resolve(

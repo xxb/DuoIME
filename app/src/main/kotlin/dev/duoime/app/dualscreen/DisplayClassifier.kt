@@ -102,7 +102,7 @@ object DisplayClassifier {
             TYPE_VIRTUAL, TYPE_WIFI, TYPE_OVERLAY -> DisplayKind.VIRTUAL
             TYPE_EXTERNAL -> DisplayKind.EXTERNAL
             TYPE_INTERNAL -> DisplayKind.BUILT_IN
-            else -> if (raw.displayId == DEFAULT_DISPLAY_ID) DisplayKind.BUILT_IN else DisplayKind.BUILT_IN
+            else -> if (raw.displayId == DEFAULT_DISPLAY_ID) DisplayKind.BUILT_IN else DisplayKind.PRESENTATION_ONLY
         }
         if (baseKind != DisplayKind.BUILT_IN) {
             return baseKind

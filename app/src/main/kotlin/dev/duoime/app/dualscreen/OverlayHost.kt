@@ -129,6 +129,10 @@ class OverlayHost(
         }
     }
 
+    fun resetVisibilityTracking() {
+        visibilityDebouncer.reset()
+    }
+
     fun hide() {
         isShowing = false
         visibilityDebouncer.reset()

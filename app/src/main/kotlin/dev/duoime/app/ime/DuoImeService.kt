@@ -252,7 +252,7 @@ class DuoImeService : InputMethodService() {
         super.onStartInput(attribute, restarting)
         activeEditorConnection = currentInputConnection
         lastEditorInfo = attribute
-        overlayHiddenByHost = false
+        resetOverlayHostHideSuppression()
         inputSink.onStartInput(
             initialSelStart = attribute?.initialSelStart ?: SelectionState.NO_COMPOSING,
             initialSelEnd = attribute?.initialSelEnd ?: SelectionState.NO_COMPOSING
@@ -267,6 +267,7 @@ class DuoImeService : InputMethodService() {
         lastEditorInfo = info
         isInputViewActive = true
         placementApplied = false
+        resetOverlayHostHideSuppression()
         applyEditorInfo(info)
         composeOwner.onResume()
         evaluateAndApplyPlacement()
@@ -306,6 +307,7 @@ class DuoImeService : InputMethodService() {
 
     override fun onFinishInputView(finishingInput: Boolean) {
         isInputViewActive = false
+        resetOverlayHostHideSuppression()
         hideOverlayWindow()
         flushComposingOn()
         controller.reset()
@@ -315,6 +317,7 @@ class DuoImeService : InputMethodService() {
 
     override fun onWindowHidden() {
         isInputViewActive = false
+        resetOverlayHostHideSuppression()
         hideOverlayWindow()
         composeOwner.onPauseToCreated()
         super.onWindowHidden()
@@ -322,6 +325,7 @@ class DuoImeService : InputMethodService() {
 
     override fun onFinishInput() {
         isInputViewActive = false
+        resetOverlayHostHideSuppression()
         hideOverlayWindow()
         flushComposingOn()
         activeEditorConnection = null
@@ -346,9 +350,19 @@ class DuoImeService : InputMethodService() {
         inputSink.finishComposingOnEditorSwitch(connection?.let(::AndroidInputConnectionBridge))
     }
 
+    private fun resetOverlayHostHideSuppression() {
+        overlayHiddenByHost = false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            overlayHost?.resetVisibilityTracking()
+        }
+    }
+
     private fun handleSwapScreenRequested() {
         val updated = preferences.toggleSwapToSameScreen()
         settingsFlow.value = updated
+        if (!updated.swapToSameScreen) {
+            resetOverlayHostHideSuppression()
+        }
         // Preserve active composing state & engine snapshot across inline <-> overlay swap.
         evaluateAndApplyPlacement()
     }

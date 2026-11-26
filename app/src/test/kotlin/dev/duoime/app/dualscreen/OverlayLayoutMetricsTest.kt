@@ -82,10 +82,13 @@ class OverlayLayoutMetricsTest {
         runCurrent()
         assertEquals(1, hiddenCallbacks)
 
-        // After reset() for a new editor session, can detect again cleanly
+        // After reset() for a new input-view session, requires a fresh full 150 ms !VISIBLE window
         debouncer.reset()
         debouncer.onVisibilityChanged(isVisible = false, isSessionActive = true)
-        advanceTimeBy(160L)
+        advanceTimeBy(100L)
+        runCurrent()
+        assertEquals("Session 2 must not confirm before full 150ms debounce", 1, hiddenCallbacks)
+        advanceTimeBy(60L)
         runCurrent()
         assertEquals(2, hiddenCallbacks)
     }
