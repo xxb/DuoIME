@@ -57,7 +57,29 @@
     <string name="height_preset_tall">高</string>
     <string name="pref_height_range_subtitle">同屏约 %1$d–%2$d%% · 对屏 %3$d–%4$d%%</string>
 
-    <string name="card_overrides_title">7. 单应用强制同屏列表</string>
+    <string name="card_feedback_title">7. 按键音效与触感反馈</string>
+    <string name="pref_haptic_enabled">按键振动反馈</string>
+    <string name="pref_haptic_strength_label">振动强度：%1$d / 5</string>
+    <string name="pref_sound_enabled">按键音效</string>
+    <string name="pref_sound_ringer_hint">按键音效使用系统提示音通道，在设备静音或振动模式下会自动静音。</string>
+    <string name="pref_sound_volume_label">音效音量：%1$d%%</string>
+    <string name="pref_sound_style_label">音效风格</string>
+    <string name="btn_preview_sound">试听当前音效</string>
+    <string name="sound_style_mechanical">经典机械轴</string>
+    <string name="sound_style_arcade_combo">街机连击</string>
+    <string name="sound_style_retro_8bit">8-Bit 复古</string>
+    <string name="sound_style_scifi_synth">科幻合成</string>
+    <string name="sound_style_grand_piano">三角钢琴</string>
+    <string name="sound_style_guzheng">国风古筝</string>
+    <string name="sound_style_kalimba">八音盒·拇指琴</string>
+    <string name="sound_style_marimba">马林巴·空灵鼓</string>
+    <string name="sound_style_jazz_rhodes">爵士电钢</string>
+    <string name="sound_style_harp_nylon">竖琴·古典吉他</string>
+    <string name="sound_style_bronze_chime">编钟·玉磬</string>
+    <string name="sound_style_drum_kit">原声架子鼓</string>
+    <string name="sound_style_band_ensemble">乐队混搭</string>
+
+    <string name="card_overrides_title">8. 单应用强制同屏列表</string>
     <string name="overrides_description">为指定包名强制使用同屏模式（例如禁止悬浮窗的银行/支付应用）。</string>
     <string name="overrides_package_hint">com.example.app</string>
     <string name="btn_add_package">添加</string>

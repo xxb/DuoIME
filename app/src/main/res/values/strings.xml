@@ -57,7 +57,29 @@
     <string name="height_preset_tall">L</string>
     <string name="pref_height_range_subtitle">Same screen ≈%1$d–%2$d%% · Opposite %3$d–%4$d%%</string>
 
-    <string name="card_overrides_title">7. Per-App Inline Overrides</string>
+    <string name="card_feedback_title">7. Sound &amp; Haptic Feedback</string>
+    <string name="pref_haptic_enabled">Key Haptic Feedback</string>
+    <string name="pref_haptic_strength_label">Haptic Strength: %1$d / 5</string>
+    <string name="pref_sound_enabled">Key Sound Effects</string>
+    <string name="pref_sound_ringer_hint">Key sounds use system sonification audio and automatically mute in Silent or Vibrate mode.</string>
+    <string name="pref_sound_volume_label">Sound Volume: %1$d%%</string>
+    <string name="pref_sound_style_label">Sound Style</string>
+    <string name="btn_preview_sound">Preview Sound</string>
+    <string name="sound_style_mechanical">Mechanical</string>
+    <string name="sound_style_arcade_combo">Arcade Combo</string>
+    <string name="sound_style_retro_8bit">8-Bit Retro</string>
+    <string name="sound_style_scifi_synth">Sci-Fi Synth</string>
+    <string name="sound_style_grand_piano">Grand Piano</string>
+    <string name="sound_style_guzheng">Guzheng</string>
+    <string name="sound_style_kalimba">Kalimba / Music Box</string>
+    <string name="sound_style_marimba">Marimba / Handpan</string>
+    <string name="sound_style_jazz_rhodes">Jazz Rhodes</string>
+    <string name="sound_style_harp_nylon">Harp / Nylon Guitar</string>
+    <string name="sound_style_bronze_chime">Bronze Chime / Jade</string>
+    <string name="sound_style_drum_kit">Acoustic Drum Kit</string>
+    <string name="sound_style_band_ensemble">Band Ensemble</string>
+
+    <string name="card_overrides_title">8. Per-App Inline Overrides</string>
     <string name="overrides_description">Force Inline mode for specific package names (e.g. banking apps that block overlays).</string>
     <string name="overrides_package_hint">com.example.app</string>
     <string name="btn_add_package">Add</string>

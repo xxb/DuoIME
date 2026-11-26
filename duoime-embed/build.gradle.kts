@@ -47,7 +47,7 @@ composeCompiler {
 
 dependencies {
     api(project(":core"))
-    implementation(project(":keyboard-ui"))
+    api(project(":keyboard-ui"))
     implementation(project(":engine-lite"))
 
     implementation(libs.androidx.core.ktx)

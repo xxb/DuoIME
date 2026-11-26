@@ -84,6 +84,9 @@ class OverlayHost(
     val isShowing: Boolean
         get() = showTracker.isShowing
 
+    val activeView: View?
+        get() = rootView
+
     fun isShowingOn(displayId: Int, heightFraction: Float, darkTheme: Boolean): Boolean {
         val root = rootView ?: return false
         return showTracker.shouldSkipShow(

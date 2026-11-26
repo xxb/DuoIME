@@ -10,7 +10,10 @@ that DuoIME ports, adapts, or integrates under Option A (100% permissive reposit
 
 - Upstream: https://github.com/xxb/ShellDeck
 - License: MIT (`SPDX-License-Identifier: MIT`)
-- Scope: Pure-Kotlin IME core (`:engine-lite` in M1), keystroke sound/haptic feedback, and whiteboard geometry/physics components ported with original MIT headers preserved.
+- Scope:
+  - Pure-Kotlin IME core (`:engine-lite` in M1) ported with original MIT headers preserved.
+  - Procedural keystroke sound DSP, polyphonic `AudioTrack` mixer, pitch/band router, and capability-tiered haptics engine (`keyboard-ui/src/main/kotlin/dev/duoime/ui/feedback/*`) ported and adapted to `:core` `FeedbackKey` with original MIT headers preserved.
+  - Whiteboard geometry/physics components (planned M3) ported with original MIT headers preserved.
 
 ### Bundled `:engine-lite` Permissive Dictionary Datasets
 

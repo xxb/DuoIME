@@ -62,6 +62,8 @@ import dev.duoime.embed.DuoImeKeyboard
 import dev.duoime.embed.KeyboardController
 import dev.duoime.embed.KeyboardControllerConfig
 import dev.duoime.embed.KeyboardHostCallbacks
+import dev.duoime.ui.feedback.KeyFeedbackController
+import dev.duoime.ui.feedback.KeyFeedbackOptions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -91,10 +93,13 @@ class DuoImeService : InputMethodService() {
     private lateinit var preferences: DuoImePreferences
     private lateinit var controller: KeyboardController
     private lateinit var sessionController: DualScreenSessionController
+    private lateinit var feedbackController: KeyFeedbackController
 
     private var displayManager: DisplayManager? = null
     private var pinObserverHandle: AutoCloseable? = null
     private var overlayHost: OverlayHost? = null
+    private var inlineInputView: View? = null
+    private var cachedFeedbackOptions: KeyFeedbackOptions = KeyFeedbackOptions()
 
     private var activeEditorConnection: InputConnection? = null
     private var lastEditorInfo: EditorInfo? = null
@@ -121,6 +126,8 @@ class DuoImeService : InputMethodService() {
         preferences = DuoImePreferences(this)
         val initialSettings = preferences.load()
         settingsFlow.value = initialSettings
+        cachedFeedbackOptions = initialSettings.toFeedbackOptions()
+        feedbackController = KeyFeedbackController(this)
 
         controller = KeyboardController(
             scope = serviceScope,
@@ -134,7 +141,8 @@ class DuoImeService : InputMethodService() {
                 onSwapScreenRequested = { handleSwapScreenRequested() },
                 onDismissRequested = { hideAllKeyboardSurfaces() },
                 onSwitchImeRequested = { showImePicker() },
-                onHeightFractionChanged = { fraction -> handleHeightChanged(fraction) }
+                onHeightFractionChanged = { fraction -> handleHeightChanged(fraction) },
+                onFeedbackKey = { key -> feedbackController.onKeyPress(key, cachedFeedbackOptions) }
             )
         )
         controller.setIncludeNumberRow(initialSettings.includeNumberRow)
@@ -154,11 +162,15 @@ class DuoImeService : InputMethodService() {
             overlaySurface = overlaySurface,
             evaluatePlacementInput = { buildPlacementEvaluationSnapshot() },
             onOverlayApplied = { decision ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    feedbackController.attachFallbackView(overlayHost?.activeView)
+                }
                 decisionFlow.value = decision
                 controller.updateOverlayMode(true)
                 requestInsetsRefresh()
             },
             onInlineApplied = { inlineDecision ->
+                feedbackController.attachFallbackView(inlineInputView)
                 controller.attachSink(inlineSinkProxy)
                 decisionFlow.value = inlineDecision
                 controller.updateOverlayMode(false)
@@ -184,6 +196,9 @@ class DuoImeService : InputMethodService() {
             setContent {
                 InlineImeContainer()
             }
+        }.also { view ->
+            inlineInputView = view
+            feedbackController.attachFallbackView(view)
         }
     }
 
@@ -315,6 +330,7 @@ class DuoImeService : InputMethodService() {
 
     override fun onFinishInputView(finishingInput: Boolean) {
         sessionController.onFinishInputView()
+        feedbackController.onInputHidden()
         flushComposingOn()
         controller.reset()
         composeOwner.onPauseToCreated()
@@ -323,6 +339,7 @@ class DuoImeService : InputMethodService() {
 
     override fun onWindowHidden() {
         sessionController.onWindowHidden()
+        feedbackController.onInputHidden()
         composeOwner.onPauseToCreated()
         super.onWindowHidden()
     }
@@ -338,6 +355,8 @@ class DuoImeService : InputMethodService() {
 
     override fun onDestroy() {
         sessionController.onDestroy()
+        inlineInputView = null
+        feedbackController.release()
         displayManager?.unregisterDisplayListener(displayListener)
         runCatching { pinObserverHandle?.close() }
         pinObserverHandle = null
@@ -354,6 +373,7 @@ class DuoImeService : InputMethodService() {
     private fun handleSwapScreenRequested() {
         val updated = preferences.toggleSwapToSameScreen()
         settingsFlow.value = updated
+        cachedFeedbackOptions = updated.toFeedbackOptions()
         // Preserve active composing state & engine snapshot across inline <-> overlay swap.
         sessionController.onSwapScreenToggled(updated.swapToSameScreen)
     }
@@ -361,6 +381,7 @@ class DuoImeService : InputMethodService() {
     private fun handleHeightChanged(fraction: Float) {
         val updated = preferences.updateHeightFraction(fraction)
         settingsFlow.value = updated
+        cachedFeedbackOptions = updated.toFeedbackOptions()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && isOverlayCurrentlyShowing()) {
             overlayHost?.updatePresentation(updated.heightFraction, updated.darkTheme)
         }
@@ -487,6 +508,7 @@ class DuoImeService : InputMethodService() {
     private fun refreshSettings() {
         val latest = preferences.load()
         settingsFlow.value = latest
+        cachedFeedbackOptions = latest.toFeedbackOptions()
         controller.setIncludeNumberRow(latest.includeNumberRow)
     }
 

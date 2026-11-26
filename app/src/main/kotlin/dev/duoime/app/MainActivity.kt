@@ -50,6 +50,7 @@ import dev.duoime.app.dualscreen.SystemImePinDetector
 import dev.duoime.app.settings.DisplayCalibrationCard
 import dev.duoime.app.settings.DuoImePreferences
 import dev.duoime.app.settings.DuoImeSettings
+import dev.duoime.app.settings.FeedbackSettingsCard
 import dev.duoime.app.settings.HeightControlSection
 import dev.duoime.app.settings.OverlayPermissionCard
 import dev.duoime.app.settings.PerAppInlineOverridesCard
@@ -190,6 +191,11 @@ private fun DuoImeSettingsScreen(settings: DuoImeSettings, onSettingsChanged: (D
         )
 
         PreferencesCard(
+            settings = settings,
+            onSettingsChanged = onSettingsChanged
+        )
+
+        FeedbackSettingsCard(
             settings = settings,
             onSettingsChanged = onSettingsChanged
         )
