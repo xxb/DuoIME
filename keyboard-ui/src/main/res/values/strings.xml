@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="duo_height_preset_compact">S</string>
+    <string name="duo_height_preset_standard">M</string>
+    <string name="duo_height_preset_tall">L</string>
+</resources>

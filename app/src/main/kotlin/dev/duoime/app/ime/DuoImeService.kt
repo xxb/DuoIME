@@ -131,11 +131,15 @@ class DuoImeService : InputMethodService() {
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
         val oldIc = activeEditorConnection
         if (oldIc != null && oldIc !== currentInputConnection) {
-            inputSink.finishComposingOnEditorSwitch(AndroidInputConnectionBridge(oldIc))
+            flushComposingOn(oldIc)
         }
         super.onStartInput(attribute, restarting)
         activeEditorConnection = currentInputConnection
         lastEditorInfo = attribute
+        inputSink.onStartInput(
+            initialSelStart = attribute?.initialSelStart ?: SelectionState.NO_COMPOSING,
+            initialSelEnd = attribute?.initialSelEnd ?: SelectionState.NO_COMPOSING
+        )
         applyEditorInfo(attribute)
     }
 
@@ -144,7 +148,6 @@ class DuoImeService : InputMethodService() {
         attachComposeOwnerToDecor()
         refreshSettings()
         lastEditorInfo = info
-        activeEditorConnection = currentInputConnection
         applyEditorInfo(info)
         composeOwner.onResume()
     }
@@ -158,8 +161,7 @@ class DuoImeService : InputMethodService() {
         candidatesEnd: Int
     ) {
         super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
-        if (inputSink.consumeSelectionEcho()) return
-        val shouldReset = EditorInfoMapper.shouldResetComposingOnSelectionUpdate(
+        val shouldReset = inputSink.shouldResetOnSelectionUpdate(
             isComposing = controller.uiState.value.snapshot.isComposing,
             newSelStart = newSelStart,
             newSelEnd = newSelEnd,
@@ -173,7 +175,7 @@ class DuoImeService : InputMethodService() {
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
-        inputSink.finishComposingOnEditorSwitch(currentInputConnection?.let(::AndroidInputConnectionBridge))
+        flushComposingOn()
         controller.reset()
         composeOwner.onPauseToCreated()
         super.onFinishInputView(finishingInput)
@@ -185,9 +187,7 @@ class DuoImeService : InputMethodService() {
     }
 
     override fun onFinishInput() {
-        inputSink.finishComposingOnEditorSwitch(
-            (activeEditorConnection ?: currentInputConnection)?.let(::AndroidInputConnectionBridge)
-        )
+        flushComposingOn()
         activeEditorConnection = null
         lastEditorInfo = null
         controller.reset()
@@ -199,6 +199,10 @@ class DuoImeService : InputMethodService() {
         serviceScope.cancel()
         composeOwner.onDestroy()
         super.onDestroy()
+    }
+
+    private fun flushComposingOn(connection: InputConnection? = activeEditorConnection ?: currentInputConnection) {
+        inputSink.finishComposingOnEditorSwitch(connection?.let(::AndroidInputConnectionBridge))
     }
 
     private fun attachComposeOwnerToDecor() {

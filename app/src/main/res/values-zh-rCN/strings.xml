@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">DuoIME</string>
+    <string name="ime_name">DuoIME</string>
+    <string name="subtype_pinyin">中文 / 英文 (DuoIME)</string>
+    <string name="height_preset_compact">矮</string>
+    <string name="height_preset_standard">中</string>
+    <string name="height_preset_tall">高</string>
+    <string name="pref_height_range_subtitle">同屏约 %1$d–%2$d%% · 对屏 %3$d–%4$d%%</string>
+</resources>

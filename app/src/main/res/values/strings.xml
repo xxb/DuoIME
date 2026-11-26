@@ -3,4 +3,8 @@
     <string name="app_name">DuoIME</string>
     <string name="ime_name">DuoIME</string>
     <string name="subtype_pinyin">Chinese / English (DuoIME)</string>
+    <string name="height_preset_compact">S</string>
+    <string name="height_preset_standard">M</string>
+    <string name="height_preset_tall">L</string>
+    <string name="pref_height_range_subtitle">Same screen ≈%1$d–%2$d%% · Opposite %3$d–%4$d%%</string>
 </resources>

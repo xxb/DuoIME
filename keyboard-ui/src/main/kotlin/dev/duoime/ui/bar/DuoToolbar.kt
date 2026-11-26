@@ -21,6 +21,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -32,10 +33,26 @@ import dev.duoime.core.model.ChineseVariant
 import dev.duoime.core.model.InputMode
 import dev.duoime.core.model.KeyAction
 import dev.duoime.core.protocol.ExtensionToolbarButton
+import dev.duoime.ui.R
 import dev.duoime.ui.theme.DuoColorTokens
 import dev.duoime.ui.theme.LocalDuoColors
 import dev.duoime.ui.theme.LocalDuoDimensions
-import kotlin.math.roundToInt
+
+/**
+ * Semantic keyboard height preset tier rendered in [DuoToolbar] (`S`/`M`/`L` in English,
+ * `矮`/`中`/`高` in Chinese) so users see a preset rather than a raw overlay-only percentage.
+ */
+enum class HeightPresetTier {
+    COMPACT,
+    STANDARD,
+    TALL
+}
+
+fun resolveHeightPresetTier(heightFraction: Float): HeightPresetTier = when {
+    heightFraction < 0.675f -> HeightPresetTier.COMPACT
+    heightFraction <= 0.825f -> HeightPresetTier.STANDARD
+    else -> HeightPresetTier.TALL
+}
 
 /**
  * Immutable state bundle for [DuoToolbar], ensuring Compose skippability even when
@@ -66,7 +83,11 @@ fun DuoToolbar(
 ) {
     val colors = LocalDuoColors.current
     val dimensions = LocalDuoDimensions.current
-    val heightPct = (state.heightFraction * 100f).roundToInt()
+    val heightLabel = when (resolveHeightPresetTier(state.heightFraction)) {
+        HeightPresetTier.COMPACT -> stringResource(R.string.duo_height_preset_compact)
+        HeightPresetTier.STANDARD -> stringResource(R.string.duo_height_preset_standard)
+        HeightPresetTier.TALL -> stringResource(R.string.duo_height_preset_tall)
+    }
     val issueTag = state.engineIssueTag
 
     Row(
@@ -143,7 +164,7 @@ fun DuoToolbar(
             }
             item(key = "height") {
                 ToolbarChip(
-                    label = "$heightPct%",
+                    label = heightLabel,
                     selected = false,
                     colors = colors,
                     onClick = { onAction(KeyAction.CycleHeight) }

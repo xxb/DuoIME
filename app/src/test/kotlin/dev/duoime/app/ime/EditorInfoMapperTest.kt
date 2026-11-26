@@ -87,6 +87,11 @@ class EditorInfoMapperTest {
         // Near-square secondary screen (1240x1080)
         val nearSquare75 = DuoImePreferences.computeInlineKeyboardHeightPx(1080, 0.75f, 2.5f)
         assertTrue(nearSquare75 in 380..562)
+
+        // Derived inline & overlay ranges match INLINE_HEIGHT_SCALE + HEIGHT_PRESETS
+        assertEquals(0.52f, DuoImePreferences.INLINE_HEIGHT_SCALE, 0.0001f)
+        assertEquals(31..47, DuoImePreferences.inlineHeightPercentRange(listOf(0.60f, 0.75f, 0.90f)))
+        assertEquals(60..90, DuoImePreferences.overlayHeightPercentRange(listOf(0.60f, 0.75f, 0.90f)))
     }
 
     @Test

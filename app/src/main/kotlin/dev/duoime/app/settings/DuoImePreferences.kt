@@ -53,9 +53,31 @@ class DuoImePreferences(context: Context) {
         private const val KEY_HEIGHT_FRACTION = "height_fraction"
 
         /**
+         * Fraction of the single-screen window height allocated to the Inline keyboard at 100%
+         * preset scale so roughly half of the display stays visible for the focused editor.
+         * Combined with [dev.duoime.embed.KeyboardController.HEIGHT_PRESETS] (`60%..90%`), inline
+         * heights span roughly `31%..47%` of the window while opposite-screen overlays use `60%..90%`.
+         */
+        const val INLINE_HEIGHT_SCALE: Float = 0.52f
+
+        fun inlineHeightPercentRange(presets: List<Float>): IntRange {
+            val minPreset = presets.minOrNull() ?: DisplayPlacementPolicy.MIN_HEIGHT_FRACTION
+            val maxPreset = presets.maxOrNull() ?: DisplayPlacementPolicy.MAX_HEIGHT_FRACTION
+            val minPct = (minPreset * INLINE_HEIGHT_SCALE * 100f).roundToInt()
+            val maxPct = (maxPreset * INLINE_HEIGHT_SCALE * 100f).roundToInt()
+            return minPct..maxPct
+        }
+
+        fun overlayHeightPercentRange(presets: List<Float>): IntRange {
+            val minPreset = presets.minOrNull() ?: DisplayPlacementPolicy.MIN_HEIGHT_FRACTION
+            val maxPreset = presets.maxOrNull() ?: DisplayPlacementPolicy.MAX_HEIGHT_FRACTION
+            return (minPreset * 100f).roundToInt()..(maxPreset * 100f).roundToInt()
+        }
+
+        /**
          * Computes a proportional inline keyboard height in pixels that scales with [heightFraction]
-         * (60%–90%) while keeping at least ~48% of the window visible for the focused editor across
-         * portrait, landscape, and near-square displays.
+         * (`60%–90%`) by [INLINE_HEIGHT_SCALE] while keeping roughly half the window visible for
+         * the focused editor across portrait, landscape, and near-square displays.
          */
         fun computeInlineKeyboardHeightPx(windowHeightPx: Int, heightFraction: Float, density: Float): Int {
             val safeDensity = density.coerceAtLeast(1f)
@@ -63,12 +85,12 @@ class DuoImePreferences(context: Context) {
             val fallbackHeight = (280f * safeDensity).roundToInt()
             if (windowHeightPx <= 0) return fallbackHeight
 
-            val maxInlinePx = (windowHeightPx * 0.52f).roundToInt().coerceAtLeast(1)
+            val maxInlinePx = (windowHeightPx * INLINE_HEIGHT_SCALE).roundToInt().coerceAtLeast(1)
             val minInlinePx = minOf(
                 (180f * safeDensity).roundToInt(),
                 (windowHeightPx * 0.34f).roundToInt().coerceAtLeast(1)
             )
-            val desiredPx = (windowHeightPx * (clampedFraction * 0.52f)).roundToInt()
+            val desiredPx = (windowHeightPx * (clampedFraction * INLINE_HEIGHT_SCALE)).roundToInt()
             val capPx = minOf((420f * safeDensity).roundToInt(), maxInlinePx)
             return desiredPx.coerceIn(minInlinePx, capPx)
         }

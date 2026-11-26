@@ -46,52 +46,104 @@ class InputConnectionSinkTest {
     }
 
     @Test
-    fun composingLifecycleClearsOnBackspaceAndFlushesOldConnectionOnEditorSwitch() {
-        val firstBridge = FakeBridge()
-        var current: ImeConnectionBridge? = firstBridge
+    fun dispatchDownUpKeyEventsAlwaysSendsActionUpWhenActionDownReturnsFalse() {
+        val events = mutableListOf<String>()
+        val resultWhenDownFalse = dispatchDownUpKeyEvents(
+            sendDown = {
+                events.add("DOWN")
+                false
+            },
+            sendUp = {
+                events.add("UP")
+                true
+            }
+        )
+        assertFalse("Combined result must reflect failed DOWN", resultWhenDownFalse)
+        assertEquals("ACTION_UP must still be dispatched when ACTION_DOWN returns false", listOf("DOWN", "UP"), events)
+
+        events.clear()
+        val resultWhenBothTrue = dispatchDownUpKeyEvents(
+            sendDown = {
+                events.add("DOWN")
+                true
+            },
+            sendUp = {
+                events.add("UP")
+                true
+            }
+        )
+        assertTrue(resultWhenBothTrue)
+        assertEquals(listOf("DOWN", "UP"), events)
+    }
+
+    @Test
+    fun composingLifecycleClearsOnBackspaceAndFlushesOldConnectionExactlyOnceAcrossRapidSwitch() {
+        val bridgeA = FakeBridge()
+        var current: ImeConnectionBridge? = bridgeA
         val sink = InputConnectionSink({ current })
 
         // Start composing then backspace to empty -> clears composing text cleanly without committing pinyin
         sink.setComposing("ni'hao")
         sink.setComposing(null)
-        assertEquals(listOf("compose:ni'hao:1", "compose::1", "finishComposing"), firstBridge.log)
+        assertEquals(listOf("compose:ni'hao:1", "compose::1", "finishComposing"), bridgeA.log)
 
         // Commit replaces composing span so subsequent clear is a clean no-op
-        firstBridge.log.clear()
+        bridgeA.log.clear()
         sink.setComposing("ni'hao")
         sink.commitText("你好")
         sink.setComposing(null)
-        assertEquals(listOf("compose:ni'hao:1", "commit:你好:1"), firstBridge.log)
+        assertEquals(listOf("compose:ni'hao:1", "commit:你好:1"), bridgeA.log)
 
-        // Editor switch mid-composition flushes finishComposingText on the OLD InputConnection
-        firstBridge.log.clear()
+        // Start A, compose, then rapid onFinishInputView + onFinishInput + onStartInput(B) -> A gets finish ONCE
+        bridgeA.log.clear()
         sink.setComposing("shi'jie")
-        val secondBridge = FakeBridge()
-        sink.finishComposingOnEditorSwitch(firstBridge)
-        current = secondBridge
-        assertEquals(listOf("compose:shi'jie:1", "finishComposing"), firstBridge.log)
-        assertTrue(secondBridge.log.isEmpty())
+        val bridgeB = FakeBridge()
+        sink.finishComposingOnEditorSwitch(bridgeA)
+        sink.finishComposingOnEditorSwitch(bridgeA)
+        current = bridgeB
+        sink.onStartInput(0, 0)
+        assertEquals(listOf("compose:shi'jie:1", "finishComposing"), bridgeA.log)
+        assertTrue("New connection B must not receive A's finishComposingText", bridgeB.log.isEmpty())
     }
 
     @Test
-    fun selectionEchoCounterPreventsStaleResetAllowsExternalTapAndDecaysAfterInactivity() {
+    fun selectionTrackerThroughSinkHandlesRapidCommitComposeDelRepeatAndExternalTap() {
         var nowMs = 1_000L
         val bridge = FakeBridge()
         val sink = InputConnectionSink(connectionProvider = { bridge }, clockMs = { nowMs })
+        sink.onStartInput(initialSelStart = 0, initialSelEnd = 0)
 
         // (a) Rapid commit ("你") + immediate compose ("h") + stale (-1) echo from commit -> NO reset
         sink.commitText("你")
         nowMs += 20L
         sink.setComposing("h")
         nowMs += 15L
-        assertTrue("Stale echo from commitText must be consumed without reset", sink.consumeSelectionEcho())
-        assertTrue("Echo from setComposing must be consumed without reset", sink.consumeSelectionEcho())
+        assertFalse(
+            "Stale echo from commitText must match queued prediction without reset",
+            sink.shouldResetOnSelectionUpdate(
+                isComposing = true,
+                newSelStart = 1,
+                newSelEnd = 1,
+                candidatesStart = -1,
+                candidatesEnd = -1
+            )
+        )
+        assertFalse(
+            "Echo from setComposing must match queued prediction without reset",
+            sink.shouldResetOnSelectionUpdate(
+                isComposing = true,
+                newSelStart = 2,
+                newSelEnd = 2,
+                candidatesStart = 1,
+                candidatesEnd = 2
+            )
+        )
 
-        // (b) Idle composing + external cursor tap outside composing range -> counter is 0 -> RESET
+        // (b) External cursor tap outside composing range -> RESET
         nowMs += 50L
-        assertFalse("No pending echoes -> must treat as external selection move", sink.consumeSelectionEcho())
         assertTrue(
-            EditorInfoMapper.shouldResetComposingOnSelectionUpdate(
+            "External tap outside composing range must reset",
+            sink.shouldResetOnSelectionUpdate(
                 isComposing = true,
                 newSelStart = 0,
                 newSelEnd = 0,
@@ -104,15 +156,18 @@ class InputConnectionSinkTest {
         sink.setComposing(null)
         assertTrue("Clearing externally-dropped composing must be a no-op", bridge.log.isEmpty())
 
-        // (c) Batched editor drops one echo -> counter decays after 300 ms so external tap still resets
-        nowMs = 2_000L
-        sink.commitText("好")
+        // (c) 50x KEYCODE_DEL repeat followed by re-baseline + compose + tap -> resets without window extension
+        repeat(50) {
+            nowMs += 55L
+            sink.deleteBackward(1)
+        }
+        assertFalse(sink.shouldResetOnSelectionUpdate(false, 0, 0, -1, -1))
         sink.setComposing("a")
         nowMs += 10L
-        assertTrue("First batched echo consumed", sink.consumeSelectionEcho())
-        // Second echo never arrives; user taps elsewhere 310 ms after last write -> counter decays
-        nowMs = 2_310L
-        assertFalse("Pending echo counter must auto-decay after 300ms", sink.consumeSelectionEcho())
+        assertTrue(
+            "Tap after 50x DEL + compose must reset immediately",
+            sink.shouldResetOnSelectionUpdate(true, 0, 0, -1, -1)
+        )
     }
 
     @Test
@@ -121,7 +176,6 @@ class InputConnectionSinkTest {
         var current: ImeConnectionBridge? = bridge
         val sink = InputConnectionSink({ current })
 
-        // Standard IME uses KEYCODE_DEL without blocking getSelectedText IPC
         sink.deleteBackward(2)
         sink.deleteBackward(0)
         sink.performEditorAction(3)
@@ -130,7 +184,6 @@ class InputConnectionSinkTest {
             bridge.log
         )
 
-        // Terminal sink disables composing and still sends KEYCODE_DEL + raw keys + private commands
         bridge.log.clear()
         sink.updateCapabilities(SinkCapabilities.TERMINAL)
         sink.setComposing("ls")
@@ -148,7 +201,6 @@ class InputConnectionSinkTest {
             bridge.log
         )
 
-        // Null InputConnection never throws
         current = null
         sink.commitText("ignored")
         sink.setComposing("ignored")

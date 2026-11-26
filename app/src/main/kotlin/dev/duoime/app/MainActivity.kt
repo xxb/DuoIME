@@ -39,6 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -48,7 +49,6 @@ import dev.duoime.app.settings.DuoImeSettings
 import dev.duoime.embed.DuoImeEmbed
 import dev.duoime.embed.KeyboardController
 import kotlin.math.abs
-import kotlin.math.roundToInt
 
 /**
  * Onboarding, live typing testbed, and preferences Activity for DuoIME (`:app`).
@@ -215,14 +215,30 @@ private fun PreferencesCard(settings: DuoImeSettings, onSettingsChanged: (DuoIme
                 onCheckedChange = { onSettingsChanged(settings.copy(alwaysIncognito = it)) }
             )
 
+            val inlineRange = DuoImePreferences.inlineHeightPercentRange(KeyboardController.HEIGHT_PRESETS)
+            val overlayRange = DuoImePreferences.overlayHeightPercentRange(KeyboardController.HEIGHT_PRESETS)
             Text(text = "Keyboard Height Preset", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                text = stringResource(
+                    R.string.pref_height_range_subtitle,
+                    inlineRange.first,
+                    inlineRange.last,
+                    overlayRange.first,
+                    overlayRange.last
+                ),
+                style = MaterialTheme.typography.bodySmall
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                KeyboardController.HEIGHT_PRESETS.forEach { preset ->
-                    val pct = (preset * 100f).roundToInt()
+                val presetLabels = listOf(
+                    stringResource(R.string.height_preset_compact),
+                    stringResource(R.string.height_preset_standard),
+                    stringResource(R.string.height_preset_tall)
+                )
+                KeyboardController.HEIGHT_PRESETS.forEachIndexed { idx, preset ->
                     FilterChip(
                         selected = abs(settings.heightFraction - preset) < 0.02f,
                         onClick = { onSettingsChanged(settings.copy(heightFraction = preset)) },
-                        label = { Text("$pct%") }
+                        label = { Text(presetLabels.getOrElse(idx) { presetLabels.last() }) }
                     )
                 }
             }

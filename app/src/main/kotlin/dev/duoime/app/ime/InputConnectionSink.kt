@@ -27,6 +27,16 @@ interface ImeConnectionBridge {
     fun performPrivateCommand(action: String, payload: String): Boolean
 }
 
+/**
+ * Dispatches paired `ACTION_DOWN` and `ACTION_UP` key events without short-circuiting so
+ * `ACTION_UP` is always sent even when the target reports `false` on `ACTION_DOWN`.
+ */
+internal fun dispatchDownUpKeyEvents(sendDown: () -> Boolean, sendUp: () -> Boolean): Boolean {
+    val downSent = sendDown()
+    val upSent = sendUp()
+    return downSent && upSent
+}
+
 class AndroidInputConnectionBridge(private val ic: InputConnection) : ImeConnectionBridge {
     override fun commitText(text: CharSequence, newCursorPosition: Int): Boolean =
         ic.commitText(text, newCursorPosition)
@@ -39,9 +49,12 @@ class AndroidInputConnectionBridge(private val ic: InputConnection) : ImeConnect
     override fun sendDownUpKeyEvent(keyCode: Int, metaState: Int): Boolean {
         val now = SystemClock.uptimeMillis()
         val flags = KeyEvent.FLAG_SOFT_KEYBOARD or KeyEvent.FLAG_KEEP_TOUCH_MODE
-        val down = KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0, metaState, -1, 0, flags)
-        val up = KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0, metaState, -1, 0, flags)
-        return ic.sendKeyEvent(down) && ic.sendKeyEvent(up)
+        val downEvent = KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0, metaState, -1, 0, flags)
+        val upEvent = KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0, metaState, -1, 0, flags)
+        return dispatchDownUpKeyEvents(
+            sendDown = { ic.sendKeyEvent(downEvent) },
+            sendUp = { ic.sendKeyEvent(upEvent) }
+        )
     }
 
     override fun performEditorAction(editorAction: Int): Boolean = ic.performEditorAction(editorAction)
@@ -62,9 +75,8 @@ class AndroidInputConnectionBridge(private val ic: InputConnection) : ImeConnect
  * - Tracks active composing spans accurately so `commitText` clears local composing state,
  *   backspace-to-empty removes the span cleanly without committing raw pinyin, and external
  *   cursor jumps call [markComposingExternallyCleared] without clobbering the new cursor position.
- * - Maintains a LatinIME-style pending selection-echo counter ([consumeSelectionEcho]) with a
- *   300 ms inactivity auto-decay so asynchronous `onUpdateSelection` echoes from rapid commit+type
- *   bursts never trigger spurious engine resets.
+ * - Uses [SelectionTracker] (LatinIME-style expected-state queue) to distinguish our own
+ *   asynchronous `onUpdateSelection` echoes from external cursor/text edits with zero counter drift.
  * - Switching editors invokes [finishComposingOnEditorSwitch] on the previous [InputConnection]
  *   before binding to the next editor.
  * - Uses `KEYCODE_DEL` key events for [deleteBackward] (no blocking synchronous `getSelectedText`
@@ -72,38 +84,40 @@ class AndroidInputConnectionBridge(private val ic: InputConnection) : ImeConnect
  */
 class InputConnectionSink(
     private val connectionProvider: () -> ImeConnectionBridge?,
-    private val clockMs: () -> Long = { System.nanoTime() / NANOS_PER_MS }
+    clockMs: () -> Long = { System.nanoTime() / NANOS_PER_MS }
 ) : InputSink {
 
     @Volatile
     override var capabilities: SinkCapabilities = SinkCapabilities.STANDARD_IME
 
+    private val selectionTracker = SelectionTracker(clockMs)
     private var hasActiveComposing: Boolean = false
-    private var pendingSelectionEchoes: Int = 0
-    private var lastWriteTimeMs: Long = 0L
 
     fun updateCapabilities(newCapabilities: SinkCapabilities) {
         capabilities = newCapabilities
     }
 
-    /**
-     * Evaluates whether an incoming `InputMethodService.onUpdateSelection` callback is an expected
-     * asynchronous echo of our own recent `InputConnection` writes.
-     *
-     * Returns `true` (and decrements the counter) when the echo should be ignored, or `false` when
-     * no recent writes are pending (or [SELECTION_ECHO_DECAY_MS] has elapsed since the last write)
-     * so the caller should treat the callback as an external cursor/selection change.
-     */
-    fun consumeSelectionEcho(): Boolean {
-        if (pendingSelectionEchoes <= 0) return false
-        val elapsed = clockMs() - lastWriteTimeMs
-        if (elapsed >= SELECTION_ECHO_DECAY_MS) {
-            pendingSelectionEchoes = 0
-            return false
-        }
-        pendingSelectionEchoes--
-        return true
+    fun onStartInput(initialSelStart: Int, initialSelEnd: Int) {
+        selectionTracker.onStartInput(initialSelStart, initialSelEnd)
     }
+
+    /**
+     * Evaluates an incoming `InputMethodService.onUpdateSelection` callback against our expected
+     * selection queue and returns `true` iff active composition should be reset.
+     */
+    fun shouldResetOnSelectionUpdate(
+        isComposing: Boolean,
+        newSelStart: Int,
+        newSelEnd: Int,
+        candidatesStart: Int,
+        candidatesEnd: Int
+    ): Boolean = selectionTracker.onUpdateSelection(
+        isComposing = isComposing,
+        newSelStart = newSelStart,
+        newSelEnd = newSelEnd,
+        candidatesStart = candidatesStart,
+        candidatesEnd = candidatesEnd
+    )
 
     /**
      * Marks the composing span as already dropped by the editor (e.g. cursor tap in
@@ -112,26 +126,27 @@ class InputConnectionSink(
      */
     fun markComposingExternallyCleared() {
         hasActiveComposing = false
-        pendingSelectionEchoes = 0
+        selectionTracker.clearPredictions()
     }
 
     /**
      * Flushes any active composing span on [previousConnection] when the focused editor changes or
-     * the input view hides, and clears pending echo tracking for the previous editor.
+     * the input view hides, and clears pending selection predictions for the previous editor.
      */
     fun finishComposingOnEditorSwitch(previousConnection: ImeConnectionBridge?) {
         if (hasActiveComposing) {
             previousConnection?.finishComposingText()
             hasActiveComposing = false
+            selectionTracker.recordFinishComposing()
         }
-        pendingSelectionEchoes = 0
+        selectionTracker.clearPredictions()
     }
 
     override fun commitText(text: CharSequence) {
         val ic = connectionProvider() ?: return
         ic.commitText(text, 1)
         hasActiveComposing = false
-        recordIcWrite()
+        selectionTracker.recordCommitText(text)
     }
 
     override fun setComposing(text: CharSequence?) {
@@ -142,12 +157,12 @@ class InputConnectionSink(
                 ic.setComposingText("", 1)
                 ic.finishComposingText()
                 hasActiveComposing = false
-                recordIcWrite()
+                selectionTracker.recordClearComposing()
             }
         } else {
             ic.setComposingText(text, 1)
             hasActiveComposing = true
-            recordIcWrite()
+            selectionTracker.recordSetComposing(text)
         }
     }
 
@@ -156,7 +171,7 @@ class InputConnectionSink(
         val ic = connectionProvider() ?: return
         repeat(count) {
             ic.sendDownUpKeyEvent(KeyCodes.KEYCODE_DEL, 0)
-            recordIcWrite()
+            selectionTracker.recordUnpredictableEdit()
         }
     }
 
@@ -164,13 +179,14 @@ class InputConnectionSink(
         val ic = connectionProvider() ?: return
         ic.sendDownUpKeyEvent(keyCode, metaState)
         if (keyCode == KeyCodes.KEYCODE_DEL || keyCode == KeyCodes.KEYCODE_ENTER) {
-            recordIcWrite()
+            selectionTracker.recordUnpredictableEdit()
         }
     }
 
     override fun performEditorAction(action: Int) {
         val ic = connectionProvider() ?: return
         ic.performEditorAction(action)
+        selectionTracker.recordUnpredictableEdit()
     }
 
     override fun sendHostCommand(id: String, payload: String): Boolean {
@@ -178,18 +194,8 @@ class InputConnectionSink(
         return ic.performPrivateCommand("$PRIVATE_CMD_PREFIX$id", payload)
     }
 
-    private fun recordIcWrite() {
-        val now = clockMs()
-        if (pendingSelectionEchoes > 0 && now - lastWriteTimeMs >= SELECTION_ECHO_DECAY_MS) {
-            pendingSelectionEchoes = 0
-        }
-        pendingSelectionEchoes++
-        lastWriteTimeMs = now
-    }
-
     companion object {
         const val PRIVATE_CMD_PREFIX: String = "dev.duoime.cmd."
-        const val SELECTION_ECHO_DECAY_MS: Long = 300L
         private const val NANOS_PER_MS: Long = 1_000_000L
     }
 }
