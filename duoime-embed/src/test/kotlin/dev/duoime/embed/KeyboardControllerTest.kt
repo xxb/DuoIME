@@ -8,6 +8,8 @@ import dev.duoime.core.engine.InputSink
 import dev.duoime.core.layout.KeyCodes
 import dev.duoime.core.model.EditorContext
 import dev.duoime.core.model.EngineSnapshot
+import dev.duoime.core.model.FeedbackKey
+import dev.duoime.core.model.FeedbackZone
 import dev.duoime.core.model.InputMode
 import dev.duoime.core.model.KeyAction
 import dev.duoime.core.model.KeyProcessResult
@@ -601,6 +603,35 @@ class KeyboardControllerTest {
         controller.dispatchKeyAction(KeyAction.SwitchMode(InputMode.SYMBOLS))
         advanceUntilIdle()
         assertEquals(InputMode.ENGLISH, controller.uiState.value.activeLayout.mode)
+        controller.close()
+    }
+
+    @Test
+    fun onKeyRepeatInvokesRepeatFeedbackCallbackIndependentlyFromPressDown() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val pressKeys = mutableListOf<FeedbackKey>()
+        val repeatKeys = mutableListOf<FeedbackKey>()
+        val controller = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { LiteInputEngine.createDefault() },
+            hostCallbacks = KeyboardHostCallbacks(
+                onFeedbackKey = { pressKeys.add(it) },
+                onRepeatFeedbackKey = { repeatKeys.add(it) }
+            )
+        )
+        advanceUntilIdle()
+
+        val letterKey = FeedbackKey(KeyAction.Engine(KeyCodes.keysymForChar('a')), "a", FeedbackZone.LETTER)
+        val backspaceKey = FeedbackKey(KeyAction.Backspace, "⌫", FeedbackZone.BACKSPACE)
+
+        controller.onKeyPressDown(letterKey)
+        assertEquals(listOf(letterKey), pressKeys)
+        assertTrue(repeatKeys.isEmpty())
+
+        controller.onKeyRepeat(backspaceKey)
+        assertEquals(listOf(letterKey), pressKeys)
+        assertEquals(listOf(backspaceKey), repeatKeys)
         controller.close()
     }
 }

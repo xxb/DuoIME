@@ -66,13 +66,15 @@ private class GridPointerDispatch(
  * - Press and popup visual invalidation read strictly in the draw phase via [MutableIntState]
  * - Cached [TextMeasurer] layouts rendered via `drawText` (no per-key `Text()` composables)
  */
+@Suppress("LongParameterList")
 @Composable
 fun KeyGrid(
     layout: LayoutSpec,
     enabled: Boolean,
     onKeyAction: (KeyAction) -> Unit,
     modifier: Modifier = Modifier,
-    onKeyPressDown: (FeedbackKey) -> Unit = {}
+    onKeyPressDown: (FeedbackKey) -> Unit = {},
+    onKeyRepeat: (FeedbackKey) -> Unit = {}
 ) {
     val colors = LocalDuoColors.current
     val dimensions = LocalDuoDimensions.current
@@ -90,6 +92,7 @@ fun KeyGrid(
     val pressDrawTrigger = remember { mutableIntStateOf(0) }
     val currentLayout = rememberUpdatedState(layout)
     val currentOnKeyAction = rememberUpdatedState(onKeyAction)
+    val currentOnKeyRepeat = rememberUpdatedState(onKeyRepeat)
     val pointerDispatch = GridPointerDispatch(
         enabledState = rememberUpdatedState(enabled),
         onKeyActionState = currentOnKeyAction,
@@ -100,7 +103,8 @@ fun KeyGrid(
             holdController = KeyHoldController(
                 scope = coroutineScope,
                 onRepeatAction = { action -> currentOnKeyAction.value(action) },
-                onVisualChanged = { pressDrawTrigger.intValue++ }
+                onVisualChanged = { pressDrawTrigger.intValue++ },
+                onRepeatFeedback = { key -> currentOnKeyRepeat.value(key) }
             )
         )
     }

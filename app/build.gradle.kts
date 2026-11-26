@@ -215,6 +215,7 @@ composeCompiler {
 
 dependencies {
     implementation(project(":duoime-embed"))
+    implementation(project(":keyboard-ui"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime)

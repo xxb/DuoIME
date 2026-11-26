@@ -98,7 +98,8 @@ data class KeyboardHostCallbacks(
     val onSwitchImeRequested: () -> Unit = {},
     val onDismissRequested: () -> Unit = {},
     val onHeightFractionChanged: (Float) -> Unit = {},
-    val onFeedbackKey: (FeedbackKey) -> Unit = {}
+    val onFeedbackKey: (FeedbackKey) -> Unit = {},
+    val onRepeatFeedbackKey: (FeedbackKey) -> Unit = {}
 )
 
 /**
@@ -196,6 +197,10 @@ class KeyboardController(
 
     fun onKeyPressDown(feedbackKey: FeedbackKey) {
         hostCallbacks.onFeedbackKey(feedbackKey)
+    }
+
+    fun onKeyRepeat(feedbackKey: FeedbackKey) {
+        hostCallbacks.onRepeatFeedbackKey(feedbackKey)
     }
 
     fun dispatchKeyAction(action: KeyAction) {

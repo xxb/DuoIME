@@ -3,6 +3,7 @@
 package dev.duoime.ui.grid
 
 import dev.duoime.core.layout.KeySpec
+import dev.duoime.core.model.FeedbackKey
 import dev.duoime.core.model.KeyAction
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -23,7 +24,8 @@ class KeyHoldController(
     private val scope: CoroutineScope,
     private val onRepeatAction: (KeyAction) -> Unit,
     private val onVisualChanged: () -> Unit,
-    private val timings: KeyHoldTimings = KeyHoldTimings()
+    private val timings: KeyHoldTimings = KeyHoldTimings(),
+    private val onRepeatFeedback: (FeedbackKey) -> Unit = {}
 ) {
     private class ActiveHold(
         val keyIndex: Int,
@@ -54,6 +56,7 @@ class KeyHoldController(
                 delay(timings.repeatInitialDelayMs)
                 while (isActive && holds[pointerId] === entry) {
                     entry.repeated = true
+                    onRepeatFeedback(FeedbackKey(key.action, key.label, key.zone))
                     onRepeatAction(key.action)
                     delay(timings.repeatIntervalMs)
                 }

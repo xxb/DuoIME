@@ -42,7 +42,7 @@ internal class RingerModeGate(
             (nowMs - lastKeyTimeMs) >= burstGapMs ||
             (nowMs - lastQueryTimeMs) >= maxStaleMs
         if (needsRefresh) {
-            cachedAllowed = runCatching { queryRingerMode() == AudioManager.RINGER_MODE_NORMAL }.getOrDefault(true)
+            cachedAllowed = runCatching { queryRingerMode() == AudioManager.RINGER_MODE_NORMAL }.getOrDefault(false)
             lastQueryTimeMs = nowMs
             initialized = true
         }

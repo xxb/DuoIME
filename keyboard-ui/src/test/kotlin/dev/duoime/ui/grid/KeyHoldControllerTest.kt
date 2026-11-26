@@ -4,6 +4,7 @@ package dev.duoime.ui.grid
 
 import dev.duoime.core.layout.BuiltInLayouts
 import dev.duoime.core.layout.KeyCodes
+import dev.duoime.core.model.FeedbackKey
 import dev.duoime.core.model.KeyAction
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceTimeBy
@@ -106,5 +107,44 @@ class KeyHoldControllerTest {
         advanceTimeBy(500L)
         runCurrent()
         assertTrue(repeats.isEmpty())
+    }
+
+    @Test
+    fun repeatableBackspaceEmitsRepeatFeedbackWhileNonRepeatableLongPressDoesNot() = runTest {
+        val repeatActions = mutableListOf<KeyAction>()
+        val repeatFeedback = mutableListOf<FeedbackKey>()
+        val controller = KeyHoldController(
+            scope = this,
+            onRepeatAction = { repeatActions.add(it) },
+            onVisualChanged = {},
+            onRepeatFeedback = { repeatFeedback.add(it) }
+        )
+        val layout = BuiltInLayouts.qwerty(includeNumberRow = false)
+        val backspace = layout.rows[2].keys.last()
+        val qKey = layout.rows[0].keys[0]
+
+        controller.onKeyDown(pointerId = 1L, keyIndex = 20, key = backspace)
+        advanceTimeBy(400L + 55L * 3 + 10L)
+        runCurrent()
+        assertEquals(4, repeatActions.size)
+        assertEquals(4, repeatFeedback.size)
+        assertTrue(repeatActions.all { it == KeyAction.Backspace })
+        assertTrue(
+            repeatFeedback.all {
+                it == FeedbackKey(KeyAction.Backspace, backspace.label, backspace.zone)
+            }
+        )
+        assertNull(controller.onKeyUp(pointerId = 1L, releasedKey = backspace))
+
+        repeatActions.clear()
+        repeatFeedback.clear()
+
+        controller.onKeyDown(pointerId = 2L, keyIndex = 0, key = qKey)
+        advanceTimeBy(500L)
+        runCurrent()
+        assertEquals(0, controller.activePopupKeyIndex)
+        assertTrue("Non-repeatable long-press must not emit repeat feedback", repeatFeedback.isEmpty())
+        assertTrue(repeatActions.isEmpty())
+        assertEquals(KeyAction.Text("1"), controller.onKeyUp(pointerId = 2L, releasedKey = qKey))
     }
 }

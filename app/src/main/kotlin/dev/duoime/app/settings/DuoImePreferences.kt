@@ -106,6 +106,22 @@ class DuoImePreferences(context: Context) {
         return updated
     }
 
+    /**
+     * Observes persisted preference updates across components in the same process.
+     *
+     * Retains the underlying [SharedPreferences.OnSharedPreferenceChangeListener] strongly inside
+     * the returned [AutoCloseable] handle so Android's internal `WeakHashMap` cannot GC it early.
+     */
+    fun observe(onChanged: (DuoImeSettings) -> Unit): AutoCloseable {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+            onChanged(load())
+        }
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        return AutoCloseable {
+            prefs.unregisterOnSharedPreferenceChangeListener(listener)
+        }
+    }
+
     companion object {
         private const val PREFS_NAME = "duoime_settings"
         private const val KEY_DARK_THEME = "dark_theme"

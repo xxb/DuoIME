@@ -97,9 +97,11 @@ class DuoImeService : InputMethodService() {
 
     private var displayManager: DisplayManager? = null
     private var pinObserverHandle: AutoCloseable? = null
+    private var prefsObserverHandle: AutoCloseable? = null
     private var overlayHost: OverlayHost? = null
     private var inlineInputView: View? = null
     private var cachedFeedbackOptions: KeyFeedbackOptions = KeyFeedbackOptions()
+    private var isServiceDestroyed: Boolean = false
 
     private var activeEditorConnection: InputConnection? = null
     private var lastEditorInfo: EditorInfo? = null
@@ -142,7 +144,8 @@ class DuoImeService : InputMethodService() {
                 onDismissRequested = { hideAllKeyboardSurfaces() },
                 onSwitchImeRequested = { showImePicker() },
                 onHeightFractionChanged = { fraction -> handleHeightChanged(fraction) },
-                onFeedbackKey = { key -> feedbackController.onKeyPress(key, cachedFeedbackOptions) }
+                onFeedbackKey = { key -> feedbackController.onKeyPress(key, cachedFeedbackOptions) },
+                onRepeatFeedbackKey = { key -> feedbackController.onKeyRepeat(key, cachedFeedbackOptions) }
             )
         )
         controller.setIncludeNumberRow(initialSettings.includeNumberRow)
@@ -183,6 +186,13 @@ class DuoImeService : InputMethodService() {
         }
         pinObserverHandle = SystemImePinDetector.observe(contentResolver, mainHandler) {
             sessionController.onRelevantEnvironmentChanged()
+        }
+        prefsObserverHandle = preferences.observe {
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                applyLiveSettings(preferences.load())
+            } else {
+                mainHandler.post { applyLiveSettings(preferences.load()) }
+            }
         }
     }
 
@@ -354,12 +364,15 @@ class DuoImeService : InputMethodService() {
     }
 
     override fun onDestroy() {
+        isServiceDestroyed = true
         sessionController.onDestroy()
         inlineInputView = null
         feedbackController.release()
         displayManager?.unregisterDisplayListener(displayListener)
         runCatching { pinObserverHandle?.close() }
         pinObserverHandle = null
+        runCatching { prefsObserverHandle?.close() }
+        prefsObserverHandle = null
         controller.close()
         serviceScope.cancel()
         composeOwner.onDestroy()
@@ -510,6 +523,34 @@ class DuoImeService : InputMethodService() {
         settingsFlow.value = latest
         cachedFeedbackOptions = latest.toFeedbackOptions()
         controller.setIncludeNumberRow(latest.includeNumberRow)
+    }
+
+    private fun applyLiveSettings(updated: DuoImeSettings) {
+        if (isServiceDestroyed) return
+        val previous = settingsFlow.value
+        if (updated == previous) return
+        settingsFlow.value = updated
+        cachedFeedbackOptions = updated.toFeedbackOptions()
+        controller.setIncludeNumberRow(updated.includeNumberRow)
+        if (updated.alwaysIncognito != previous.alwaysIncognito) {
+            applyEditorInfo(lastEditorInfo)
+        }
+        if (!sessionController.isInputViewActive) return
+
+        val presentationChanged =
+            updated.heightFraction != previous.heightFraction ||
+                updated.darkTheme != previous.darkTheme
+        if (presentationChanged && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && isOverlayCurrentlyShowing()) {
+            overlayHost?.updatePresentation(updated.heightFraction, updated.darkTheme)
+        }
+        val placementChanged = presentationChanged ||
+            updated.swapToSameScreen != previous.swapToSameScreen ||
+            updated.pairedPeerDisplayId != previous.pairedPeerDisplayId ||
+            updated.manualSystemImePin != previous.manualSystemImePin ||
+            updated.perAppInlinePackages != previous.perAppInlinePackages
+        if (placementChanged) {
+            sessionController.onRelevantEnvironmentChanged()
+        }
     }
 
     private fun applyEditorInfo(info: EditorInfo?) {

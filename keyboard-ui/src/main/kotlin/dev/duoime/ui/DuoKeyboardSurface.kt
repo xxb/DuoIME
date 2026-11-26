@@ -53,6 +53,7 @@ data class DuoKeyboardCallbacks(
     val onPage: (Boolean) -> Unit,
     val onExtensionButton: (ExtensionToolbarButton) -> Unit = {},
     val onKeyPressDown: (FeedbackKey) -> Unit = {},
+    val onKeyRepeat: (FeedbackKey) -> Unit = {},
     val onDismissEngineError: () -> Unit = {}
 )
 
@@ -136,6 +137,7 @@ fun DuoKeyboardSurface(state: DuoKeyboardSurfaceState, callbacks: DuoKeyboardCal
             enabled = state.isReady,
             onKeyAction = callbacks.onKeyAction,
             onKeyPressDown = callbacks.onKeyPressDown,
+            onKeyRepeat = callbacks.onKeyRepeat,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)

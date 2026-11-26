@@ -451,6 +451,28 @@ class KeySoundAndMixerTest {
     }
 
     @Test
+    fun `RingerModeGate fails closed when queryRingerMode throws on cold start and after invalidate`() {
+        // Cold start exception must fail closed (mute key sounds)
+        val coldFailGate = RingerModeGate(burstGapMs = 600L, maxStaleMs = 2_000L) {
+            throw SecurityException("AudioManager query failed")
+        }
+        assertFalse(coldFailGate.isSoundAllowed(nowMs = 1_000L))
+
+        // Previously allowed normal mode must also fail closed after invalidate() if query throws
+        var shouldThrow = false
+        val flappingGate = RingerModeGate(burstGapMs = 600L, maxStaleMs = 2_000L) {
+            if (shouldThrow) {
+                throw IllegalStateException("Binder failure")
+            }
+            AudioManager.RINGER_MODE_NORMAL
+        }
+        assertTrue(flappingGate.isSoundAllowed(nowMs = 2_000L))
+        shouldThrow = true
+        flappingGate.invalidate()
+        assertFalse(flappingGate.isSoundAllowed(nowMs = 2_100L))
+    }
+
+    @Test
     fun `KeyFeedbackOptions defaults keep sound OFF and haptics ON`() {
         val defaults = KeyFeedbackOptions()
         assertFalse(defaults.soundEnabled)

@@ -48,6 +48,7 @@ fun DuoImeKeyboard(
             onPage = controller::pageCandidates,
             onExtensionButton = controller::dispatchExtensionButton,
             onKeyPressDown = controller::onKeyPressDown,
+            onKeyRepeat = controller::onKeyRepeat,
             onDismissEngineError = controller::dismissEngineError
         )
     }
