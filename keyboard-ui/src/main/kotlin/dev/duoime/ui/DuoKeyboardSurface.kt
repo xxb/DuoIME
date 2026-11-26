@@ -16,12 +16,14 @@ import androidx.compose.ui.unit.dp
 import dev.duoime.core.layout.LayoutSpec
 import dev.duoime.core.model.EngineSnapshot
 import dev.duoime.core.model.FeedbackKey
+import dev.duoime.core.model.InputMode
 import dev.duoime.core.model.KeyAction
 import dev.duoime.core.protocol.ExtensionToolbarButton
 import dev.duoime.ui.bar.CandidateBar
 import dev.duoime.ui.bar.CandidateBarCallbacks
 import dev.duoime.ui.bar.DuoToolbar
 import dev.duoime.ui.bar.DuoToolbarState
+import dev.duoime.ui.bar.SyllableChipRail
 import dev.duoime.ui.grid.KeyGrid
 import dev.duoime.ui.theme.LocalDuoColors
 import dev.duoime.ui.theme.LocalDuoDimensions
@@ -55,8 +57,10 @@ data class DuoKeyboardCallbacks(
 )
 
 /**
- * Pure Compose keyboard root rendering toolbar (with optional leading dismissible warning chip),
- * candidate/syllable strip, and single-pointer [KeyGrid].
+ * Pure Compose keyboard root rendering a fixed-height header slot (swapping [DuoToolbar] — with
+ * its optional leading dismissible engine-warning chip — and [CandidateBar] in place so [KeyGrid]
+ * never shifts vertically mid-word), an optional reserved T9 [SyllableChipRail] slot in T9 mode,
+ * and the single-pointer [KeyGrid].
  * Depends solely on `:core` models and zero Material 3 components.
  */
 @Composable
@@ -85,12 +89,27 @@ fun DuoKeyboardSurface(state: DuoKeyboardSurfaceState, callbacks: DuoKeyboardCal
             .fillMaxWidth()
             .background(colors.keyboardBackground)
     ) {
-        DuoToolbar(
-            state = toolbarState,
-            onAction = callbacks.onKeyAction,
-            onExtensionButton = callbacks.onExtensionButton,
-            onDismissEngineError = callbacks.onDismissEngineError
-        )
+        val snap = state.snapshot
+        val showCandidates = snap.isComposing || snap.candidates.isNotEmpty()
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(dimensions.toolbarHeight)
+        ) {
+            if (showCandidates) {
+                CandidateBar(
+                    snapshot = snap,
+                    callbacks = candidateCallbacks
+                )
+            } else {
+                DuoToolbar(
+                    state = toolbarState,
+                    onAction = callbacks.onKeyAction,
+                    onExtensionButton = callbacks.onExtensionButton,
+                    onDismissEngineError = callbacks.onDismissEngineError
+                )
+            }
+        }
 
         Box(
             modifier = Modifier
@@ -99,11 +118,10 @@ fun DuoKeyboardSurface(state: DuoKeyboardSurfaceState, callbacks: DuoKeyboardCal
                 .background(colors.divider)
         )
 
-        val snap = state.snapshot
-        if (snap.isComposing || snap.candidates.isNotEmpty() || snap.syllables.isNotEmpty()) {
-            CandidateBar(
+        if (state.layout.mode == InputMode.PINYIN_T9) {
+            SyllableChipRail(
                 snapshot = snap,
-                callbacks = candidateCallbacks
+                onSelectSyllable = callbacks.onSelectSyllable
             )
             Box(
                 modifier = Modifier

@@ -138,7 +138,45 @@ object KeyGridGeometry {
         value > maxVal -> value - maxVal
         else -> 0f
     }
+
+    /**
+     * Computes guaranteed non-overlapping vertical top positions for primary and optional secondary
+     * key labels. Drops the secondary label whenever key height is below [MIN_SECONDARY_KEY_HEIGHT_DP]
+     * (`36dp`) or too compact to preserve at least 2 px clearance, centering the primary label cleanly.
+     */
+    fun computeLabelVerticalPlacement(
+        keyTop: Float,
+        keyHeight: Float,
+        primaryHeight: Float,
+        secondaryHeight: Float?,
+        density: Float = 1f
+    ): KeyLabelVerticalPlacement {
+        val centeredPrimary = keyTop + (keyHeight - primaryHeight) * 0.5f
+        val minKeyHeightForSecondary = MIN_SECONDARY_KEY_HEIGHT_DP * density.coerceAtLeast(1f)
+        if (secondaryHeight == null || keyHeight < minKeyHeightForSecondary) {
+            return KeyLabelVerticalPlacement(primaryTop = centeredPrimary, secondaryTop = null)
+        }
+        val topPad = (keyHeight * 0.07f).coerceIn(1f, 6f)
+        val bottomPad = (keyHeight * 0.07f).coerceIn(1f, 6f)
+        val minGap = 2f
+        val required = topPad + secondaryHeight + minGap + primaryHeight + bottomPad
+        if (required > keyHeight) {
+            return KeyLabelVerticalPlacement(primaryTop = centeredPrimary, secondaryTop = null)
+        }
+        val secTop = keyTop + topPad
+        val lowerTop = secTop + secondaryHeight + minGap
+        val lowerHeight = (keyTop + keyHeight - bottomPad) - lowerTop
+        val priTop = lowerTop + (lowerHeight - primaryHeight) * 0.5f
+        return KeyLabelVerticalPlacement(primaryTop = priTop, secondaryTop = secTop)
+    }
+
+    const val MIN_SECONDARY_KEY_HEIGHT_DP: Float = 36f
 }
+
+/**
+ * Vertical draw positions computed for a key's primary and optional secondary labels.
+ */
+data class KeyLabelVerticalPlacement(val primaryTop: Float, val secondaryTop: Float?)
 
 /**
  * Pure-JVM multi-touch pointer tracker keyed by `pointerId` for single-`pointerInput` key grids.

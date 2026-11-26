@@ -143,4 +143,42 @@ class KeyGridHitTest {
             }
         }
     }
+
+    @Test
+    fun labelVerticalPlacementNeverOverlapsPrimaryAndSecondaryAcrossCompactAndTallKeys() {
+        // Compact key heights matching 1280x960 secondary display (48px, 60px, 75px, 90px) and tall 150px
+        val keyHeights = listOf(48f, 60f, 75f, 90f, 150f)
+        val primaryH = 26f
+        val secondaryH = 14f
+        for (h in keyHeights) {
+            val placement = KeyGridGeometry.computeLabelVerticalPlacement(
+                keyTop = 10f,
+                keyHeight = h,
+                primaryHeight = primaryH,
+                secondaryHeight = secondaryH
+            )
+            if (placement.secondaryTop != null) {
+                val secBottom = placement.secondaryTop!! + secondaryH
+                assertTrue(
+                    "Secondary bottom ($secBottom) must stay above primary top (${placement.primaryTop}) for h=$h",
+                    secBottom <= placement.primaryTop - 1.99f
+                )
+                assertTrue(
+                    "Primary bottom must stay inside key height for h=$h",
+                    placement.primaryTop + primaryH <= 10f + h + 0.01f
+                )
+            }
+        }
+
+        // Below 36dp key height (e.g. 68px at 320dpi/density=2) cleanly omits secondary label instead of colliding
+        val tight = KeyGridGeometry.computeLabelVerticalPlacement(
+            keyTop = 0f,
+            keyHeight = 68f,
+            primaryHeight = 30f,
+            secondaryHeight = 16f,
+            density = 2f
+        )
+        assertEquals(null, tight.secondaryTop)
+        assertEquals(19f, tight.primaryTop, 0.01f)
+    }
 }

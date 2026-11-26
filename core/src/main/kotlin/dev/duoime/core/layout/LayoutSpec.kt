@@ -14,10 +14,16 @@ data class KeySpec(
     val label: String,
     val secondaryLabel: String? = null,
     val action: KeyAction,
+    val secondaryAction: KeyAction? = null,
     val weight: Float = 1f,
     val zone: FeedbackZone = FeedbackZone.LETTER,
     val repeatable: Boolean = false
-)
+) {
+    /**
+     * Resolves the action triggered by a long-press on this key, or `null` if none is configured.
+     */
+    fun resolveSecondaryAction(): KeyAction? = secondaryAction ?: secondaryLabel?.let { KeyAction.Text(it) }
+}
 
 /**
  * Immutable horizontal row of keys sized proportionally by [KeySpec.weight].
@@ -43,7 +49,9 @@ object BuiltInLayouts {
     private val digitsRow = listOf('1', '2', '3', '4', '5', '6', '7', '8', '9', '0')
     private val qwertyRow1 = listOf('q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p')
     private val qwertyRow2 = listOf('a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l')
+    private val qwertyRow2Hints = listOf("@", "#", "$", "%", "&", "-", "+", "(", ")")
     private val qwertyRow3 = listOf('z', 'x', 'c', 'v', 'b', 'n', 'm')
+    private val qwertyRow3Hints = listOf("*", "\"", "'", ":", ";", "!", "?")
     private val symbolsRow2 = listOf("@", "#", "$", "%", "&", "-", "+", "(", ")", "/")
     private val symbolsRow3 = listOf("*", "\"", "'", ":", ";", "!", "?", "~", "_")
 
@@ -53,8 +61,21 @@ object BuiltInLayouts {
         if (includeNumberRow) {
             rows.add(KeyRowSpec(digitsRow.map { digitTextKey(it) }))
         }
-        rows.add(KeyRowSpec(qwertyRow1.map { letterKey(it, shifted, englishMode) }))
-        rows.add(KeyRowSpec(qwertyRow2.map { letterKey(it, shifted, englishMode) }))
+        rows.add(
+            KeyRowSpec(
+                qwertyRow1.mapIndexed { idx, ch ->
+                    val hint = if (includeNumberRow) null else digitsRow[idx].toString()
+                    letterKey(ch, shifted, englishMode, secondaryLabel = hint)
+                }
+            )
+        )
+        rows.add(
+            KeyRowSpec(
+                qwertyRow2.mapIndexed { idx, ch ->
+                    letterKey(ch, shifted, englishMode, secondaryLabel = qwertyRow2Hints[idx])
+                }
+            )
+        )
         rows.add(
             KeyRowSpec(
                 buildList {
@@ -67,7 +88,9 @@ object BuiltInLayouts {
                             zone = FeedbackZone.ACTION
                         )
                     )
-                    qwertyRow3.forEach { add(letterKey(it, shifted, englishMode)) }
+                    qwertyRow3.forEachIndexed { idx, ch ->
+                        add(letterKey(ch, shifted, englishMode, secondaryLabel = qwertyRow3Hints[idx]))
+                    }
                     add(backspaceKey(weight = 1.5f))
                 }
             )
@@ -237,7 +260,12 @@ object BuiltInLayouts {
         )
     }
 
-    private fun letterKey(baseChar: Char, shifted: Boolean, englishMode: Boolean): KeySpec {
+    private fun letterKey(
+        baseChar: Char,
+        shifted: Boolean,
+        englishMode: Boolean,
+        secondaryLabel: String? = null
+    ): KeySpec {
         val displayChar = if (shifted) baseChar.uppercaseChar() else baseChar
         val action = if (englishMode) {
             KeyAction.Text(displayChar.toString())
@@ -247,6 +275,7 @@ object BuiltInLayouts {
         return KeySpec(
             id = "key_$baseChar",
             label = displayChar.toString(),
+            secondaryLabel = secondaryLabel,
             action = action,
             zone = FeedbackZone.LETTER
         )

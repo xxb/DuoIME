@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">DuoIME</string>
+    <string name="ime_name">DuoIME</string>
+    <string name="subtype_pinyin">Chinese / English (DuoIME)</string>
 </resources>

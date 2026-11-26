@@ -5,10 +5,12 @@ package dev.duoime.ui.grid
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.MutableIntState
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -39,12 +41,13 @@ import dev.duoime.ui.theme.DuoColorTokens
 import dev.duoime.ui.theme.LocalDuoColors
 import dev.duoime.ui.theme.LocalDuoDimensions
 
-private class GridRenderState {
+private class GridRenderState(val holdController: KeyHoldController) {
     var hitMap: KeyGridHitMap = KeyGridHitMap.EMPTY
     var lastSize: IntSize = IntSize.Zero
     var lastLayoutId: String = ""
     var cachedPrimaryLayouts: List<TextLayoutResult> = emptyList()
     var cachedSecondaryLayouts: List<TextLayoutResult?> = emptyList()
+    var cachedPopupLayouts: List<TextLayoutResult?> = emptyList()
     val pointerTracker: MultiTouchPointerTracker = MultiTouchPointerTracker()
 }
 
@@ -59,8 +62,8 @@ private class GridPointerDispatch(
 /**
  * High-frame-rate Compose key grid using:
  * - One `pointerInput` per grid with layout-phase `FloatArray` hit-testing
- * - Multi-touch tracking by `pointerId` with clean cancel handling
- * - Press visual invalidation read strictly in the draw phase via [MutableIntState]
+ * - Multi-touch tracking by `pointerId`, Backspace auto-repeat, and long-press secondary symbol popup
+ * - Press and popup visual invalidation read strictly in the draw phase via [MutableIntState]
  * - Cached [TextMeasurer] layouts rendered via `drawText` (no per-key `Text()` composables)
  */
 @Composable
@@ -75,6 +78,7 @@ fun KeyGrid(
     val dimensions = LocalDuoDimensions.current
     val density = LocalDensity.current
     val textMeasurer = rememberTextMeasurer()
+    val coroutineScope = rememberCoroutineScope()
 
     val metrics = GridLayoutMetrics(
         hGapPx = with(density) { dimensions.keyHorizontalGap.toPx() },
@@ -83,15 +87,27 @@ fun KeyGrid(
     )
     val cornerRadiusPx = with(density) { dimensions.keyCornerRadius.toPx() }
 
-    val renderState = remember { GridRenderState() }
     val pressDrawTrigger = remember { mutableIntStateOf(0) }
-
     val currentLayout = rememberUpdatedState(layout)
+    val currentOnKeyAction = rememberUpdatedState(onKeyAction)
     val pointerDispatch = GridPointerDispatch(
         enabledState = rememberUpdatedState(enabled),
-        onKeyActionState = rememberUpdatedState(onKeyAction),
+        onKeyActionState = currentOnKeyAction,
         onPressDownState = rememberUpdatedState(onKeyPressDown)
     )
+    val renderState = remember(coroutineScope) {
+        GridRenderState(
+            holdController = KeyHoldController(
+                scope = coroutineScope,
+                onRepeatAction = { action -> currentOnKeyAction.value(action) },
+                onVisualChanged = { pressDrawTrigger.intValue++ }
+            )
+        )
+    }
+
+    DisposableEffect(renderState) {
+        onDispose { renderState.holdController.cancelAll() }
+    }
 
     if (renderState.lastLayoutId != layout.id && renderState.lastSize != IntSize.Zero) {
         updateRenderCache(renderState, layout, renderState.lastSize, metrics, textMeasurer)
@@ -135,6 +151,7 @@ private suspend fun PointerInputScope.handleKeyGridPointers(
             if (!dispatch.enabledState.value) {
                 if (tracker.activePointerCount > 0) {
                     tracker.cancelAll()
+                    renderState.holdController.cancelAll()
                     pressDrawTrigger.intValue++
                 }
                 continue
@@ -159,14 +176,19 @@ private fun processPointerChange(
 ): Boolean {
     val hitMap = renderState.hitMap
     val tracker = renderState.pointerTracker
+    val holds = renderState.holdController
     val pid = change.id.value
     return when {
-        change.isConsumed -> tracker.onPointerCancel(pid)
+        change.isConsumed -> {
+            holds.cancelPointer(pid)
+            tracker.onPointerCancel(pid)
+        }
         change.pressed && !change.previousPressed -> {
             val idx = tracker.onPointerDown(pid, change.position.x, change.position.y, hitMap)
             change.consume()
             if (idx >= 0) {
                 val key = hitMap.keys[idx]
+                holds.onKeyDown(pid, idx, key)
                 dispatch.onPressDownState.value(FeedbackKey(key.action, key.label, key.zone))
                 true
             } else {
@@ -177,15 +199,20 @@ private fun processPointerChange(
             val releasedIdx = tracker.onPointerUp(pid)
             change.consume()
             if (releasedIdx in hitMap.keys.indices) {
-                dispatch.onKeyActionState.value(hitMap.keys[releasedIdx].action)
+                val action = holds.onKeyUp(pid, hitMap.keys[releasedIdx])
+                if (action != null) {
+                    dispatch.onKeyActionState.value(action)
+                }
                 true
             } else {
+                holds.cancelPointer(pid)
                 false
             }
         }
         change.pressed -> {
             val prevIdx = tracker.keyForPointer(pid)
             val nextIdx = tracker.onPointerMove(pid, change.position.x, change.position.y, hitMap)
+            holds.onKeyChanged(pid, nextIdx)
             change.consume()
             prevIdx != nextIdx
         }
@@ -211,14 +238,17 @@ private fun updateRenderCache(
     )
     state.hitMap = hitMap
     state.pointerTracker.reset(hitMap.size)
+    state.holdController.cancelAll()
 
     val rowCount = layout.rows.size.coerceAtLeast(1)
     val approxRowHeightDp = (size.height.toFloat() / rowCount) / metrics.density
-    val primaryFontSp = (approxRowHeightDp * 0.36f).coerceIn(14f, 24f).sp
-    val secondaryFontSp = (approxRowHeightDp * 0.19f).coerceIn(9f, 13f).sp
+    val primaryFontSp = (approxRowHeightDp * 0.30f).coerceIn(12f, 22f).sp
+    val secondaryFontSp = (approxRowHeightDp * 0.16f).coerceIn(8f, 11f).sp
+    val popupFontSp = (approxRowHeightDp * 0.40f).coerceIn(15f, 24f).sp
 
     val primaryStyle = TextStyle(fontSize = primaryFontSp, fontWeight = FontWeight.Medium)
     val secondaryStyle = TextStyle(fontSize = secondaryFontSp, fontWeight = FontWeight.Normal)
+    val popupStyle = TextStyle(fontSize = popupFontSp, fontWeight = FontWeight.Bold)
 
     state.cachedPrimaryLayouts = hitMap.keys.map { key ->
         textMeasurer.measure(text = key.label, style = primaryStyle, maxLines = 1)
@@ -226,6 +256,11 @@ private fun updateRenderCache(
     state.cachedSecondaryLayouts = hitMap.keys.map { key ->
         key.secondaryLabel?.let { sec ->
             textMeasurer.measure(text = sec, style = secondaryStyle, maxLines = 1)
+        }
+    }
+    state.cachedPopupLayouts = hitMap.keys.map { key ->
+        key.secondaryLabel?.let { sec ->
+            textMeasurer.measure(text = sec, style = popupStyle, maxLines = 1)
         }
     }
 }
@@ -267,9 +302,53 @@ private fun DrawScope.drawKeyGrid(
         )
         drawKeyLabels(renderState, i, textColor, colors.keySecondaryText)
     }
+    val popupIndex = renderState.holdController.activePopupKeyIndex
+    if (enabled && popupIndex in 0 until hitMap.size) {
+        drawLongPressPopup(renderState, popupIndex, colors, radius)
+    }
     if (!enabled) {
         drawRect(color = colors.disabledScrim)
     }
+}
+
+private fun DrawScope.drawLongPressPopup(
+    renderState: GridRenderState,
+    index: Int,
+    colors: DuoColorTokens,
+    radius: CornerRadius
+) {
+    val popupLayout = renderState.cachedPopupLayouts.getOrNull(index) ?: return
+    val hitMap = renderState.hitMap
+    val keyLeft = hitMap.left(index)
+    val keyTop = hitMap.top(index)
+    val keyWidth = hitMap.right(index) - keyLeft
+    val keyHeight = hitMap.bottom(index) - keyTop
+
+    val pillWidth = maxOf(keyWidth * 1.1f, popupLayout.size.width + 24f)
+    val pillHeight = maxOf(keyHeight * 0.9f, popupLayout.size.height + 16f)
+    val pillLeft = (keyLeft + (keyWidth - pillWidth) * 0.5f).coerceIn(0f, (size.width - pillWidth).coerceAtLeast(0f))
+    val pillTop = (keyTop - pillHeight - 6f).coerceAtLeast(0f)
+
+    drawRoundRect(
+        color = colors.chipSelectedBackground,
+        topLeft = Offset(pillLeft, pillTop),
+        size = Size(pillWidth, pillHeight),
+        cornerRadius = radius
+    )
+    drawRoundRect(
+        color = colors.keyBorder,
+        topLeft = Offset(pillLeft, pillTop),
+        size = Size(pillWidth, pillHeight),
+        cornerRadius = radius,
+        style = Stroke(width = 1.5f)
+    )
+    val textX = pillLeft + (pillWidth - popupLayout.size.width) * 0.5f
+    val textY = pillTop + (pillHeight - popupLayout.size.height) * 0.5f
+    drawText(
+        textLayoutResult = popupLayout,
+        color = colors.chipSelectedText,
+        topLeft = Offset(textX, textY)
+    )
 }
 
 private fun DrawScope.drawKeyLabels(renderState: GridRenderState, index: Int, textColor: Color, secondaryColor: Color) {
@@ -281,19 +360,27 @@ private fun DrawScope.drawKeyLabels(renderState: GridRenderState, index: Int, te
     val width = hitMap.right(index) - left
     val height = hitMap.bottom(index) - top
 
-    if (secondary != null) {
+    val placement = KeyGridGeometry.computeLabelVerticalPlacement(
+        keyTop = top,
+        keyHeight = height,
+        primaryHeight = primary.size.height.toFloat(),
+        secondaryHeight = secondary?.size?.height?.toFloat(),
+        density = density
+    )
+    if (secondary != null && placement.secondaryTop != null) {
         val secX = left + (width - secondary.size.width) * 0.5f
-        val secY = top + height * 0.14f
-        drawText(textLayoutResult = secondary, color = secondaryColor, topLeft = Offset(secX, secY))
-
-        val priX = left + (width - primary.size.width) * 0.5f
-        val priY = top + height * 0.56f - primary.size.height * 0.35f
-        drawText(textLayoutResult = primary, color = textColor, topLeft = Offset(priX, priY))
-    } else {
-        val priX = left + (width - primary.size.width) * 0.5f
-        val priY = top + (height - primary.size.height) * 0.5f
-        drawText(textLayoutResult = primary, color = textColor, topLeft = Offset(priX, priY))
+        drawText(
+            textLayoutResult = secondary,
+            color = secondaryColor,
+            topLeft = Offset(secX, placement.secondaryTop)
+        )
     }
+    val priX = left + (width - primary.size.width) * 0.5f
+    drawText(
+        textLayoutResult = primary,
+        color = textColor,
+        topLeft = Offset(priX, placement.primaryTop)
+    )
 }
 
 private fun keyFillColor(key: KeySpec, pressed: Boolean, colors: DuoColorTokens): Color = when (key.zone) {
