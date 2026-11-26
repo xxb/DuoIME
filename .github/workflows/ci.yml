@@ -1,0 +1,200 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hygiene-and-build:
+    name: Hygiene, Build & Artifact Gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Compute commit scan range
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PUSH_AFTER_SHA: ${{ github.event.after }}
+        run: |
+          ZERO_SHA="0000000000000000000000000000000000000000"
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            PII_RANGE="${PR_BASE_SHA}..${PR_HEAD_SHA}"
+            GITLEAKS_OPTS="${PII_RANGE}"
+          elif [[ "$EVENT_NAME" == "push" ]]; then
+            if [[ -n "$PUSH_BEFORE_SHA" && "$PUSH_BEFORE_SHA" != "$ZERO_SHA" ]] && git cat-file -e "${PUSH_BEFORE_SHA}^{commit}" 2>/dev/null; then
+              PII_RANGE="${PUSH_BEFORE_SHA}..${PUSH_AFTER_SHA}"
+              GITLEAKS_OPTS="${PII_RANGE}"
+            else
+              PII_RANGE="${ZERO_SHA}..${PUSH_AFTER_SHA}"
+              GITLEAKS_OPTS="-1 ${PUSH_AFTER_SHA}"
+            fi
+          else
+            PII_RANGE="HEAD"
+            GITLEAKS_OPTS="HEAD"
+          fi
+          echo "PII_COMMIT_RANGE=${PII_RANGE}" >> "$GITHUB_ENV"
+          echo "GITLEAKS_LOG_OPTS=${GITLEAKS_OPTS}" >> "$GITHUB_ENV"
+          echo "Resolved scan range: ${PII_RANGE}"
+
+      - name: Gitleaks secret scan (pinned v8.30.1, reports in RUNNER_TEMP)
+        run: |
+          GITLEAKS_VER="8.30.1"
+          GITLEAKS_SHA256="551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+          GITLEAKS_DIR="${RUNNER_TEMP}/gitleaks"
+          mkdir -p "$GITLEAKS_DIR"
+          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VER}/gitleaks_${GITLEAKS_VER}_linux_x64.tar.gz" \
+            -o "${GITLEAKS_DIR}/gitleaks.tar.gz"
+          echo "${GITLEAKS_SHA256}  ${GITLEAKS_DIR}/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf "${GITLEAKS_DIR}/gitleaks.tar.gz" -C "$GITLEAKS_DIR" gitleaks
+          "${GITLEAKS_DIR}/gitleaks" git \
+            --no-banner \
+            --redact \
+            --log-opts="$GITLEAKS_LOG_OPTS" \
+            --report-format sarif \
+            --report-path "${RUNNER_TEMP}/gitleaks-git.sarif" \
+            .
+          "${GITLEAKS_DIR}/gitleaks" dir \
+            --no-banner \
+            --redact \
+            --report-format sarif \
+            --report-path "${RUNNER_TEMP}/gitleaks-dir.sarif" \
+            .
+
+      - name: Run PII scanner self-tests
+        run: bash scripts/test_pii_check.sh
+
+      - name: Run PII, commit-email & license gates
+        env:
+          PII_EXTRA_PATTERNS: ${{ secrets.PII_EXTRA_PATTERNS }}
+        run: |
+          bash scripts/pii_check.sh
+          bash scripts/license_check.sh
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+
+      - name: Accept Android SDK licenses
+        run: |
+          if [[ ! -f "$ANDROID_HOME/licenses/android-sdk-license" ]]; then
+            SDKM=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager | sort -V | tail -n 1)
+            yes | "$SDKM" --licenses >/dev/null || true
+          fi
+
+      - name: Run fast static checks (ShellCheck, ktlint, detekt)
+        run: bash scripts/check.sh --ci-fast
+
+      - name: Prepare release signing keystore in RUNNER_TEMP
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          KEYSTORE_FILE="${RUNNER_TEMP}/duoime-ci-signing.p12"
+          if [[ -n "$KEYSTORE_B64" && -n "$STORE_PASS" && -n "$KEY_ALIAS" && -n "$KEY_PASS" ]]; then
+            echo "Using configured release signing keystore in RUNNER_TEMP."
+            printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE_FILE"
+            chmod 600 "$KEYSTORE_FILE"
+            RESOLVED_STORE_PASS="$STORE_PASS"
+            RESOLVED_KEY_ALIAS="$KEY_ALIAS"
+            RESOLVED_KEY_PASS="$KEY_PASS"
+          else
+            echo "Release signing secrets not set; generating ephemeral throwaway PKCS12 keystore in RUNNER_TEMP."
+            RESOLVED_STORE_PASS="$(openssl rand -hex 24)"
+            RESOLVED_KEY_PASS="$RESOLVED_STORE_PASS"
+            RESOLVED_KEY_ALIAS="duoime-ci-ephemeral"
+            echo "::add-mask::${RESOLVED_STORE_PASS}"
+            keytool -genkeypair \
+              -storetype PKCS12 \
+              -keystore "$KEYSTORE_FILE" \
+              -storepass "$RESOLVED_STORE_PASS" \
+              -keypass "$RESOLVED_KEY_PASS" \
+              -alias "$RESOLVED_KEY_ALIAS" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 1 \
+              -dname "CN=DuoIME CI Ephemeral, OU=CI, O=DuoIME, C=US" \
+              >/dev/null 2>&1
+            chmod 600 "$KEYSTORE_FILE"
+          fi
+          {
+            echo "SIGNING_STORE_FILE=${KEYSTORE_FILE}"
+            echo "SIGNING_STORE_PASSWORD=${RESOLVED_STORE_PASS}"
+            echo "SIGNING_KEY_ALIAS=${RESOLVED_KEY_ALIAS}"
+            echo "SIGNING_KEY_PASSWORD=${RESOLVED_KEY_PASS}"
+          } >> "$GITHUB_ENV"
+
+      - name: Run unit tests, Android Lint, and assemble signed Release APK & Embed AAR
+        run: |
+          ./gradlew \
+            :core:test \
+            :engine-lite:test \
+            testDebugUnitTest \
+            :app:lintDebug \
+            :app:assembleDebug \
+            :app:assembleRelease \
+            :duoime-embed:assembleRelease \
+            -PrequireReleaseSigning=true \
+            -PappVersionName=0.0.0-ci \
+            -PappVersionCode=1
+
+      - name: Verify signed Release APK, zero INTERNET permission, and Embed AAR hygiene
+        run: bash scripts/verify_artifacts.sh --require-release-signed
+
+      - name: Clean up temporary keystore in RUNNER_TEMP
+        if: always()
+        run: |
+          KEYSTORE_FILE="${RUNNER_TEMP}/duoime-ci-signing.p12"
+          if [[ -e "$KEYSTORE_FILE" ]]; then
+            shred -u "$KEYSTORE_FILE" 2>/dev/null || rm -f "$KEYSTORE_FILE"
+          fi
+
+      - name: Upload Lint reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-lint-reports
+          retention-days: 3
+          if-no-files-found: ignore
+          path: |
+            **/build/reports/lint-results-*.html
+            **/build/reports/lint-results-*.xml
+
+      - name: Upload Detekt reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: detekt-reports
+          retention-days: 3
+          if-no-files-found: ignore
+          path: "**/build/reports/detekt/**"
+
+      - name: Ensure clean worktree
+        run: |
+          git status --short
+          test -z "$(git status --porcelain)"

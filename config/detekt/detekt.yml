@@ -1,0 +1,16 @@
+build:
+  maxIssues: 0
+
+complexity:
+  active: true
+  CyclomaticComplexMethod:
+    active: true
+  LargeClass:
+    active: true
+  LongMethod:
+    active: true
+    threshold: 120
+  LongParameterList:
+    active: true
+  NestedBlockDepth:
+    active: true
