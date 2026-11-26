@@ -50,21 +50,21 @@ private data class RawExtensionConfig(
     @SerialName("preferInline")
     val preferInline: Boolean = false,
     @SerialName("toolbarButtons")
-    val toolbarButtons: List<RawToolbarButton> = emptyList(),
+    val toolbarButtons: List<RawToolbarButton?> = emptyList(),
     @SerialName("acceptImageMimes")
-    val acceptImageMimes: List<String> = emptyList()
+    val acceptImageMimes: List<String?> = emptyList()
 )
 
 @Serializable
 private data class RawToolbarButton(
     @SerialName("id")
-    val id: String = "",
+    val id: String? = null,
     @SerialName("label")
-    val label: String = "",
+    val label: String? = null,
     @SerialName("action")
-    val action: String = "",
+    val action: String? = null,
     @SerialName("value")
-    val value: String = ""
+    val value: String? = null
 )
 
 /**
@@ -86,7 +86,7 @@ object ExtensionConfigParser {
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = false
-        coerceInputValues = false
+        coerceInputValues = true
     }
 
     /**
@@ -118,11 +118,12 @@ object ExtensionConfigParser {
         )
     }
 
-    private fun sanitizeButtons(rawButtons: List<RawToolbarButton>): List<ExtensionToolbarButton> {
+    private fun sanitizeButtons(rawButtons: List<RawToolbarButton?>): List<ExtensionToolbarButton> {
         val seenIds = LinkedHashSet<String>()
         val result = ArrayList<ExtensionToolbarButton>()
         for (rawButton in rawButtons) {
             if (result.size >= MAX_TOOLBAR_BUTTONS) break
+            if (rawButton == null) continue
             val button = sanitizeButton(rawButton) ?: continue
             if (seenIds.add(button.id)) {
                 result.add(button)
@@ -132,14 +133,14 @@ object ExtensionConfigParser {
     }
 
     private fun sanitizeButton(rawButton: RawToolbarButton): ExtensionToolbarButton? {
-        val id = rawButton.id.trim()
+        val id = rawButton.id?.trim().orEmpty()
         if (id.length > MAX_ID_LENGTH || !safeIdRegex.matches(id)) return null
 
-        val label = sanitizePlainText(rawButton.label, MAX_LABEL_LENGTH)
+        val label = sanitizePlainText(rawButton.label.orEmpty(), MAX_LABEL_LENGTH)
         if (label.isEmpty()) return null
 
-        val actionType = parseActionType(rawButton.action) ?: return null
-        val value = sanitizePlainText(rawButton.value, MAX_VALUE_LENGTH)
+        val actionType = parseActionType(rawButton.action.orEmpty()) ?: return null
+        val value = sanitizePlainText(rawButton.value.orEmpty(), MAX_VALUE_LENGTH)
         if (actionType == ExtensionActionType.SEND_TEXT && value.isEmpty()) return null
 
         return ExtensionToolbarButton(
@@ -157,8 +158,9 @@ object ExtensionConfigParser {
         else -> null
     }
 
-    private fun sanitizeImageMimes(rawMimes: List<String>): List<String> = rawMimes
+    private fun sanitizeImageMimes(rawMimes: List<String?>): List<String> = rawMimes
         .asSequence()
+        .filterNotNull()
         .map { it.trim().lowercase() }
         .filter { imageMimeRegex.matches(it) }
         .distinct()

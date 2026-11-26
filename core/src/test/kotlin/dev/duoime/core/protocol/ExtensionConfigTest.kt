@@ -119,6 +119,39 @@ class ExtensionConfigTest {
     }
 
     @Test
+    fun dropsOnlyEntriesContainingExplicitJsonNullsInsteadOfFailingWholeConfig() {
+        val payload = """
+            {
+              "version": 1,
+              "hostName": "NullTolerantHost",
+              "preferInline": null,
+              "acceptImageMimes": [null, "image/png"],
+              "toolbarButtons": [
+                null,
+                {"id": "null_label", "label": null, "action": "host_command", "value": "x"},
+                {"id": "ok_btn", "label": "Run", "action": "host_command", "value": null}
+              ]
+            }
+        """.trimIndent()
+
+        val parsed = ExtensionConfigParser.parse(payload)
+        assertNotNull(parsed)
+        requireNotNull(parsed)
+        assertEquals("NullTolerantHost", parsed.hostName)
+        assertEquals(listOf("image/png"), parsed.acceptImageMimes)
+        assertEquals(1, parsed.toolbarButtons.size)
+        assertEquals(
+            ExtensionToolbarButton(
+                id = "ok_btn",
+                label = "Run",
+                actionType = ExtensionActionType.HOST_COMMAND,
+                value = ""
+            ),
+            parsed.toolbarButtons.single()
+        )
+    }
+
+    @Test
     fun rejectsMalformedOversizedOrUnsupportedPayloadsSafely() {
         assertNull(ExtensionConfigParser.parse(null))
         assertNull(ExtensionConfigParser.parse("   "))

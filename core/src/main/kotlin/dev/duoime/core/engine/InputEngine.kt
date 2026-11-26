@@ -39,6 +39,13 @@ interface InputEngine {
 
     fun selectCandidate(indexOnPage: Int): KeyProcessResult
 
+    /**
+     * Selects a syllable option from [EngineSnapshot.syllables] (e.g. T9 syllable rail) by 0-based
+     * [index], or clears active syllable locks/filters when [index] is `-1`.
+     * Returns `true` if engine state changed.
+     */
+    fun selectSyllable(index: Int): Boolean = false
+
     fun page(forward: Boolean): Boolean
 
     fun setOption(name: String, on: Boolean)

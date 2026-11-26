@@ -12,6 +12,31 @@ that DuoIME ports, adapts, or integrates under Option A (100% permissive reposit
 - License: MIT (`SPDX-License-Identifier: MIT`)
 - Scope: Pure-Kotlin IME core (`:engine-lite` in M1), keystroke sound/haptic feedback, and whiteboard geometry/physics components ported with original MIT headers preserved.
 
+### Bundled `:engine-lite` Permissive Dictionary Datasets
+
+The compact offline dictionaries packaged under `engine-lite/src/main/resources/duoime/dict/` (`core_dict.tsv`, `en_words.tsv`, `s2t.tsv`) are derived from the following permissive open-source datasets via ShellDeck:
+
+- **mozillazg/pinyin-data** (https://github.com/mozillazg/pinyin-data)
+  - Copyright (c) mozillazg and `pinyin-data` contributors
+  - License: MIT (`SPDX-License-Identifier: MIT`; see MIT License text below)
+  - Scope: Mandarin character-to-pinyin mappings (`core_dict.tsv`)
+- **mozillazg/phrase-pinyin-data** (https://github.com/mozillazg/phrase-pinyin-data)
+  - Copyright (c) mozillazg and `phrase-pinyin-data` contributors
+  - License: MIT (`SPDX-License-Identifier: MIT`; see MIT License text below)
+  - Scope: Mandarin phrase-to-pinyin mappings (`core_dict.tsv`)
+- **fxsjy/jieba** (https://github.com/fxsjy/jieba)
+  - Copyright (c) 2012 Sun Junyi (fxsjy)
+  - License: MIT (`SPDX-License-Identifier: MIT`; see MIT License text below)
+  - Scope: Chinese word frequency statistics (`core_dict.tsv`)
+- **Wolf Garbe / SymSpell** (https://github.com/wolfgarbe/SymSpell)
+  - Copyright (c) Wolf Garbe (`SymSpell` contributors; SCOWL + Google Ngram frequency dictionary)
+  - License: MIT (`SPDX-License-Identifier: MIT`; see MIT License text below)
+  - Scope: Compact English frequency lexicon (`en_words.tsv`)
+- **BYVoid/OpenCC** (https://github.com/BYVoid/OpenCC)
+  - Copyright (c) 2010-2024 Carbo Kuo (BYVoid) and OpenCC contributors
+  - License: Apache License, Version 2.0 (`SPDX-License-Identifier: Apache-2.0`; full license text included in [`licenses/Apache-2.0.txt`](licenses/Apache-2.0.txt))
+  - Scope: `STCharacters.txt` and `STPhrases.txt` Simplified-to-Traditional mappings (`s2t.tsv`)
+
 ```text
 MIT License
 

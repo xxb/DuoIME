@@ -65,5 +65,16 @@ class LayoutSpecTest {
 
         val cjkKeysym = KeyCodes.keysymForChar('中')
         assertEquals('中', KeyCodes.charForKeysym(cjkKeysym))
+
+        // X11 Latin-1 (0xA0..0xFF) passes directly in both directions
+        assertEquals(0x00e9, KeyCodes.keysymForChar('é'))
+        assertEquals('é', KeyCodes.charForKeysym(0x00e9))
+        assertEquals(0x00a9, KeyCodes.keysymForChar('©'))
+        assertEquals('©', KeyCodes.charForKeysym(0x00a9))
+
+        // NUL and bare UNICODE_KEYSYM_OFFSET are handled safely without producing '\u0000'
+        assertEquals(KeyCodes.KEYSYM_NO_SYMBOL, KeyCodes.keysymForChar('\u0000'))
+        assertNull(KeyCodes.charForKeysym(KeyCodes.KEYSYM_NO_SYMBOL))
+        assertNull(KeyCodes.charForKeysym(0x0100_0000))
     }
 }
