@@ -67,6 +67,9 @@ class OverlayVisibilityDebouncer(
     private var pendingHideJob: Job? = null
     private var confirmedHidden: Boolean = false
 
+    val hasPendingHide: Boolean
+        get() = pendingHideJob?.isActive == true
+
     fun onVisibilityChanged(isVisible: Boolean, isSessionActive: Boolean) {
         if (!isSessionActive || isVisible) {
             pendingHideJob?.cancel()
@@ -126,7 +129,7 @@ class OverlayShowTracker(
     fun shouldSkipShow(displayId: Int, heightFraction: Float, darkTheme: Boolean, isWindowVisible: Boolean): Boolean =
         isShowing &&
             !forceReshow &&
-            isWindowVisible &&
+            (isWindowVisible || visibilityDebouncer.hasPendingHide) &&
             attachedDisplayId == displayId &&
             kotlin.math.abs(lastHeightFraction - heightFraction) < HEIGHT_EPSILON &&
             lastDarkTheme == darkTheme

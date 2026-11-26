@@ -16,6 +16,7 @@ import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -46,14 +47,15 @@ import androidx.compose.ui.unit.sp
 import dev.duoime.app.MainActivity
 import dev.duoime.app.R
 import dev.duoime.app.dualscreen.DisplayClassifier
+import dev.duoime.app.dualscreen.DualScreenSessionController
 import dev.duoime.app.dualscreen.OverlayHost
-import dev.duoime.app.dualscreen.OverlaySessionSuppression
+import dev.duoime.app.dualscreen.OverlaySurface
+import dev.duoime.app.dualscreen.PlacementEvaluationSnapshot
 import dev.duoime.app.dualscreen.SystemImePinDetector
 import dev.duoime.app.settings.DuoImePreferences
 import dev.duoime.app.settings.DuoImeSettings
 import dev.duoime.core.engine.InputSink
 import dev.duoime.core.policy.DisplayPlacementInput
-import dev.duoime.core.policy.DisplayPlacementPolicy
 import dev.duoime.core.policy.PlacementDecision
 import dev.duoime.core.policy.PlacementReason
 import dev.duoime.embed.DuoImeKeyboard
@@ -88,6 +90,7 @@ class DuoImeService : InputMethodService() {
 
     private lateinit var preferences: DuoImePreferences
     private lateinit var controller: KeyboardController
+    private lateinit var sessionController: DualScreenSessionController
 
     private var displayManager: DisplayManager? = null
     private var pinObserverHandle: AutoCloseable? = null
@@ -95,19 +98,8 @@ class DuoImeService : InputMethodService() {
 
     private var activeEditorConnection: InputConnection? = null
     private var lastEditorInfo: EditorInfo? = null
-    private var isInputViewActive: Boolean = false
-    private var placementApplied: Boolean = false
     private var lastSourceDisplayId: Int = Display.INVALID_DISPLAY
     private var lastDisplayActiveStates: Map<Int, Boolean> = emptyMap()
-
-    private val overlaySuppression = OverlaySessionSuppression(
-        onResetHostTracking = {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                overlayHost?.resetVisibilityTracking()
-            }
-        },
-        onFallback = { evaluateAndApplyPlacement() }
-    )
 
     private val inputSink = InputConnectionSink(
         connectionProvider = { currentInputConnection?.let(::AndroidInputConnectionBridge) }
@@ -147,23 +139,38 @@ class DuoImeService : InputMethodService() {
         )
         controller.setIncludeNumberRow(initialSettings.includeNumberRow)
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            overlayHost = OverlayHost(
+        val overlaySurface = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            OverlayHost(
                 serviceContext = this,
                 scope = serviceScope,
                 controller = controller,
                 inputSink = overlaySinkProxy,
-                onOverlayHiddenByHost = { overlaySuppression.onOverlayHiddenConfirmed() }
-            )
+                onOverlayHiddenByHost = { sessionController.onOverlayHiddenByHost() }
+            ).also { overlayHost = it }.let(::createOverlaySurfaceAdapter)
+        } else {
+            null
         }
+        sessionController = DualScreenSessionController(
+            overlaySurface = overlaySurface,
+            evaluatePlacementInput = { buildPlacementEvaluationSnapshot() },
+            onOverlayApplied = { decision ->
+                decisionFlow.value = decision
+                controller.updateOverlayMode(true)
+                requestInsetsRefresh()
+            },
+            onInlineApplied = { inlineDecision ->
+                controller.attachSink(inlineSinkProxy)
+                decisionFlow.value = inlineDecision
+                controller.updateOverlayMode(false)
+                requestInsetsRefresh()
+            }
+        )
 
         displayManager = (getSystemService(DISPLAY_SERVICE) as? DisplayManager)?.also { dm ->
             dm.registerDisplayListener(displayListener, mainHandler)
         }
         pinObserverHandle = SystemImePinDetector.observe(contentResolver, mainHandler) {
-            if (isInputViewActive) {
-                evaluateAndApplyPlacement()
-            }
+            sessionController.onRelevantEnvironmentChanged()
         }
     }
 
@@ -258,16 +265,12 @@ class DuoImeService : InputMethodService() {
         super.onStartInput(attribute, restarting)
         activeEditorConnection = currentInputConnection
         lastEditorInfo = attribute
-        resetOverlayHostHideSuppression()
         inputSink.onStartInput(
             initialSelStart = attribute?.initialSelStart ?: SelectionState.NO_COMPOSING,
             initialSelEnd = attribute?.initialSelEnd ?: SelectionState.NO_COMPOSING
         )
         applyEditorInfo(attribute)
-        if (isInputViewActive) {
-            placementApplied = false
-            evaluateAndApplyPlacement()
-        }
+        sessionController.onStartInput()
     }
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
@@ -275,12 +278,9 @@ class DuoImeService : InputMethodService() {
         attachComposeOwnerToDecor()
         refreshSettings()
         lastEditorInfo = info
-        isInputViewActive = true
-        placementApplied = false
-        resetOverlayHostHideSuppression()
         applyEditorInfo(info)
         composeOwner.onResume()
-        evaluateAndApplyPlacement()
+        sessionController.onStartInputView()
     }
 
     override fun onUpdateSelection(
@@ -310,15 +310,11 @@ class DuoImeService : InputMethodService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             overlayHost?.recomputeMetricsForConfigChange()
         }
-        if (isInputViewActive) {
-            evaluateAndApplyPlacement()
-        }
+        sessionController.onRelevantEnvironmentChanged()
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
-        isInputViewActive = false
-        resetOverlayHostHideSuppression()
-        hideOverlayWindow()
+        sessionController.onFinishInputView()
         flushComposingOn()
         controller.reset()
         composeOwner.onPauseToCreated()
@@ -326,17 +322,13 @@ class DuoImeService : InputMethodService() {
     }
 
     override fun onWindowHidden() {
-        isInputViewActive = false
-        resetOverlayHostHideSuppression()
-        hideOverlayWindow()
+        sessionController.onWindowHidden()
         composeOwner.onPauseToCreated()
         super.onWindowHidden()
     }
 
     override fun onFinishInput() {
-        isInputViewActive = false
-        resetOverlayHostHideSuppression()
-        hideOverlayWindow()
+        sessionController.onFinishInput()
         flushComposingOn()
         activeEditorConnection = null
         lastEditorInfo = null
@@ -345,8 +337,7 @@ class DuoImeService : InputMethodService() {
     }
 
     override fun onDestroy() {
-        isInputViewActive = false
-        detachOverlayWindow()
+        sessionController.onDestroy()
         displayManager?.unregisterDisplayListener(displayListener)
         runCatching { pinObserverHandle?.close() }
         pinObserverHandle = null
@@ -360,18 +351,11 @@ class DuoImeService : InputMethodService() {
         inputSink.finishComposingOnEditorSwitch(connection?.let(::AndroidInputConnectionBridge))
     }
 
-    private fun resetOverlayHostHideSuppression() {
-        overlaySuppression.resetForSessionBoundary()
-    }
-
     private fun handleSwapScreenRequested() {
         val updated = preferences.toggleSwapToSameScreen()
         settingsFlow.value = updated
-        if (!updated.swapToSameScreen) {
-            resetOverlayHostHideSuppression()
-        }
         // Preserve active composing state & engine snapshot across inline <-> overlay swap.
-        evaluateAndApplyPlacement()
+        sessionController.onSwapScreenToggled(updated.swapToSameScreen)
     }
 
     private fun handleHeightChanged(fraction: Float) {
@@ -388,18 +372,15 @@ class DuoImeService : InputMethodService() {
     }
 
     private fun handleDisplayAddedOrRemoved(displayId: Int, removed: Boolean) {
-        if (removed && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
-            overlayHost?.attachedDisplayId == displayId
-        ) {
-            overlayHost?.detach()
-            placementApplied = false
+        if (removed) {
+            sessionController.onDisplayRemoved(displayId)
+        } else {
+            sessionController.onRelevantEnvironmentChanged()
         }
-        if (!isInputViewActive) return
-        evaluateAndApplyPlacement()
     }
 
     private fun handleDisplayChanged(changedDisplayId: Int) {
-        if (!isInputViewActive) return
+        if (!sessionController.isInputViewActive) return
         val currentActiveStates = snapshotDisplayActiveStates()
         val activeStateChanged = currentActiveStates != lastDisplayActiveStates
         val attachedId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -415,17 +396,16 @@ class DuoImeService : InputMethodService() {
             activeStateChanged = activeStateChanged
         )
         if (!shouldReevaluate) return
-        evaluateAndApplyPlacement()
+        sessionController.onRelevantEnvironmentChanged()
     }
 
     private fun snapshotDisplayActiveStates(): Map<Int, Boolean> = displayManager?.displays
         ?.associate { it.displayId to DisplayClassifier.isDisplayActive(it.state) }
         .orEmpty()
 
-    private fun evaluateAndApplyPlacement() {
+    private fun buildPlacementEvaluationSnapshot(): PlacementEvaluationSnapshot {
         val settings = settingsFlow.value
-        val dm = displayManager
-        val rawDisplays = dm?.displays?.map(DisplayClassifier::fromAndroidDisplay).orEmpty()
+        val rawDisplays = displayManager?.displays?.map(DisplayClassifier::fromAndroidDisplay).orEmpty()
         lastDisplayActiveStates = rawDisplays.associate {
             it.displayId to DisplayClassifier.isDisplayActive(it.state)
         }
@@ -437,9 +417,8 @@ class DuoImeService : InputMethodService() {
         val effectivePin = SystemImePinDetector.resolveEffectivePin(detectedPin, settings.manualSystemImePin)
         val pkgName = lastEditorInfo?.packageName
         val isPassword = EditorInfoMapper.isPasswordInputType(lastEditorInfo?.inputType ?: 0)
-
-        val decision = DisplayPlacementPolicy.resolve(
-            DisplayPlacementInput(
+        return PlacementEvaluationSnapshot(
+            input = DisplayPlacementInput(
                 displays = candidates,
                 sourceDisplayId = sourceDisplayId,
                 hasOverlayPermission = hasOverlayPerm,
@@ -447,51 +426,41 @@ class DuoImeService : InputMethodService() {
                 isPasswordField = isPassword,
                 perAppInlineOverride = pkgName != null && pkgName in settings.perAppInlinePackages,
                 swapToSameScreen = settings.swapToSameScreen,
-                overlayHiddenByHost = overlaySuppression.overlayHiddenByHost,
+                overlayHiddenByHost = sessionController.overlayHiddenByHost,
                 apiLevel = Build.VERSION.SDK_INT,
                 heightFraction = settings.heightFraction
-            )
+            ),
+            darkTheme = settings.darkTheme
         )
-
-        if (decision is PlacementDecision.Overlay && tryApplyOverlayDecision(decision, settings)) {
-            return
-        }
-        val inlineDecision = if (decision is PlacementDecision.Inline) {
-            decision
-        } else {
-            PlacementDecision.Inline(reason = PlacementReason.NO_ELIGIBLE_OPPOSITE_DISPLAY)
-        }
-        applyInlineDecision(inlineDecision)
     }
 
-    private fun tryApplyOverlayDecision(decision: PlacementDecision.Overlay, settings: DuoImeSettings): Boolean {
-        if (!isInputViewActive || Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return false
-        if (placementApplied &&
-            decision == decisionFlow.value &&
-            overlayHost?.isShowingOn(decision.targetDisplayId, decision.heightFraction, settings.darkTheme) == true
-        ) {
-            return true
-        }
-        val targetDisplay = displayManager?.getDisplay(decision.targetDisplayId) ?: return false
-        val shown = overlayHost?.show(targetDisplay, decision.heightFraction, settings.darkTheme) == true
-        if (!shown) return false
-        placementApplied = true
-        decisionFlow.value = decision
-        controller.updateOverlayMode(true)
-        requestInsetsRefresh()
-        return true
-    }
+    @RequiresApi(Build.VERSION_CODES.R)
+    private fun createOverlaySurfaceAdapter(host: OverlayHost): OverlaySurface = object : OverlaySurface {
+        override val isShowing: Boolean
+            get() = host.isShowing
 
-    private fun applyInlineDecision(inlineDecision: PlacementDecision.Inline) {
-        if (placementApplied && inlineDecision == decisionFlow.value && !isOverlayCurrentlyShowing()) {
-            return
+        override val attachedDisplayId: Int
+            get() = host.attachedDisplayId
+
+        override fun isShowingOn(displayId: Int, heightFraction: Float, darkTheme: Boolean): Boolean =
+            host.isShowingOn(displayId, heightFraction, darkTheme)
+
+        override fun show(targetDisplayId: Int, heightFraction: Float, darkTheme: Boolean): Boolean {
+            val targetDisplay = displayManager?.getDisplay(targetDisplayId) ?: return false
+            return host.show(targetDisplay, heightFraction, darkTheme)
         }
-        hideOverlayWindow()
-        controller.attachSink(inlineSinkProxy)
-        placementApplied = true
-        decisionFlow.value = inlineDecision
-        controller.updateOverlayMode(false)
-        requestInsetsRefresh()
+
+        override fun hide() {
+            host.hide()
+        }
+
+        override fun detach() {
+            host.detach()
+        }
+
+        override fun resetVisibilityTracking() {
+            host.resetVisibilityTracking()
+        }
     }
 
     private fun resolveSourceDisplayId(): Int = window?.window?.decorView?.display?.displayId ?: Display.DEFAULT_DISPLAY
@@ -506,12 +475,6 @@ class DuoImeService : InputMethodService() {
     private fun hideOverlayWindow() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             overlayHost?.hide()
-        }
-    }
-
-    private fun detachOverlayWindow() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            overlayHost?.detach()
         }
     }
 
