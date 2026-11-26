@@ -139,7 +139,7 @@ ALLOWED_IPV6 = {ipaddress.IPv6Address("::1"), ipaddress.IPv6Address("::")}
 
 # Patterns constructed cleanly without embedding literal secrets or personal paths.
 RE_IPV4 = re.compile(r"(?<![0-9.])(\d{1,3}(?:\.\d{1,3}){3})(?![0-9.])")
-RE_IPV6_CAND = re.compile(r"(?<![A-Za-z0-9:])([0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,7})(?![A-Za-z0-9:])")
+RE_IPV6_CAND = re.compile(r"(?<![A-Za-z0-9:-])([0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,7})(?![A-Za-z0-9:-])")
 RE_TS_NET = re.compile(r"\.ts\." + r"net\b", re.IGNORECASE)
 RE_UNIX_HOME = re.compile(r"(?<![A-Za-z0-9_.-])/(?:" + r"ho" + r"me|" + r"Us" + r"ers)/[A-Za-z0-9._-]+(?:/|\b)")
 RE_WIN_HOME = re.compile(r"[A-Za-z]:\\Us" + r"ers\\[A-Za-z0-9._-]+", re.IGNORECASE)
@@ -165,7 +165,7 @@ RE_API_TOKENS = [
     re.compile(r"\bAK" + r"IA[0-9A-Z]{16}\b"),
 ]
 RE_HARDCODED_SIGNING = re.compile(
-    r"\bSIGNING_(?:STORE_FILE|STORE_PASSWORD|KEY_ALIAS|KEY_PASSWORD|KEYSTORE_BASE64)\s*[:=]\s*([^\s#]+)"
+    r"(?<!\$\{)\bSIGNING_(?:STORE_FILE|STORE_PASSWORD|KEY_ALIAS|KEY_PASSWORD|KEYSTORE_BASE64)\s*[:=]\s*([^\s#]+)"
 )
 RE_SELF_HOSTED = re.compile(r"\bself-" + r"hosted\b", re.IGNORECASE)
 
@@ -229,7 +229,7 @@ def is_dynamic_signing_ref(value_token):
     cleaned = value_token.strip().strip("\"'")
     if not cleaned:
         return True
-    dynamic_prefixes = ("$", "${", "providers.", "secrets.", "System.", "env.", "<")
+    dynamic_prefixes = ("$", "${", "providers.", "secrets.", "System.", "env.")
     return cleaned.startswith(dynamic_prefixes)
 
 
@@ -302,6 +302,17 @@ def check_staged_identity():
 
 
 GITHUB_WEB_COMMITTER = "noreply" + "@github.com"
+ZERO_SHA = "0" * 40
+
+
+def build_commit_log_args(revspec):
+    if revspec.startswith(f"{ZERO_SHA}.."):
+        after = revspec.split("..", 1)[1].strip()
+        return ["-1", after] if after else ["HEAD"]
+    if revspec.endswith("^!"):
+        target = revspec[:-2].strip()
+        return ["-1", target] if target else ["HEAD"]
+    return [revspec]
 
 
 def check_commits():
@@ -309,9 +320,11 @@ def check_commits():
     if not has_head:
         return
     revspec = COMMIT_RANGE if COMMIT_RANGE else "HEAD"
-    ident_out = git_run("log", "--format=%h%x1f%ae%x1f%ce", revspec, check=False)
+    log_args = build_commit_log_args(revspec)
+    ident_out = git_run("log", "--format=%h%x1f%ae%x1f%ce", *log_args, check=False)
     if ident_out.returncode != 0:
-        return
+        print(f"ERROR: invalid commit range for PII check: {revspec}", file=sys.stderr)
+        sys.exit(2)
     for raw in ident_out.stdout.splitlines():
         if not raw.strip():
             continue
@@ -326,14 +339,16 @@ def check_commits():
         if not (ce_lower.endswith("@users.noreply.github.com") or ce_lower == GITHUB_WEB_COMMITTER):
             add_finding(f"commit:{sha}", 0, "commit_committer_email")
 
-    msg_out = git_run("log", "--format=%h%x1f%B%x1e", revspec, check=False)
-    if msg_out.returncode == 0:
-        for record in msg_out.stdout.split("\x1e"):
-            record = record.strip("\n")
-            if not record or "\x1f" not in record:
-                continue
-            sha, msg = record.split("\x1f", 1)
-            scan_text(f"commit-msg:{sha}", msg)
+    msg_out = git_run("log", "--format=%h%x1f%B%x1e", *log_args, check=False)
+    if msg_out.returncode != 0:
+        print(f"ERROR: failed reading commit messages for range: {revspec}", file=sys.stderr)
+        sys.exit(2)
+    for record in msg_out.stdout.split("\x1e"):
+        record = record.strip("\n")
+        if not record or "\x1f" not in record:
+            continue
+        sha, msg = record.split("\x1f", 1)
+        scan_text(f"commit-msg:{sha}", msg)
 
 
 def is_binary_bytes(data):

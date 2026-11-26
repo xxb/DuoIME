@@ -52,6 +52,8 @@ clean_repo = init_repo("clean")
         "Emails: 42+dev@users.noreply.github.com and info@example.org",
         "Generic glob: /nix/store/*",
         "GitHub Action: uses: actions/checkout@v4",
+        'GitHub workflow mask: echo "::add-mask::${TOKEN}"',
+        'Bash expansion: if [[ -n "${SIGNING_STORE_FILE:-}" ]]; then echo ok; fi',
     ]) + "\n",
     encoding="utf-8",
 )
@@ -80,18 +82,20 @@ leak_cases = [
     ("gh_token", "api_token", "tok=" + "ghp" + "_" + ("A" * 36)),
     ("openai_token", "api_token", "tok=" + "sk" + "-proj-" + ("B" * 30)),
     ("signing_literal", "hardcoded_signing_secret", "SIGNING_STORE_PASSWORD=" + "superSecret123"),
+    ("signing_angle_bracket_bypass", "hardcoded_signing_secret", "SIGNING_STORE_PASSWORD=" + "<redacted>"),
 ]
 
 for case_name, expected_rule, payload in leak_cases:
     repo = init_repo(f"leak_{case_name}")
     (repo / "leak.txt").write_text(payload + "\n", encoding="utf-8")
     subprocess.run(["git", "add", "leak.txt"], cwd=repo, check=True)
-    r = run_pii(repo, ["--staged"])
-    combined = r.stdout + "\n" + r.stderr
-    assert r.returncode == 1, f"{case_name} should fail but exited {r.returncode}"
-    assert f"leak.txt:1:{expected_rule}" in combined, f"{case_name} missing {expected_rule} in:\n{combined}"
-    # Redaction check: the secret payload itself must never appear in stdout/stderr.
-    assert payload not in combined, f"{case_name} leaked raw secret payload in output:\n{combined}"
+    for mode_flag in ("--staged", "--repo"):
+        r = run_pii(repo, [mode_flag])
+        combined = r.stdout + "\n" + r.stderr
+        assert r.returncode == 1, f"{case_name} ({mode_flag}) should fail but exited {r.returncode}"
+        assert f"leak.txt:1:{expected_rule}" in combined, f"{case_name} ({mode_flag}) missing {expected_rule} in:\n{combined}"
+        # Redaction check: the secret payload itself must never appear in stdout/stderr.
+        assert payload not in combined, f"{case_name} ({mode_flag}) leaked raw secret payload in output:\n{combined}"
 
 # 3. Workflow self-hosted runner check MUST FAIL.
 wf_repo = init_repo("leak_workflow")
@@ -181,6 +185,26 @@ r_range_full = run_pii(range_repo, ["--repo"])
 assert r_range_full.returncode == 1, "Full repo scan should catch bad base commit"
 r_range_scoped = run_pii(range_repo, ["--repo"], extra_env={"PII_COMMIT_RANGE": f"{base_sha}..{head_sha}"})
 assert r_range_scoped.returncode == 0, f"Scoped PII_COMMIT_RANGE should pass:\n{r_range_scoped.stdout}\n{r_range_scoped.stderr}"
+
+# 6e. Push-style ranges: zero-SHA initial push and single-commit ^! range scan only the target commit.
+zero_sha = "0" * 40
+r_zero_clean = run_pii(range_repo, ["--repo"], extra_env={"PII_COMMIT_RANGE": f"{zero_sha}..{head_sha}"})
+assert r_zero_clean.returncode == 0, f"Initial-push zero..head on clean commit should pass:\n{r_zero_clean.stdout}\n{r_zero_clean.stderr}"
+
+r_single_clean = run_pii(range_repo, ["--repo"], extra_env={"PII_COMMIT_RANGE": f"{head_sha}^!"})
+assert r_single_clean.returncode == 0, f"Single-commit ^! on clean commit should pass:\n{r_single_clean.stdout}\n{r_single_clean.stderr}"
+
+r_zero_root_bad = run_pii(range_repo, ["--repo"], extra_env={"PII_COMMIT_RANGE": f"{zero_sha}..{base_sha}"})
+assert r_zero_root_bad.returncode == 1 and "commit_author_email" in (r_zero_root_bad.stdout + r_zero_root_bad.stderr)
+
+# Push-style before..after catches a bad commit inside the pushed delta.
+subprocess.run(["git", "config", "user.email", "leak@" + "company.io"], cwd=range_repo, check=True)
+(range_repo / "pr2.txt").write_text("second change\n", encoding="utf-8")
+subprocess.run(["git", "add", "pr2.txt"], cwd=range_repo, check=True)
+subprocess.run(["git", "commit", "-m", "feat: bad push commit"], cwd=range_repo, check=True, stdout=subprocess.DEVNULL)
+after_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=range_repo, check=True, stdout=subprocess.PIPE, text=True).stdout.strip()
+r_push_bad = run_pii(range_repo, ["--repo"], extra_env={"PII_COMMIT_RANGE": f"{head_sha}..{after_sha}"})
+assert r_push_bad.returncode == 1 and "commit_author_email" in (r_push_bad.stdout + r_push_bad.stderr)
 
 # 7. Extra denylist via PII_EXTRA_PATTERNS MUST FAIL and redact the pattern.
 deny_repo = init_repo("extra_deny")
