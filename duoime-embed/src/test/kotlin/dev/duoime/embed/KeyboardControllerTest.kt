@@ -25,7 +25,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -307,15 +307,23 @@ class KeyboardControllerTest {
         fallbackController.attachSink(sink)
         advanceUntilIdle()
         assertTrue("Fallback engine should become ready", fallbackController.uiState.value.isEngineReady)
-        assertNotNull(fallbackController.uiState.value.engineError)
+        assertEquals(EngineIssueKind.PERSISTENT, fallbackController.uiState.value.engineIssue?.kind)
 
         typeEngineChars(fallbackController, "nihao")
         fallbackController.dispatchKeyAction(KeyAction.Space)
         advanceUntilIdle()
         assertTrue("Fallback engine must still type Chinese", "commit:你好" in sink.events)
+        assertEquals(
+            "Persistent init fallback issue must survive typing until dismissed",
+            EngineIssueKind.PERSISTENT,
+            fallbackController.uiState.value.engineIssue?.kind
+        )
+        fallbackController.dismissEngineError()
+        advanceUntilIdle()
+        assertNull(fallbackController.uiState.value.engineIssue)
         fallbackController.close()
 
-        // 2) Throwing event inside actor -> resets engine, clears composing, stays alive for next keys
+        // 2) Throwing event inside actor -> sets TRANSIENT issue, resets engine, clears after next good key
         val flakyEngine = FlakyFakeEngine(failNextKey = true)
         val flakySink = RecordingInputSink(SinkCapabilities.STANDARD_IME)
         val customSchemas = mapOf(
@@ -336,13 +344,19 @@ class KeyboardControllerTest {
         advanceUntilIdle()
 
         recoveryController.dispatchKeyAction(KeyAction.Engine(KeyCodes.keysymForChar('a')))
+        advanceUntilIdle()
+        assertEquals(1, flakyEngine.resetCount)
+        assertEquals(EngineIssueKind.TRANSIENT, recoveryController.uiState.value.engineIssue?.kind)
+        assertTrue("Composing cleared on recovery", "compose:<clear>" in flakySink.events)
+
         recoveryController.dispatchKeyAction(KeyAction.Engine(KeyCodes.keysymForChar('b')))
         recoveryController.dispatchKeyAction(KeyAction.SwitchMode(InputMode.PINYIN_T9))
         advanceUntilIdle()
 
-        assertEquals(1, flakyEngine.resetCount)
-        assertNotNull(recoveryController.uiState.value.engineError)
-        assertTrue("Composing cleared on recovery", "compose:<clear>" in flakySink.events)
+        assertNull(
+            "Transient issue must auto-clear after a successful key",
+            recoveryController.uiState.value.engineIssue
+        )
         assertTrue("Actor survived and processed next key", "commit:b" in flakySink.events)
         assertEquals(listOf("rime_t9"), flakyEngine.selectedSchemas)
         recoveryController.close()
@@ -422,7 +436,7 @@ class KeyboardControllerTest {
         advanceUntilIdle()
 
         assertTrue("Keyboard must stay enabled via PassThroughEngine", controller.uiState.value.isEngineReady)
-        assertNotNull(controller.uiState.value.engineError)
+        assertEquals(EngineIssueKind.PERSISTENT, controller.uiState.value.engineIssue?.kind)
         assertEquals(InputMode.ENGLISH, controller.uiState.value.activeLayout.mode)
 
         controller.dispatchKeyAction(KeyAction.Text("h"))
@@ -511,7 +525,7 @@ class KeyboardControllerTest {
         assertEquals(listOf("commit:raw", "compose:<clear>", "commit:!"), sink.events)
         controller.close()
 
-        // Error dismissal flag flips true on dismissEngineError() and resets false when a new error arrives
+        // Persistent issue survives typing and clears on dismiss; subsequent runtime failure surfaces TRANSIENT
         val flaky = FlakyFakeEngine(failNextKey = true)
         val errController = KeyboardController(
             scope = this,
@@ -521,19 +535,19 @@ class KeyboardControllerTest {
         )
         errController.attachSink(RecordingInputSink())
         advanceUntilIdle()
-        assertNotNull(errController.uiState.value.engineError)
-        assertFalse(errController.uiState.value.engineErrorDismissed)
+        assertEquals(EngineIssueKind.PERSISTENT, errController.uiState.value.engineIssue?.kind)
 
         errController.dismissEngineError()
         advanceUntilIdle()
-        assertTrue(errController.uiState.value.engineErrorDismissed)
+        assertNull(errController.uiState.value.engineIssue)
 
         errController.dispatchKeyAction(KeyAction.Engine(KeyCodes.keysymForChar('a')))
         advanceUntilIdle()
-        assertFalse(
-            "A new error must re-display the error strip",
-            errController.uiState.value.engineErrorDismissed
-        )
+        assertEquals(EngineIssueKind.TRANSIENT, errController.uiState.value.engineIssue?.kind)
+
+        errController.dispatchKeyAction(KeyAction.Engine(KeyCodes.keysymForChar('b')))
+        advanceUntilIdle()
+        assertNull(errController.uiState.value.engineIssue)
         errController.close()
     }
 

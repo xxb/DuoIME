@@ -2,6 +2,7 @@
 // Copyright (c) 2026 DuoIME Contributors
 package dev.duoime.embed
 
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Stable
 import dev.duoime.core.engine.EngineKeyEvent
 import dev.duoime.core.engine.EngineOptions
@@ -38,13 +39,32 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
+ * Lifecycle classification for engine warnings surfaced in [KeyboardUiState.engineIssue].
+ */
+enum class EngineIssueKind {
+    /** Per-event exception recovery; clears automatically on the next successful input event. */
+    TRANSIENT,
+
+    /** Init-time engine fallback (e.g. Lite or PassThroughEngine); stays until explicitly dismissed. */
+    PERSISTENT
+}
+
+/**
+ * Structured engine status issue surfaced to the toolbar warning chip.
+ */
+@Immutable
+data class EngineIssue(
+    val kind: EngineIssueKind,
+    val tag: String
+)
+
+/**
  * Immutable UI state hoisted out of Compose so display swaps can rebuild `ComposeView` cheaply
  * without losing composition, layout mode, or height settings.
  */
 data class KeyboardUiState(
     val isEngineReady: Boolean = false,
-    val engineError: String? = null,
-    val engineErrorDismissed: Boolean = false,
+    val engineIssue: EngineIssue? = null,
     val snapshot: EngineSnapshot = EngineSnapshot.EMPTY,
     val activeLayout: LayoutSpec = BuiltInLayouts.qwerty(),
     val shifted: Boolean = false,
@@ -130,8 +150,7 @@ class KeyboardController(
     private val actorJob: Job
 
     private var activeSchemaIds: Map<InputMode, String> = config.modeSchemaIds
-    private var engineError: String? = null
-    private var engineErrorDismissed: Boolean = false
+    private var engineIssue: EngineIssue? = null
     private var uiMode: InputMode = InputMode.PINYIN_26
     private var lastNonSymbolMode: InputMode = InputMode.PINYIN_26
     private var prePasswordMode: InputMode? = null
@@ -144,7 +163,7 @@ class KeyboardController(
     private val _uiState = MutableStateFlow(
         KeyboardUiState(
             isEngineReady = false,
-            engineError = null,
+            engineIssue = null,
             snapshot = EngineSnapshot.EMPTY,
             activeLayout = resolveLayout(uiMode),
             shifted = shifted,
@@ -240,19 +259,19 @@ class KeyboardController(
             try {
                 val fallbackEngine = fallback()
                 activeSchemaIds = EngineSchemas.DEFAULT_MODE_MAP
-                setEngineError("Fallback active after $primaryTag")
+                engineIssue = EngineIssue(EngineIssueKind.PERSISTENT, "Fallback: $primaryTag")
                 return fallbackEngine
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (fallbackError: Throwable) {
-                setEngineError("Plain keyboard fallback ($primaryTag / ${errorTag(fallbackError)})")
+            } catch (_: Throwable) {
+                engineIssue = EngineIssue(EngineIssueKind.PERSISTENT, "Plain: $primaryTag")
                 uiMode = InputMode.ENGLISH
                 lastNonSymbolMode = InputMode.ENGLISH
                 return PassThroughEngine()
             }
         }
 
-        setEngineError("Plain keyboard fallback ($primaryTag)")
+        engineIssue = EngineIssue(EngineIssueKind.PERSISTENT, "Plain: $primaryTag")
         uiMode = InputMode.ENGLISH
         lastNonSymbolMode = InputMode.ENGLISH
         return PassThroughEngine()
@@ -262,6 +281,10 @@ class KeyboardController(
     private suspend fun processEventSafely(engine: InputEngine, event: ControllerEvent) {
         try {
             processEvent(engine, event)
+            if (engineIssue?.kind == EngineIssueKind.TRANSIENT && isEngineInputEvent(event)) {
+                engineIssue = null
+                publishState(engine)
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
@@ -271,7 +294,7 @@ class KeyboardController(
 
     @Suppress("TooGenericExceptionCaught")
     private suspend fun recoverFromEventFailure(engine: InputEngine, error: Throwable) {
-        setEngineError("Recovered from ${errorTag(error)}")
+        engineIssue = EngineIssue(EngineIssueKind.TRANSIENT, "Recovered: ${errorTag(error)}")
         try {
             engine.reset()
         } catch (cancelled: CancellationException) {
@@ -287,6 +310,15 @@ class KeyboardController(
             // Best-effort composing cleanup during recovery.
         }
         publishState(engine)
+    }
+
+    private fun isEngineInputEvent(event: ControllerEvent): Boolean = when (event) {
+        is ControllerEvent.Action,
+        is ControllerEvent.SelectCandidate,
+        is ControllerEvent.SelectSyllable,
+        is ControllerEvent.Page,
+        is ControllerEvent.ExtensionButton -> true
+        else -> false
     }
 
     private suspend fun processEvent(engine: InputEngine, event: ControllerEvent) {
@@ -315,7 +347,7 @@ class KeyboardController(
                 publishState(engine)
             }
             is ControllerEvent.DismissEngineError -> {
-                engineErrorDismissed = true
+                engineIssue = null
                 publishState(engine)
             }
             is ControllerEvent.Reset -> {
@@ -608,16 +640,10 @@ class KeyboardController(
         }
     }
 
-    private fun setEngineError(message: String) {
-        engineError = message
-        engineErrorDismissed = false
-    }
-
     private fun publishState(engine: InputEngine) {
         _uiState.value = KeyboardUiState(
             isEngineReady = true,
-            engineError = engineError,
-            engineErrorDismissed = engineErrorDismissed,
+            engineIssue = engineIssue,
             snapshot = engine.state.value,
             activeLayout = resolveLayout(uiMode),
             shifted = shifted,

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,8 +21,11 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.duoime.core.model.ChineseVariant
@@ -35,7 +39,7 @@ import kotlin.math.roundToInt
 
 /**
  * Immutable state bundle for [DuoToolbar], ensuring Compose skippability even when
- * host-supplied [extensionButtons] are present.
+ * host-supplied [extensionButtons] or an active [engineIssueTag] are present.
  */
 @Immutable
 data class DuoToolbarState(
@@ -43,23 +47,27 @@ data class DuoToolbarState(
     val variant: ChineseVariant,
     val heightFraction: Float,
     val isOverlayMode: Boolean,
-    val extensionButtons: List<ExtensionToolbarButton> = emptyList()
+    val extensionButtons: List<ExtensionToolbarButton> = emptyList(),
+    val engineIssueTag: String? = null
 )
 
 /**
- * Top keyboard toolbar exposing mode switching (26-key/T9/EN/?123), S/T toggle, one-tap screen
- * swap, height preset cycling (60%/75%/90%), and host-declared [ExtensionToolbarButton] slots.
+ * Top keyboard toolbar exposing an optional leading dismissible engine-warning chip, mode
+ * switching (26-key/T9/EN/?123), S/T toggle, one-tap screen swap, height preset cycling
+ * (60%/75%/90%), and host-declared [ExtensionToolbarButton] slots.
  */
 @Composable
 fun DuoToolbar(
     state: DuoToolbarState,
     onAction: (KeyAction) -> Unit,
     onExtensionButton: (ExtensionToolbarButton) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onDismissEngineError: () -> Unit = {}
 ) {
     val colors = LocalDuoColors.current
     val dimensions = LocalDuoDimensions.current
     val heightPct = (state.heightFraction * 100f).roundToInt()
+    val issueTag = state.engineIssueTag
 
     Row(
         modifier = modifier
@@ -76,6 +84,15 @@ fun DuoToolbar(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            if (!issueTag.isNullOrBlank()) {
+                item(key = "engine_issue") {
+                    EngineIssueChip(
+                        tag = issueTag,
+                        colors = colors,
+                        onDismiss = onDismissEngineError
+                    )
+                }
+            }
             item(key = "mode_26") {
                 ToolbarChip(
                     label = "26键",
@@ -150,6 +167,39 @@ fun DuoToolbar(
             selected = false,
             colors = colors,
             onClick = { onAction(KeyAction.Dismiss) }
+        )
+    }
+}
+
+@Composable
+private fun EngineIssueChip(tag: String, colors: DuoColorTokens, onDismiss: () -> Unit) {
+    val warningStyle = TextStyle(
+        color = colors.warningText,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.SemiBold
+    )
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(colors.warningBackground)
+            .widthIn(max = 140.dp)
+            .semantics { contentDescription = "Dismiss engine warning: $tag" }
+            .clickable(onClick = onDismiss)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        BasicText(
+            text = "⚠ $tag",
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = warningStyle,
+            modifier = Modifier.weight(1f, fill = false)
+        )
+        BasicText(
+            text = "✕",
+            maxLines = 1,
+            style = warningStyle
         )
     }
 }

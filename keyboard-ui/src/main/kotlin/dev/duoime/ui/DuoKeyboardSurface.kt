@@ -3,24 +3,16 @@
 package dev.duoime.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import dev.duoime.core.layout.LayoutSpec
 import dev.duoime.core.model.EngineSnapshot
 import dev.duoime.core.model.FeedbackKey
@@ -45,8 +37,7 @@ data class DuoKeyboardSurfaceState(
     val heightFraction: Float,
     val isOverlayMode: Boolean,
     val extensionButtons: List<ExtensionToolbarButton> = emptyList(),
-    val engineError: String? = null,
-    val engineErrorDismissed: Boolean = false
+    val engineIssueTag: String? = null
 )
 
 /**
@@ -64,7 +55,8 @@ data class DuoKeyboardCallbacks(
 )
 
 /**
- * Pure Compose keyboard root rendering toolbar, candidate/syllable strip, and single-pointer [KeyGrid].
+ * Pure Compose keyboard root rendering toolbar (with optional leading dismissible warning chip),
+ * candidate/syllable strip, and single-pointer [KeyGrid].
  * Depends solely on `:core` models and zero Material 3 components.
  */
 @Composable
@@ -76,7 +68,8 @@ fun DuoKeyboardSurface(state: DuoKeyboardSurfaceState, callbacks: DuoKeyboardCal
         variant = state.snapshot.variant,
         heightFraction = state.heightFraction,
         isOverlayMode = state.isOverlayMode,
-        extensionButtons = state.extensionButtons
+        extensionButtons = state.extensionButtons,
+        engineIssueTag = state.engineIssueTag
     )
     val candidateCallbacks = remember(callbacks) {
         CandidateBarCallbacks(
@@ -92,29 +85,12 @@ fun DuoKeyboardSurface(state: DuoKeyboardSurfaceState, callbacks: DuoKeyboardCal
             .fillMaxWidth()
             .background(colors.keyboardBackground)
     ) {
-        val snap = state.snapshot
-        val showCandidates = snap.isComposing || snap.candidates.isNotEmpty() || snap.syllables.isNotEmpty()
-        val err = state.engineError
-        val showErrorStrip = !showCandidates && !err.isNullOrBlank() && !state.engineErrorDismissed
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(dimensions.toolbarHeight)
-        ) {
-            if (showErrorStrip) {
-                EngineErrorStrip(
-                    message = err.orEmpty(),
-                    onDismiss = callbacks.onDismissEngineError
-                )
-            } else {
-                DuoToolbar(
-                    state = toolbarState,
-                    onAction = callbacks.onKeyAction,
-                    onExtensionButton = callbacks.onExtensionButton
-                )
-            }
-        }
+        DuoToolbar(
+            state = toolbarState,
+            onAction = callbacks.onKeyAction,
+            onExtensionButton = callbacks.onExtensionButton,
+            onDismissEngineError = callbacks.onDismissEngineError
+        )
 
         Box(
             modifier = Modifier
@@ -123,7 +99,8 @@ fun DuoKeyboardSurface(state: DuoKeyboardSurfaceState, callbacks: DuoKeyboardCal
                 .background(colors.divider)
         )
 
-        if (showCandidates) {
+        val snap = state.snapshot
+        if (snap.isComposing || snap.candidates.isNotEmpty() || snap.syllables.isNotEmpty()) {
             CandidateBar(
                 snapshot = snap,
                 callbacks = candidateCallbacks
@@ -148,30 +125,6 @@ fun DuoKeyboardSurface(state: DuoKeyboardSurfaceState, callbacks: DuoKeyboardCal
                     horizontal = dimensions.gridHorizontalPadding,
                     vertical = dimensions.gridVerticalPadding
                 )
-        )
-    }
-}
-
-@Composable
-private fun EngineErrorStrip(message: String, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
-    val colors = LocalDuoColors.current
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(colors.warningBackground)
-            .clickable(onClick = onDismiss)
-            .padding(horizontal = 10.dp),
-        contentAlignment = Alignment.CenterStart
-    ) {
-        BasicText(
-            text = message,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            style = TextStyle(
-                color = colors.warningText,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium
-            )
         )
     }
 }
