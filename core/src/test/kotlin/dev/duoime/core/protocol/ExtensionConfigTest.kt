@@ -152,13 +152,28 @@ class ExtensionConfigTest {
     }
 
     @Test
-    fun rejectsMalformedOversizedOrUnsupportedPayloadsSafely() {
+    fun rejectsMalformedOversizedWrongTypedOrUnsupportedPayloadsSafely() {
         assertNull(ExtensionConfigParser.parse(null))
         assertNull(ExtensionConfigParser.parse("   "))
         assertNull(ExtensionConfigParser.parse("{not valid json"))
         assertNull(ExtensionConfigParser.parse("""{"version": 2}"""))
+        assertNull(ExtensionConfigParser.parse("""{"version": "1"}"""))
+        assertNull(ExtensionConfigParser.parse("""{"version": 1, "preferInline": "true"}"""))
+        assertNull(ExtensionConfigParser.parse("""{"version": 1, "hostName": 7}"""))
         val oversized = """{"version":1,"hostName":"${"a".repeat(ExtensionConfigParser.MAX_RAW_JSON_BYTES + 64)}"}"""
         assertNull(ExtensionConfigParser.parse(oversized))
+
+        // Explicit JSON null on top-level fields stays tolerant and falls back to defaults
+        val explicitNulls = ExtensionConfigParser.parse(
+            """{"version": null, "hostName": null, "preferInline": null, "toolbarButtons": null, "acceptImageMimes": null}"""
+        )
+        assertNotNull(explicitNulls)
+        requireNotNull(explicitNulls)
+        assertEquals(1, explicitNulls.schemaVersion)
+        assertNull(explicitNulls.hostName)
+        assertEquals(false, explicitNulls.preferInline)
+        assertTrue(explicitNulls.toolbarButtons.isEmpty())
+        assertTrue(explicitNulls.acceptImageMimes.isEmpty())
     }
 
     private fun assertNoLoneSurrogates(text: String) {

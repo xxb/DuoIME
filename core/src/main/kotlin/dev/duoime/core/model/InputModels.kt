@@ -64,6 +64,10 @@ sealed interface KeyProcessResult {
 
     data class CommitText(val text: String) : KeyProcessResult
 
+    /**
+     * Indicates the engine did not handle the event (matching librime's `process_key() == false`
+     * contract). Callers already hold the dispatched event and perform their default action for it.
+     */
     data object PassThrough : KeyProcessResult
 }
 

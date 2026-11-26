@@ -43,6 +43,12 @@ class LiteInputEngine(
     }
 
     override fun onKey(event: EngineKeyEvent): KeyProcessResult {
+        if ((event.mask and KeyCodes.MASK_RELEASE) != 0) {
+            return KeyProcessResult.Consumed
+        }
+        if ((event.mask and PASSTHROUGH_MODIFIER_MASK) != 0) {
+            return KeyProcessResult.PassThrough
+        }
         val result = when (event.keysym) {
             KeyCodes.KEYSYM_BACKSPACE ->
                 if (localEngine.onBackspace()) KeyProcessResult.Consumed else KeyProcessResult.PassThrough
@@ -145,9 +151,8 @@ class LiteInputEngine(
     }
 
     private fun handleCharacterKey(event: EngineKeyEvent): KeyProcessResult {
-        val ch = KeyCodes.charForKeysym(event.keysym)
-            ?: event.label?.takeIf { it.length == 1 }?.first()
-            ?: return KeyProcessResult.PassThrough
+        val ch = KeyCodes.charForKeysym(event.keysym) ?: return KeyProcessResult.PassThrough
+        if (Character.isISOControl(ch)) return KeyProcessResult.PassThrough
         return convertResult(localEngine.onCharacter(ch))
     }
 
@@ -217,6 +222,9 @@ class LiteInputEngine(
     }
 
     companion object {
+        private const val PASSTHROUGH_MODIFIER_MASK: Int =
+            KeyCodes.MASK_CONTROL or KeyCodes.MASK_ALT or KeyCodes.MASK_SUPER
+
         const val SCHEMA_PINYIN_26: String = "pinyin_26"
         const val SCHEMA_T9_PINYIN: String = "t9_pinyin"
         const val SCHEMA_XIAOHE: String = "double_pinyin_flypy"

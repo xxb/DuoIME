@@ -8,7 +8,10 @@ import dev.duoime.core.layout.KeyCodes
 import dev.duoime.core.model.ChineseVariant
 import dev.duoime.core.model.InputMode
 import dev.duoime.core.model.KeyProcessResult
+import java.io.ByteArrayInputStream
 import java.io.File
+import java.io.IOException
+import java.io.InputStream
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -188,5 +191,98 @@ class LiteInputEngineContractTest {
         assertThrows(IllegalArgumentException::class.java) {
             UserLearningStore(File("orphan_learning.json"))
         }
+    }
+
+    @Test
+    fun loadFromStreamsClosesAllStreamsWhenSubsequentStreamFails() {
+        var firstClosed = false
+        var secondClosed = false
+        var thirdClosed = false
+
+        val firstStream = object : ByteArrayInputStream("ni hao\t你好\t1000\n".toByteArray()) {
+            override fun close() {
+                firstClosed = true
+                super.close()
+            }
+        }
+        val failingSecond = object : InputStream() {
+            override fun read(): Int = throw IOException("Simulated S2T stream failure")
+
+            override fun close() {
+                secondClosed = true
+                super.close()
+            }
+        }
+        val thirdStream = object : ByteArrayInputStream("duo\t1000\n".toByteArray()) {
+            override fun close() {
+                thirdClosed = true
+                super.close()
+            }
+        }
+
+        assertThrows(IOException::class.java) {
+            LiteBundledResources.loadFromStreams(
+                coreDictStream = firstStream,
+                s2tStream = failingSecond,
+                englishWordsStream = thirdStream
+            )
+        }
+        assertTrue("First stream must be closed on failure", firstClosed)
+        assertTrue("Failing second stream must be closed", secondClosed)
+        assertTrue("Third stream must be closed on failure", thirdClosed)
+    }
+
+    @Test
+    fun modifierMasksReleaseEventsNulAndIsoControlsAreHandledSafely() {
+        val engine: InputEngine = LiteInputEngine.createDefault()
+
+        // NUL, label-only (NO_SYMBOL), and ISO control keysyms pass through without committing or composing
+        assertEquals(KeyProcessResult.PassThrough, engine.onKey(EngineKeyEvent.fromChar('\u0000')))
+        assertEquals(
+            KeyProcessResult.PassThrough,
+            engine.onKey(EngineKeyEvent(keysym = KeyCodes.KEYSYM_NO_SYMBOL, label = "a"))
+        )
+        assertEquals(KeyProcessResult.PassThrough, engine.onKey(EngineKeyEvent(keysym = 0x0100_0001)))
+        assertEquals(KeyProcessResult.PassThrough, engine.onKey(EngineKeyEvent(keysym = 0x0100_007f)))
+        assertFalse(engine.state.value.isComposing)
+
+        // SHIFT and LOCK masks are ignored (normal processing continues)
+        assertEquals(
+            KeyProcessResult.Consumed,
+            engine.onKey(EngineKeyEvent(keysym = KeyCodes.keysymForChar('n'), mask = KeyCodes.MASK_SHIFT))
+        )
+        assertEquals(
+            KeyProcessResult.Consumed,
+            engine.onKey(EngineKeyEvent(keysym = KeyCodes.keysymForChar('i'), mask = KeyCodes.MASK_LOCK))
+        )
+        assertTrue(engine.state.value.isComposing)
+        val preeditBeforeChords = engine.state.value.preedit
+
+        // RELEASE events are no-op Consumed and never mutate state or double-commit
+        assertEquals(
+            KeyProcessResult.Consumed,
+            engine.onKey(EngineKeyEvent(keysym = KeyCodes.KEYSYM_SPACE, mask = KeyCodes.MASK_RELEASE))
+        )
+        assertEquals(preeditBeforeChords, engine.state.value.preedit)
+
+        // CONTROL / ALT / SUPER chords pass through for letters AND special keys without mutating preedit
+        val chordMasks = listOf(KeyCodes.MASK_CONTROL, KeyCodes.MASK_ALT, KeyCodes.MASK_SUPER)
+        val keys = listOf(
+            KeyCodes.keysymForChar('c'),
+            KeyCodes.KEYSYM_BACKSPACE,
+            KeyCodes.KEYSYM_SPACE,
+            KeyCodes.KEYSYM_RETURN,
+            KeyCodes.KEYSYM_ESCAPE
+        )
+        for (mask in chordMasks) {
+            for (keysym in keys) {
+                assertEquals(
+                    "Expected PassThrough for mask=$mask keysym=$keysym",
+                    KeyProcessResult.PassThrough,
+                    engine.onKey(EngineKeyEvent(keysym = keysym, mask = mask))
+                )
+            }
+        }
+        assertEquals(preeditBeforeChords, engine.state.value.preedit)
     }
 }

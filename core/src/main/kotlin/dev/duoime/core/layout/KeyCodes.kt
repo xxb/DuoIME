@@ -24,6 +24,14 @@ object KeyCodes {
     const val KEYSYM_RETURN: Int = 0xff0d
     const val KEYSYM_ESCAPE: Int = 0xff1b
 
+    /** Mirrored X11 / librime key event modifier and release mask bits. */
+    const val MASK_SHIFT: Int = 1
+    const val MASK_LOCK: Int = 1 shl 1
+    const val MASK_CONTROL: Int = 1 shl 2
+    const val MASK_ALT: Int = 1 shl 3
+    const val MASK_SUPER: Int = 1 shl 26
+    const val MASK_RELEASE: Int = 1 shl 30
+
     private const val ASCII_MIN: Int = 0x20
     private const val ASCII_MAX: Int = 0x7e
     private const val LATIN1_MIN: Int = 0x00a0

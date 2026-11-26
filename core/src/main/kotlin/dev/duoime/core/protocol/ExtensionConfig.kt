@@ -2,9 +2,14 @@
 // Copyright (c) 2026 DuoIME Contributors
 package dev.duoime.core.protocol
 
-import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.intOrNull
 
 /**
  * Explicit sandboxed action types permitted for host-declared extension toolbar keys.
@@ -41,34 +46,12 @@ data class ExtensionConfig(
     }
 }
 
-@Serializable
-private data class RawExtensionConfig(
-    @SerialName("version")
-    val version: Int = ExtensionConfig.SUPPORTED_SCHEMA_VERSION,
-    @SerialName("hostName")
-    val hostName: String? = null,
-    @SerialName("preferInline")
-    val preferInline: Boolean = false,
-    @SerialName("toolbarButtons")
-    val toolbarButtons: List<RawToolbarButton?> = emptyList(),
-    @SerialName("acceptImageMimes")
-    val acceptImageMimes: List<String?> = emptyList()
-)
-
-@Serializable
-private data class RawToolbarButton(
-    @SerialName("id")
-    val id: String? = null,
-    @SerialName("label")
-    val label: String? = null,
-    @SerialName("action")
-    val action: String? = null,
-    @SerialName("value")
-    val value: String? = null
-)
-
 /**
  * Boundary parser and sanitizer for untrusted host JSON in `dev.duoime.ext.v1`.
+ *
+ * Uses strict JSON DOM type inspection so wrong-typed primitives (such as `"version": "1"`,
+ * `"preferInline": "true"`, or `"hostName": 7`) fail closed to `null`, while explicit JSON `null`
+ * values on optional fields fall back cleanly to defaults.
  */
 object ExtensionConfigParser {
     const val MAX_RAW_JSON_BYTES: Int = 8_192
@@ -84,47 +67,77 @@ object ExtensionConfigParser {
     private val controlCharRegex = Regex("""[\p{Cc}\p{Cf}]""")
 
     private val json = Json {
-        ignoreUnknownKeys = true
         isLenient = false
-        coerceInputValues = true
     }
 
     /**
      * Parses and sanitizes [rawJson]. Returns `null` for null, blank, oversized,
-     * malformed, or unsupported-version payloads without throwing.
+     * malformed, wrong-typed, or unsupported-version payloads without throwing.
      */
     fun parse(rawJson: String?): ExtensionConfig? {
         if (rawJson.isNullOrBlank()) return null
         if (rawJson.toByteArray(Charsets.UTF_8).size > MAX_RAW_JSON_BYTES) return null
 
-        val raw = runCatching { json.decodeFromString<RawExtensionConfig>(rawJson) }.getOrNull()
+        val root = runCatching { json.parseToJsonElement(rawJson) }.getOrNull() as? JsonObject
             ?: return null
 
-        if (raw.version != ExtensionConfig.SUPPORTED_SCHEMA_VERSION) return null
+        val version = parseOptionalStrictInt(root["version"], ExtensionConfig.SUPPORTED_SCHEMA_VERSION)
+            ?: return null
+        if (version != ExtensionConfig.SUPPORTED_SCHEMA_VERSION) return null
 
-        val sanitizedHost = raw.hostName
+        val preferInline = parseOptionalStrictBoolean(root["preferInline"], default = false)
+            ?: return null
+
+        val rawHost = parseOptionalStrictString(root["hostName"]) ?: return null
+        val sanitizedHost = rawHost.value
             ?.let { sanitizePlainText(it, MAX_HOST_NAME_LENGTH) }
             ?.takeIf { it.isNotEmpty() }
 
-        val buttons = sanitizeButtons(raw.toolbarButtons)
-        val mimes = sanitizeImageMimes(raw.acceptImageMimes)
+        val buttonsArray = parseOptionalJsonArray(root["toolbarButtons"]) ?: return null
+        val mimesArray = parseOptionalJsonArray(root["acceptImageMimes"]) ?: return null
 
         return ExtensionConfig(
-            schemaVersion = raw.version,
+            schemaVersion = version,
             hostName = sanitizedHost,
-            toolbarButtons = buttons,
-            preferInline = raw.preferInline,
-            acceptImageMimes = mimes
+            toolbarButtons = sanitizeButtons(buttonsArray),
+            preferInline = preferInline,
+            acceptImageMimes = sanitizeImageMimes(mimesArray)
         )
     }
 
-    private fun sanitizeButtons(rawButtons: List<RawToolbarButton?>): List<ExtensionToolbarButton> {
+    private data class OptionalString(val value: String?)
+
+    private fun parseOptionalStrictInt(element: JsonElement?, default: Int): Int? = when (element) {
+        null, JsonNull -> default
+        is JsonPrimitive -> if (!element.isString) element.intOrNull else null
+        else -> null
+    }
+
+    private fun parseOptionalStrictBoolean(element: JsonElement?, default: Boolean): Boolean? = when (element) {
+        null, JsonNull -> default
+        is JsonPrimitive -> if (!element.isString) element.booleanOrNull else null
+        else -> null
+    }
+
+    private fun parseOptionalStrictString(element: JsonElement?): OptionalString? = when (element) {
+        null, JsonNull -> OptionalString(null)
+        is JsonPrimitive -> if (element.isString) OptionalString(element.content) else null
+        else -> null
+    }
+
+    private fun parseOptionalJsonArray(element: JsonElement?): JsonArray? = when (element) {
+        null, JsonNull -> JsonArray(emptyList())
+        is JsonArray -> element
+        else -> null
+    }
+
+    private fun sanitizeButtons(rawButtons: JsonArray): List<ExtensionToolbarButton> {
         val seenIds = LinkedHashSet<String>()
         val result = ArrayList<ExtensionToolbarButton>()
-        for (rawButton in rawButtons) {
+        for (element in rawButtons) {
             if (result.size >= MAX_TOOLBAR_BUTTONS) break
-            if (rawButton == null) continue
-            val button = sanitizeButton(rawButton) ?: continue
+            val obj = element as? JsonObject ?: continue
+            val button = sanitizeButton(obj) ?: continue
             if (seenIds.add(button.id)) {
                 result.add(button)
             }
@@ -132,19 +145,23 @@ object ExtensionConfigParser {
         return result
     }
 
-    private fun sanitizeButton(rawButton: RawToolbarButton): ExtensionToolbarButton? {
-        val id = rawButton.id?.trim().orEmpty()
-        if (id.length > MAX_ID_LENGTH || !safeIdRegex.matches(id)) return null
+    private fun sanitizeButton(obj: JsonObject): ExtensionToolbarButton? {
+        val rawId = parseOptionalStrictString(obj["id"])?.value?.trim().orEmpty()
+        if (rawId.length > MAX_ID_LENGTH || !safeIdRegex.matches(rawId)) return null
 
-        val label = sanitizePlainText(rawButton.label.orEmpty(), MAX_LABEL_LENGTH)
+        val rawLabel = parseOptionalStrictString(obj["label"])?.value.orEmpty()
+        val label = sanitizePlainText(rawLabel, MAX_LABEL_LENGTH)
         if (label.isEmpty()) return null
 
-        val actionType = parseActionType(rawButton.action.orEmpty()) ?: return null
-        val value = sanitizePlainText(rawButton.value.orEmpty(), MAX_VALUE_LENGTH)
+        val rawAction = parseOptionalStrictString(obj["action"])?.value.orEmpty()
+        val actionType = parseActionType(rawAction) ?: return null
+
+        val rawValue = parseOptionalStrictString(obj["value"]) ?: return null
+        val value = sanitizePlainText(rawValue.value.orEmpty(), MAX_VALUE_LENGTH)
         if (actionType == ExtensionActionType.SEND_TEXT && value.isEmpty()) return null
 
         return ExtensionToolbarButton(
-            id = id,
+            id = rawId,
             label = label,
             actionType = actionType,
             value = value
@@ -158,9 +175,9 @@ object ExtensionConfigParser {
         else -> null
     }
 
-    private fun sanitizeImageMimes(rawMimes: List<String?>): List<String> = rawMimes
+    private fun sanitizeImageMimes(rawMimes: JsonArray): List<String> = rawMimes
         .asSequence()
-        .filterNotNull()
+        .mapNotNull { elem -> (elem as? JsonPrimitive)?.takeIf { it.isString }?.content }
         .map { it.trim().lowercase() }
         .filter { imageMimeRegex.matches(it) }
         .distinct()

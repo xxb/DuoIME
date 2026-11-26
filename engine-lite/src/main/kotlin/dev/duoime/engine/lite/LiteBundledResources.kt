@@ -39,29 +39,50 @@ object LiteBundledResources {
      * **Threading:** Performs blocking classpath I/O and dictionary parsing (~100–300 ms on Android).
      * **Never call on the Android main thread.**
      */
-    fun loadFromClasspath(classLoader: ClassLoader = defaultClassLoader()): LiteDictionaryBundle = loadFromStreams(
-        coreDictStream = openResource(CORE_DICT_RESOURCE, classLoader),
-        s2tStream = openResource(S2T_RESOURCE, classLoader),
-        englishWordsStream = openResource(ENGLISH_WORDS_RESOURCE, classLoader)
-    )
-
-    /**
-     * Loads a [LiteDictionaryBundle] from caller-provided streams (closing each stream after reading).
-     */
-    fun loadFromStreams(
-        coreDictStream: InputStream,
-        s2tStream: InputStream,
-        englishWordsStream: InputStream? = null
-    ): LiteDictionaryBundle {
-        val dict = coreDictStream.use { PinyinDictionary.fromStream(it) }
-        val converter = s2tStream.use { ChineseConverter.fromStream(it) }
-        val lexicon = englishWordsStream?.use { EnglishLexicon.fromStream(it) } ?: EnglishLexicon.empty()
+    fun loadFromClasspath(classLoader: ClassLoader = defaultClassLoader()): LiteDictionaryBundle {
+        val dict = openResource(CORE_DICT_RESOURCE, classLoader).use { PinyinDictionary.fromStream(it) }
+        val converter = openResource(S2T_RESOURCE, classLoader).use { ChineseConverter.fromStream(it) }
+        val lexicon = openResource(ENGLISH_WORDS_RESOURCE, classLoader).use { EnglishLexicon.fromStream(it) }
         return LiteDictionaryBundle(
             pinyinDictionary = dict,
             chineseConverter = converter,
             englishLexicon = lexicon
         )
     }
+
+    /**
+     * Loads a [LiteDictionaryBundle] from caller-provided streams, guaranteeing all provided
+     * streams are closed even if an earlier stream fails during parsing.
+     */
+    fun loadFromStreams(
+        coreDictStream: InputStream,
+        s2tStream: InputStream,
+        englishWordsStream: InputStream? = null
+    ): LiteDictionaryBundle = coreDictStream.use { core ->
+        s2tStream.use { s2t ->
+            loadWithOptionalEnglish(core, s2t, englishWordsStream)
+        }
+    }
+
+    private fun loadWithOptionalEnglish(
+        coreDictStream: InputStream,
+        s2tStream: InputStream,
+        englishWordsStream: InputStream?
+    ): LiteDictionaryBundle = if (englishWordsStream != null) {
+        englishWordsStream.use { en -> parseBundle(coreDictStream, s2tStream, en) }
+    } else {
+        parseBundle(coreDictStream, s2tStream, null)
+    }
+
+    private fun parseBundle(
+        coreDictStream: InputStream,
+        s2tStream: InputStream,
+        englishWordsStream: InputStream?
+    ): LiteDictionaryBundle = LiteDictionaryBundle(
+        pinyinDictionary = PinyinDictionary.fromStream(coreDictStream),
+        chineseConverter = ChineseConverter.fromStream(s2tStream),
+        englishLexicon = englishWordsStream?.let { EnglishLexicon.fromStream(it) } ?: EnglishLexicon.empty()
+    )
 
     /**
      * Opens a bundled resource from the classpath, throwing [IllegalStateException] if missing.
