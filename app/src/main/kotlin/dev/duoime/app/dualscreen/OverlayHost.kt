@@ -68,39 +68,36 @@ class OverlayHost(
     private val onOverlayHiddenByHost: () -> Unit
 ) {
     private val renderConfigFlow = MutableStateFlow(OverlayRenderConfig())
-    private val visibilityDebouncer = OverlayVisibilityDebouncer(
+    private val showTracker = OverlayShowTracker(
         scope = scope,
-        onHiddenConfirmed = {
-            if (isShowing) {
-                onOverlayHiddenByHost()
-            }
-        }
+        onHiddenConfirmed = onOverlayHiddenByHost
     )
 
     private var windowManager: WindowManager? = null
     private var rootView: OverlayRootView? = null
     private var layoutParams: WindowManager.LayoutParams? = null
     private var composeOwner: ImeComposeOwner? = null
-    var attachedDisplayId: Int = Display.INVALID_DISPLAY
-        private set
-    private var lastHeightFraction: Float = 0.75f
-    private var lastDarkTheme: Boolean = true
 
-    var isShowing: Boolean = false
-        private set
+    val attachedDisplayId: Int
+        get() = showTracker.attachedDisplayId
 
-    fun isShowingOn(displayId: Int, heightFraction: Float, darkTheme: Boolean): Boolean = isShowing &&
-        attachedDisplayId == displayId &&
-        rootView != null &&
-        kotlin.math.abs(lastHeightFraction - heightFraction) < 0.001f &&
-        lastDarkTheme == darkTheme
+    val isShowing: Boolean
+        get() = showTracker.isShowing
+
+    fun isShowingOn(displayId: Int, heightFraction: Float, darkTheme: Boolean): Boolean {
+        val root = rootView ?: return false
+        return showTracker.shouldSkipShow(
+            displayId = displayId,
+            heightFraction = heightFraction,
+            darkTheme = darkTheme,
+            isWindowVisible = root.windowVisibility == View.VISIBLE
+        )
+    }
 
     fun show(targetDisplay: Display, heightFraction: Float, darkTheme: Boolean): Boolean {
         if (isShowingOn(targetDisplay.displayId, heightFraction, darkTheme)) {
             return true
         }
-        lastHeightFraction = heightFraction
-        lastDarkTheme = darkTheme
         if (attachedDisplayId != targetDisplay.displayId || rootView == null) {
             detach()
             if (!attachToDisplay(targetDisplay, heightFraction, darkTheme)) {
@@ -114,28 +111,30 @@ class OverlayHost(
         val wm = windowManager ?: return false
         val lp = layoutParams ?: return false
 
-        isShowing = true
-        visibilityDebouncer.reset()
+        showTracker.beginShow(targetDisplay.displayId, heightFraction, darkTheme)
         controller.attachSink(inputSink)
         lp.flags = ACTIVE_FLAGS
         root.visibility = View.VISIBLE
         composeOwner?.onResume()
-        return runCatching {
+        val updated = runCatching {
             wm.updateViewLayout(root, lp)
             true
         }.getOrElse {
             detach()
             false
         }
+        if (updated) {
+            showTracker.probeWindowVisibility(isWindowVisible = root.windowVisibility == View.VISIBLE)
+        }
+        return updated
     }
 
     fun resetVisibilityTracking() {
-        visibilityDebouncer.reset()
+        showTracker.resetVisibilityTracking()
     }
 
     fun hide() {
-        isShowing = false
-        visibilityDebouncer.reset()
+        showTracker.markHidden()
         composeOwner?.onPauseToCreated()
         val root = rootView ?: return
         val wm = windowManager ?: return
@@ -146,8 +145,7 @@ class OverlayHost(
     }
 
     fun updatePresentation(heightFraction: Float, darkTheme: Boolean) {
-        lastHeightFraction = heightFraction
-        lastDarkTheme = darkTheme
+        showTracker.updatePresentation(heightFraction, darkTheme)
         val wm = windowManager ?: return
         val root = rootView ?: return
         val lp = layoutParams ?: return
@@ -167,15 +165,14 @@ class OverlayHost(
         val wm = windowManager ?: return
         val root = rootView ?: return
         val lp = layoutParams ?: return
-        val metrics = computeMetricsForWindowManager(wm, lastHeightFraction)
+        val metrics = computeMetricsForWindowManager(wm, showTracker.lastHeightFraction)
         renderConfigFlow.value = renderConfigFlow.value.copy(bottomInsetPx = metrics.bottomInsetPx)
         lp.height = metrics.windowHeightPx
         runCatching { wm.updateViewLayout(root, lp) }
     }
 
     fun detach() {
-        isShowing = false
-        visibilityDebouncer.reset()
+        showTracker.markDetached()
         val root = rootView
         val wm = windowManager
         val owner = composeOwner
@@ -184,7 +181,6 @@ class OverlayHost(
         windowManager = null
         layoutParams = null
         composeOwner = null
-        attachedDisplayId = Display.INVALID_DISPLAY
 
         if (root != null && wm != null) {
             runCatching { wm.removeViewImmediate(root) }
@@ -208,7 +204,7 @@ class OverlayHost(
 
         val owner = ImeComposeOwner().apply { onCreate() }
         val root = OverlayRootView(windowContext) { visible ->
-            visibilityDebouncer.onVisibilityChanged(isVisible = visible, isSessionActive = isShowing)
+            showTracker.onWindowVisibilityChanged(isVisible = visible)
         }
         owner.attachToView(root)
 
@@ -269,7 +265,6 @@ class OverlayHost(
         rootView = root
         layoutParams = lp
         composeOwner = owner
-        attachedDisplayId = targetDisplay.displayId
         return true
     }
 

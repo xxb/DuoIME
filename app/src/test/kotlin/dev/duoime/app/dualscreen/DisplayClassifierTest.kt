@@ -8,6 +8,7 @@ import dev.duoime.core.policy.DisplayPlacementPolicy
 import dev.duoime.core.policy.PlacementDecision
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -181,6 +182,60 @@ class DisplayClassifierTest {
             )
         )
         assertTrue("Post-calibration dynamic display must not hijack overlay", decision is PlacementDecision.Inline)
+    }
+
+    @Test
+    fun pairedUnknownPeerIsExemptedWhileUnpairedUnknownAndExplicitNonBuiltInRemainRejected() {
+        val unknownPairedPeer = RawDisplayInfo(
+            displayId = 2,
+            flags = DisplayClassifier.FLAG_PRESENTATION,
+            state = DisplayClassifier.STATE_ON,
+            reflectedType = null,
+            description = "Display id 2: built-in secondary panel"
+        )
+        val unknownUnpaired = RawDisplayInfo(
+            displayId = 9,
+            flags = DisplayClassifier.FLAG_PRESENTATION,
+            state = DisplayClassifier.STATE_ON,
+            reflectedType = null,
+            description = "Display id 9: wireless display"
+        )
+        val displays = listOf(retroidDisplay0(), unknownPairedPeer, unknownUnpaired)
+
+        // (a) Paired unknown non-default display -> BUILT_IN, eligible for Overlay, returned by findCalibratablePeerDisplay
+        assertEquals(DisplayKind.BUILT_IN, DisplayClassifier.classifyKind(unknownPairedPeer, pairedPeerDisplayId = 2))
+        val pairedCandidates = DisplayClassifier.classifyDisplays(displays, pairedPeerDisplayId = 2)
+        val overlayDecision = DisplayPlacementPolicy.resolve(
+            DisplayPlacementInput(
+                displays = pairedCandidates,
+                sourceDisplayId = 0,
+                hasOverlayPermission = true,
+                systemImePin = false,
+                apiLevel = 34
+            )
+        )
+        assertTrue(overlayDecision is PlacementDecision.Overlay)
+        assertEquals(2, (overlayDecision as PlacementDecision.Overlay).targetDisplayId)
+        assertEquals(2, DisplayClassifier.findCalibratablePeerDisplay(displays, pairedPeerDisplayId = 2)?.displayId)
+
+        // (b) Unpaired unknown secondary displays fail closed to PRESENTATION_ONLY and are not calibratable
+        assertEquals(
+            DisplayKind.PRESENTATION_ONLY,
+            DisplayClassifier.classifyKind(unknownPairedPeer, pairedPeerDisplayId = null)
+        )
+        assertEquals(
+            DisplayKind.PRESENTATION_ONLY,
+            DisplayClassifier.classifyKind(unknownUnpaired, pairedPeerDisplayId = 2)
+        )
+        assertNull(DisplayClassifier.findCalibratablePeerDisplay(displays))
+
+        // (c) Paired ID with explicit EXTERNAL / VIRTUAL / FLAG_PRIVATE is still rejected
+        val pairedExternal = unknownPairedPeer.copy(reflectedType = DisplayClassifier.TYPE_EXTERNAL)
+        val pairedVirtual = unknownPairedPeer.copy(reflectedType = DisplayClassifier.TYPE_VIRTUAL)
+        val pairedPrivate = unknownPairedPeer.copy(flags = DisplayClassifier.FLAG_PRIVATE)
+        assertEquals(DisplayKind.EXTERNAL, DisplayClassifier.classifyKind(pairedExternal, pairedPeerDisplayId = 2))
+        assertEquals(DisplayKind.VIRTUAL, DisplayClassifier.classifyKind(pairedVirtual, pairedPeerDisplayId = 2))
+        assertEquals(DisplayKind.VIRTUAL, DisplayClassifier.classifyKind(pairedPrivate, pairedPeerDisplayId = 2))
     }
 
     @Test

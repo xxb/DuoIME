@@ -31,6 +31,7 @@
     <string name="status_pin_summary">Detected status: %1$s</string>
     <string name="pin_instructions">On Retroid Pocket Duo, open Handheld / Dual-Screen Settings → Keyboard and turn OFF \'Pin IME / Show keyboard on second screen\' to unlock smart swap &amp; free height.</string>
     <string name="toggle_manual_pin">System pins keyboard (manual fallback)</string>
+    <string name="status_pin_manual_overridden">System detection takes precedence; this manual fallback is currently inactive and shown only so you can turn it off.</string>
 
     <string name="card_calibration_title">4. Calibrate Dual Displays</string>
     <string name="status_paired_peer">Paired built-in peer: Display #%1$d</string>

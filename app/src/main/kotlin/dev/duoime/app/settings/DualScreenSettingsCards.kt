@@ -93,6 +93,12 @@ internal fun SystemPinImeCard(
                 style = MaterialTheme.typography.bodySmall
             )
             if (detectedSystemPin == null || manualPinEnabled) {
+                if (detectedSystemPin != null) {
+                    Text(
+                        text = stringResource(R.string.status_pin_manual_overridden),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
                 SettingSwitchRow(
                     title = stringResource(R.string.toggle_manual_pin),
                     checked = manualPinEnabled,
@@ -110,7 +116,7 @@ internal fun DisplayCalibrationCard(
     onPairPeerDisplay: (Int?) -> Unit
 ) {
     val classified = DisplayClassifier.classifyDisplays(rawDisplays, pairedPeerDisplayId)
-    val calibratablePeer = DisplayClassifier.findCalibratablePeerDisplay(rawDisplays)
+    val calibratablePeer = DisplayClassifier.findCalibratablePeerDisplay(rawDisplays, pairedPeerDisplayId)
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(

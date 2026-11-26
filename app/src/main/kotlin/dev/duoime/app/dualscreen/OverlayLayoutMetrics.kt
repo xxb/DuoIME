@@ -92,3 +92,107 @@ class OverlayVisibilityDebouncer(
         const val DEFAULT_DEBOUNCE_MS: Long = 150L
     }
 }
+
+/**
+ * Pure-JVM state tracker for opposite-screen overlay presentation, re-show invalidation, and
+ * debounced host-hide probing (`setHideOverlayWindows` / `FLAG_SECURE`).
+ */
+class OverlayShowTracker(
+    scope: CoroutineScope,
+    debounceMs: Long = OverlayVisibilityDebouncer.DEFAULT_DEBOUNCE_MS,
+    private val onHiddenConfirmed: () -> Unit
+) {
+    var isShowing: Boolean = false
+        private set
+    var attachedDisplayId: Int = INVALID_DISPLAY_ID
+        private set
+    internal var forceReshow: Boolean = false
+        private set
+    var lastHeightFraction: Float = DEFAULT_HEIGHT_FRACTION
+        private set
+    var lastDarkTheme: Boolean = true
+        private set
+
+    private val visibilityDebouncer = OverlayVisibilityDebouncer(
+        scope = scope,
+        debounceMs = debounceMs,
+        onHiddenConfirmed = {
+            if (isShowing) {
+                onHiddenConfirmed()
+            }
+        }
+    )
+
+    fun shouldSkipShow(displayId: Int, heightFraction: Float, darkTheme: Boolean, isWindowVisible: Boolean): Boolean =
+        isShowing &&
+            !forceReshow &&
+            isWindowVisible &&
+            attachedDisplayId == displayId &&
+            kotlin.math.abs(lastHeightFraction - heightFraction) < HEIGHT_EPSILON &&
+            lastDarkTheme == darkTheme
+
+    fun resetVisibilityTracking() {
+        visibilityDebouncer.reset()
+        forceReshow = true
+    }
+
+    fun beginShow(displayId: Int, heightFraction: Float, darkTheme: Boolean) {
+        isShowing = true
+        forceReshow = false
+        attachedDisplayId = displayId
+        lastHeightFraction = heightFraction
+        lastDarkTheme = darkTheme
+        visibilityDebouncer.reset()
+    }
+
+    fun probeWindowVisibility(isWindowVisible: Boolean) {
+        visibilityDebouncer.onVisibilityChanged(isVisible = isWindowVisible, isSessionActive = isShowing)
+    }
+
+    fun updatePresentation(heightFraction: Float, darkTheme: Boolean) {
+        lastHeightFraction = heightFraction
+        lastDarkTheme = darkTheme
+    }
+
+    fun markHidden() {
+        isShowing = false
+        forceReshow = false
+        visibilityDebouncer.reset()
+    }
+
+    fun markDetached() {
+        markHidden()
+        attachedDisplayId = INVALID_DISPLAY_ID
+    }
+
+    fun onWindowVisibilityChanged(isVisible: Boolean) {
+        visibilityDebouncer.onVisibilityChanged(isVisible = isVisible, isSessionActive = isShowing)
+    }
+
+    companion object {
+        const val INVALID_DISPLAY_ID: Int = -1
+        private const val DEFAULT_HEIGHT_FRACTION: Float = 0.75f
+        private const val HEIGHT_EPSILON: Float = 0.001f
+    }
+}
+
+/**
+ * Pure-JVM session-scoped host-hide suppression controller shared by `DuoImeService`.
+ */
+class OverlaySessionSuppression(
+    private val onResetHostTracking: () -> Unit,
+    private val onFallback: () -> Unit
+) {
+    var overlayHiddenByHost: Boolean = false
+        private set
+
+    fun resetForSessionBoundary() {
+        overlayHiddenByHost = false
+        onResetHostTracking()
+    }
+
+    fun onOverlayHiddenConfirmed() {
+        overlayHiddenByHost = true
+        onFallback()
+    }
+}

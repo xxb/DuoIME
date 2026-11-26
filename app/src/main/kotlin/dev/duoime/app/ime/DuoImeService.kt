@@ -47,6 +47,7 @@ import dev.duoime.app.MainActivity
 import dev.duoime.app.R
 import dev.duoime.app.dualscreen.DisplayClassifier
 import dev.duoime.app.dualscreen.OverlayHost
+import dev.duoime.app.dualscreen.OverlaySessionSuppression
 import dev.duoime.app.dualscreen.SystemImePinDetector
 import dev.duoime.app.settings.DuoImePreferences
 import dev.duoime.app.settings.DuoImeSettings
@@ -95,10 +96,18 @@ class DuoImeService : InputMethodService() {
     private var activeEditorConnection: InputConnection? = null
     private var lastEditorInfo: EditorInfo? = null
     private var isInputViewActive: Boolean = false
-    private var overlayHiddenByHost: Boolean = false
     private var placementApplied: Boolean = false
     private var lastSourceDisplayId: Int = Display.INVALID_DISPLAY
     private var lastDisplayActiveStates: Map<Int, Boolean> = emptyMap()
+
+    private val overlaySuppression = OverlaySessionSuppression(
+        onResetHostTracking = {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                overlayHost?.resetVisibilityTracking()
+            }
+        },
+        onFallback = { evaluateAndApplyPlacement() }
+    )
 
     private val inputSink = InputConnectionSink(
         connectionProvider = { currentInputConnection?.let(::AndroidInputConnectionBridge) }
@@ -144,10 +153,7 @@ class DuoImeService : InputMethodService() {
                 scope = serviceScope,
                 controller = controller,
                 inputSink = overlaySinkProxy,
-                onOverlayHiddenByHost = {
-                    overlayHiddenByHost = true
-                    evaluateAndApplyPlacement()
-                }
+                onOverlayHiddenByHost = { overlaySuppression.onOverlayHiddenConfirmed() }
             )
         }
 
@@ -258,6 +264,10 @@ class DuoImeService : InputMethodService() {
             initialSelEnd = attribute?.initialSelEnd ?: SelectionState.NO_COMPOSING
         )
         applyEditorInfo(attribute)
+        if (isInputViewActive) {
+            placementApplied = false
+            evaluateAndApplyPlacement()
+        }
     }
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
@@ -351,10 +361,7 @@ class DuoImeService : InputMethodService() {
     }
 
     private fun resetOverlayHostHideSuppression() {
-        overlayHiddenByHost = false
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            overlayHost?.resetVisibilityTracking()
-        }
+        overlaySuppression.resetForSessionBoundary()
     }
 
     private fun handleSwapScreenRequested() {
@@ -440,7 +447,7 @@ class DuoImeService : InputMethodService() {
                 isPasswordField = isPassword,
                 perAppInlineOverride = pkgName != null && pkgName in settings.perAppInlinePackages,
                 swapToSameScreen = settings.swapToSameScreen,
-                overlayHiddenByHost = overlayHiddenByHost,
+                overlayHiddenByHost = overlaySuppression.overlayHiddenByHost,
                 apiLevel = Build.VERSION.SDK_INT,
                 heightFraction = settings.heightFraction
             )

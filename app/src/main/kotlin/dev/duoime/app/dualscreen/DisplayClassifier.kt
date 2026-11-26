@@ -102,7 +102,11 @@ object DisplayClassifier {
             TYPE_VIRTUAL, TYPE_WIFI, TYPE_OVERLAY -> DisplayKind.VIRTUAL
             TYPE_EXTERNAL -> DisplayKind.EXTERNAL
             TYPE_INTERNAL -> DisplayKind.BUILT_IN
-            else -> if (raw.displayId == DEFAULT_DISPLAY_ID) DisplayKind.BUILT_IN else DisplayKind.PRESENTATION_ONLY
+            else -> if (raw.displayId == DEFAULT_DISPLAY_ID || raw.displayId == pairedPeerDisplayId) {
+                DisplayKind.BUILT_IN
+            } else {
+                DisplayKind.PRESENTATION_ONLY
+            }
         }
         if (baseKind != DisplayKind.BUILT_IN) {
             return baseKind
@@ -140,12 +144,14 @@ object DisplayClassifier {
     /**
      * Picks the best non-default built-in display candidate for onboarding calibration.
      */
-    fun findCalibratablePeerDisplay(displays: List<RawDisplayInfo>): DisplayCandidate? =
-        classifyDisplays(displays, pairedPeerDisplayId = null).firstOrNull { candidate ->
-            candidate.displayId != DEFAULT_DISPLAY_ID &&
-                candidate.kind == DisplayKind.BUILT_IN &&
-                candidate.isOn
-        }
+    fun findCalibratablePeerDisplay(
+        displays: List<RawDisplayInfo>,
+        pairedPeerDisplayId: Int? = null
+    ): DisplayCandidate? = classifyDisplays(displays, pairedPeerDisplayId).firstOrNull { candidate ->
+        candidate.displayId != DEFAULT_DISPLAY_ID &&
+            candidate.kind == DisplayKind.BUILT_IN &&
+            candidate.isOn
+    }
 
     internal fun parseTypeFromDescription(description: String): Int? {
         if (description.isBlank()) return null

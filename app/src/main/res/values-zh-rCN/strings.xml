@@ -31,6 +31,7 @@
     <string name="status_pin_summary">当前检测状态：%1$s</string>
     <string name="pin_instructions">在 Retroid Pocket Duo 上，请前往掌机/双屏设置 → 键盘，关闭“固定输入法到副屏”开关，以解锁一键换屏与自由高度调节。</string>
     <string name="toggle_manual_pin">系统锁定输入法位置（手动回退）</string>
+    <string name="status_pin_manual_overridden">当前以系统检测结果为准；下方手动开关目前不生效，仅保留以便手动关闭。</string>
 
     <string name="card_calibration_title">4. 双屏配对校准</string>
     <string name="status_paired_peer">已配对内置副屏：Display #%1$d</string>
