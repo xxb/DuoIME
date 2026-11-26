@@ -47,7 +47,8 @@ fun DuoImeKeyboard(
             onSelectSyllable = controller::selectSyllable,
             onPage = controller::pageCandidates,
             onExtensionButton = controller::dispatchExtensionButton,
-            onKeyPressDown = controller::onKeyPressDown
+            onKeyPressDown = controller::onKeyPressDown,
+            onDismissEngineError = controller::dismissEngineError
         )
     }
     val surfaceState = DuoKeyboardSurfaceState(
@@ -57,7 +58,8 @@ fun DuoImeKeyboard(
         heightFraction = state.heightFraction,
         isOverlayMode = state.isOverlayMode,
         extensionButtons = state.editorContext.extension?.toolbarButtons.orEmpty(),
-        engineError = state.engineError
+        engineError = state.engineError,
+        engineErrorDismissed = state.engineErrorDismissed
     )
 
     DuoTheme(darkTheme = darkTheme) {

@@ -3,8 +3,10 @@
 package dev.duoime.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -14,7 +16,6 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -44,7 +45,8 @@ data class DuoKeyboardSurfaceState(
     val heightFraction: Float,
     val isOverlayMode: Boolean,
     val extensionButtons: List<ExtensionToolbarButton> = emptyList(),
-    val engineError: String? = null
+    val engineError: String? = null,
+    val engineErrorDismissed: Boolean = false
 )
 
 /**
@@ -57,7 +59,8 @@ data class DuoKeyboardCallbacks(
     val onSelectSyllable: (Int) -> Unit,
     val onPage: (Boolean) -> Unit,
     val onExtensionButton: (ExtensionToolbarButton) -> Unit = {},
-    val onKeyPressDown: (FeedbackKey) -> Unit = {}
+    val onKeyPressDown: (FeedbackKey) -> Unit = {},
+    val onDismissEngineError: () -> Unit = {}
 )
 
 /**
@@ -89,21 +92,26 @@ fun DuoKeyboardSurface(state: DuoKeyboardSurfaceState, callbacks: DuoKeyboardCal
             .fillMaxWidth()
             .background(colors.keyboardBackground)
     ) {
+        val snap = state.snapshot
+        val showCandidates = snap.isComposing || snap.candidates.isNotEmpty() || snap.syllables.isNotEmpty()
+        val err = state.engineError
+        val showErrorStrip = !showCandidates && !err.isNullOrBlank() && !state.engineErrorDismissed
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(dimensions.toolbarHeight)
         ) {
-            DuoToolbar(
-                state = toolbarState,
-                onAction = callbacks.onKeyAction,
-                onExtensionButton = callbacks.onExtensionButton
-            )
-            val err = state.engineError
-            if (!err.isNullOrBlank()) {
-                EngineErrorOverlayStrip(
-                    message = err,
-                    modifier = Modifier.align(Alignment.BottomCenter)
+            if (showErrorStrip) {
+                EngineErrorStrip(
+                    message = err.orEmpty(),
+                    onDismiss = callbacks.onDismissEngineError
+                )
+            } else {
+                DuoToolbar(
+                    state = toolbarState,
+                    onAction = callbacks.onKeyAction,
+                    onExtensionButton = callbacks.onExtensionButton
                 )
             }
         }
@@ -115,8 +123,7 @@ fun DuoKeyboardSurface(state: DuoKeyboardSurfaceState, callbacks: DuoKeyboardCal
                 .background(colors.divider)
         )
 
-        val snap = state.snapshot
-        if (snap.isComposing || snap.candidates.isNotEmpty() || snap.syllables.isNotEmpty()) {
+        if (showCandidates) {
             CandidateBar(
                 snapshot = snap,
                 callbacks = candidateCallbacks
@@ -146,12 +153,14 @@ fun DuoKeyboardSurface(state: DuoKeyboardSurfaceState, callbacks: DuoKeyboardCal
 }
 
 @Composable
-private fun EngineErrorOverlayStrip(message: String, modifier: Modifier = Modifier) {
+private fun EngineErrorStrip(message: String, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+    val colors = LocalDuoColors.current
     Box(
         modifier = modifier
-            .fillMaxWidth()
-            .background(Color(0xD93B2508))
-            .padding(horizontal = 8.dp, vertical = 1.dp),
+            .fillMaxSize()
+            .background(colors.warningBackground)
+            .clickable(onClick = onDismiss)
+            .padding(horizontal = 10.dp),
         contentAlignment = Alignment.CenterStart
     ) {
         BasicText(
@@ -159,8 +168,8 @@ private fun EngineErrorOverlayStrip(message: String, modifier: Modifier = Modifi
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             style = TextStyle(
-                color = Color(0xFFFFE0A3),
-                fontSize = 9.sp,
+                color = colors.warningText,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Medium
             )
         )

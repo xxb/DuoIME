@@ -33,7 +33,9 @@ data class DuoColorTokens(
     val chipSelectedText: Color,
     val preeditText: Color,
     val divider: Color,
-    val disabledScrim: Color
+    val disabledScrim: Color,
+    val warningBackground: Color,
+    val warningText: Color
 )
 
 @Immutable
@@ -67,7 +69,9 @@ val DuoDarkColors: DuoColorTokens = DuoColorTokens(
     chipSelectedText = Color(0xFFFFFFFF),
     preeditText = Color(0xFF7CC4FA),
     divider = Color(0xFF222836),
-    disabledScrim = Color(0x66000000)
+    disabledScrim = Color(0x66000000),
+    warningBackground = Color(0xFF3B2508),
+    warningText = Color(0xFFFFE0A3)
 )
 
 val DuoLightColors: DuoColorTokens = DuoColorTokens(
@@ -89,7 +93,9 @@ val DuoLightColors: DuoColorTokens = DuoColorTokens(
     chipSelectedText = Color(0xFFFFFFFF),
     preeditText = Color(0xFF1D4ED8),
     divider = Color(0xFFD1D5DB),
-    disabledScrim = Color(0x44FFFFFF)
+    disabledScrim = Color(0x44FFFFFF),
+    warningBackground = Color(0xFFFFF4D6),
+    warningText = Color(0xFF664400)
 )
 
 val DuoDefaultDimensions: DuoDimensionTokens = DuoDimensionTokens()

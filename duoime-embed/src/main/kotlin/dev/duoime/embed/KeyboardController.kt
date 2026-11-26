@@ -44,6 +44,7 @@ import kotlinx.coroutines.withContext
 data class KeyboardUiState(
     val isEngineReady: Boolean = false,
     val engineError: String? = null,
+    val engineErrorDismissed: Boolean = false,
     val snapshot: EngineSnapshot = EngineSnapshot.EMPTY,
     val activeLayout: LayoutSpec = BuiltInLayouts.qwerty(),
     val shifted: Boolean = false,
@@ -119,6 +120,8 @@ class KeyboardController(
 
         data class NumberRowChanged(val includeNumberRow: Boolean) : ControllerEvent
 
+        data object DismissEngineError : ControllerEvent
+
         data object Reset : ControllerEvent
     }
 
@@ -128,6 +131,7 @@ class KeyboardController(
 
     private var activeSchemaIds: Map<InputMode, String> = config.modeSchemaIds
     private var engineError: String? = null
+    private var engineErrorDismissed: Boolean = false
     private var uiMode: InputMode = InputMode.PINYIN_26
     private var lastNonSymbolMode: InputMode = InputMode.PINYIN_26
     private var prePasswordMode: InputMode? = null
@@ -207,6 +211,10 @@ class KeyboardController(
         eventChannel.trySend(ControllerEvent.NumberRowChanged(enabled))
     }
 
+    fun dismissEngineError() {
+        eventChannel.trySend(ControllerEvent.DismissEngineError)
+    }
+
     fun reset() {
         eventChannel.trySend(ControllerEvent.Reset)
     }
@@ -232,19 +240,19 @@ class KeyboardController(
             try {
                 val fallbackEngine = fallback()
                 activeSchemaIds = EngineSchemas.DEFAULT_MODE_MAP
-                engineError = "Fallback active after $primaryTag"
+                setEngineError("Fallback active after $primaryTag")
                 return fallbackEngine
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (fallbackError: Throwable) {
-                engineError = "Plain keyboard fallback ($primaryTag / ${errorTag(fallbackError)})"
+                setEngineError("Plain keyboard fallback ($primaryTag / ${errorTag(fallbackError)})")
                 uiMode = InputMode.ENGLISH
                 lastNonSymbolMode = InputMode.ENGLISH
                 return PassThroughEngine()
             }
         }
 
-        engineError = "Plain keyboard fallback ($primaryTag)"
+        setEngineError("Plain keyboard fallback ($primaryTag)")
         uiMode = InputMode.ENGLISH
         lastNonSymbolMode = InputMode.ENGLISH
         return PassThroughEngine()
@@ -263,7 +271,7 @@ class KeyboardController(
 
     @Suppress("TooGenericExceptionCaught")
     private suspend fun recoverFromEventFailure(engine: InputEngine, error: Throwable) {
-        engineError = "Recovered from ${errorTag(error)}"
+        setEngineError("Recovered from ${errorTag(error)}")
         try {
             engine.reset()
         } catch (cancelled: CancellationException) {
@@ -304,6 +312,10 @@ class KeyboardController(
             }
             is ControllerEvent.NumberRowChanged -> {
                 includeNumberRow = event.includeNumberRow
+                publishState(engine)
+            }
+            is ControllerEvent.DismissEngineError -> {
+                engineErrorDismissed = true
                 publishState(engine)
             }
             is ControllerEvent.Reset -> {
@@ -370,10 +382,7 @@ class KeyboardController(
     }
 
     private suspend fun handleDirectText(engine: InputEngine, text: String) {
-        if (engine.state.value.isComposing) {
-            val spaceResult = engine.onKey(EngineKeyEvent(KeyCodes.KEYSYM_SPACE))
-            applyEngineResultToSink(spaceResult, engine.state.value)
-        }
+        flushComposition(engine)
         withSink { it.commitText(text) }
         if (shifted && uiMode == InputMode.ENGLISH) {
             shifted = false
@@ -381,12 +390,40 @@ class KeyboardController(
         publishState(engine)
     }
 
+    private suspend fun flushComposition(engine: InputEngine) {
+        if (!engine.state.value.isComposing) return
+        val spaceResult = engine.onKey(EngineKeyEvent(KeyCodes.KEYSYM_SPACE))
+        if (spaceResult is KeyProcessResult.CommitText) {
+            applyEngineResultToSink(spaceResult, engine.state.value)
+        }
+        val after = engine.state.value
+        if (after.isComposing) {
+            val rawComposing = after.composingText
+            engine.reset()
+            withSink { sink ->
+                if (rawComposing.isNotEmpty()) {
+                    sink.commitText(rawComposing)
+                }
+                if (sink.capabilities.composing) {
+                    sink.setComposing(null)
+                }
+            }
+        } else if (spaceResult !is KeyProcessResult.CommitText) {
+            syncComposingOnly(after)
+        }
+    }
+
     private suspend fun handleEngineKey(engine: InputEngine, event: EngineKeyEvent) {
         val wasComposing = engine.state.value.isComposing
+        val isChord = (event.mask and CHORD_MODIFIER_MASK) != 0
         val result = engine.onKey(event)
         when (result) {
-            is KeyProcessResult.PassThrough -> applyPassThrough(engine, wasComposing) { sink ->
-                if ((event.mask and CHORD_MODIFIER_MASK) == 0) {
+            is KeyProcessResult.PassThrough -> applyPassThrough(
+                engine = engine,
+                wasComposing = wasComposing,
+                isChord = isChord
+            ) { sink ->
+                if (!isChord) {
                     KeyCodes.charForKeysym(event.keysym)?.let { ch ->
                         if (!Character.isISOControl(ch)) {
                             sink.commitText(ch.toString())
@@ -444,14 +481,16 @@ class KeyboardController(
 
     /**
      * Unified handler for [KeyProcessResult.PassThrough]:
-     * - If the engine still holds active composition (e.g. a modifier chord or unknown key
-     *   declined mid-preedit), commits the raw `composingText` and resets the engine first so
-     *   [defaultAction] never executes inside a live composing span.
+     * - For a `CONTROL`/`ALT`/`SUPER` chord mid-preedit, discards the preedit (`engine.reset()` +
+     *   `setComposing(null)`) and commits nothing so editor shortcuts act on clean text.
+     * - For a non-chord declined key mid-preedit, commits the raw `composingText`, resets the engine,
+     *   and clears the composing span so [defaultAction] never executes inside a live span.
      * - If composition cleared during the declined key, clears any stale sink composing span first.
      */
     private suspend fun applyPassThrough(
         engine: InputEngine,
         wasComposing: Boolean,
+        isChord: Boolean = false,
         defaultAction: (InputSink) -> Unit
     ) {
         val snap = engine.state.value
@@ -459,7 +498,7 @@ class KeyboardController(
             val rawComposing = snap.composingText
             engine.reset()
             withSink { sink ->
-                if (rawComposing.isNotEmpty()) {
+                if (!isChord && rawComposing.isNotEmpty()) {
                     sink.commitText(rawComposing)
                 }
                 if (sink.capabilities.composing) {
@@ -569,10 +608,16 @@ class KeyboardController(
         }
     }
 
+    private fun setEngineError(message: String) {
+        engineError = message
+        engineErrorDismissed = false
+    }
+
     private fun publishState(engine: InputEngine) {
         _uiState.value = KeyboardUiState(
             isEngineReady = true,
             engineError = engineError,
+            engineErrorDismissed = engineErrorDismissed,
             snapshot = engine.state.value,
             activeLayout = resolveLayout(uiMode),
             shifted = shifted,

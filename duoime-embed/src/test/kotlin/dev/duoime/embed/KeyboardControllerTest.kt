@@ -95,6 +95,33 @@ class KeyboardControllerTest {
         }
     }
 
+    private class StickyComposingPassThroughEngine(
+        private val initialComposing: String = "raw"
+    ) : InputEngine {
+        private val _state = MutableStateFlow(
+            EngineSnapshot(
+                preedit = initialComposing,
+                composingText = initialComposing,
+                isComposing = true
+            )
+        )
+        override val state: StateFlow<EngineSnapshot> = _state
+
+        override fun onKey(event: EngineKeyEvent): KeyProcessResult = KeyProcessResult.PassThrough
+
+        override fun selectCandidate(indexOnPage: Int): KeyProcessResult = KeyProcessResult.PassThrough
+
+        override fun page(forward: Boolean): Boolean = false
+
+        override fun setOption(name: String, on: Boolean) = Unit
+
+        override fun selectSchema(id: String): Boolean = true
+
+        override fun reset() {
+            _state.value = EngineSnapshot.EMPTY
+        }
+    }
+
     private fun typeEngineChars(controller: KeyboardController, text: String) {
         for (ch in text) {
             controller.dispatchKeyAction(KeyAction.Engine(KeyCodes.keysymForChar(ch)))
@@ -414,7 +441,7 @@ class KeyboardControllerTest {
     }
 
     @Test
-    fun passThroughMidPreeditCommitsRawPreeditAndEmptyBackspaceDeletesOneChar() = runTest {
+    fun chordMidPreeditDiscardsComposingWhileNonChordPassThroughCommitsRaw() = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val sink = RecordingInputSink(SinkCapabilities.STANDARD_IME)
         val controller = KeyboardController(
@@ -430,7 +457,7 @@ class KeyboardControllerTest {
         advanceUntilIdle()
         assertEquals(listOf("delete:1"), sink.events)
 
-        // Compose "nihao", then dispatch a Ctrl+C chord -> engine returns PassThrough while still composing
+        // Compose "nihao", then dispatch a Ctrl+C chord -> discards preedit without committing raw text
         sink.events.clear()
         typeEngineChars(controller, "nihao")
         advanceUntilIdle()
@@ -443,11 +470,71 @@ class KeyboardControllerTest {
         advanceUntilIdle()
 
         assertFalse(
-            "Preedit must be reset after mid-preedit PassThrough",
+            "Preedit must be reset after mid-preedit chord PassThrough",
             controller.uiState.value.snapshot.isComposing
         )
-        assertEquals(listOf("commit:ni'hao", "compose:<clear>"), sink.events)
+        assertEquals(listOf("compose:<clear>"), sink.events)
         controller.close()
+
+        // Non-chord PassThrough while composing commits raw preedit, clears span, then commits character
+        val stickySink = RecordingInputSink(SinkCapabilities.STANDARD_IME)
+        val stickyController = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { StickyComposingPassThroughEngine("ni'hao") }
+        )
+        stickyController.attachSink(stickySink)
+        advanceUntilIdle()
+        stickyController.dispatchKeyAction(KeyAction.Engine(keysym = KeyCodes.keysymForChar('!')))
+        advanceUntilIdle()
+
+        assertFalse(stickyController.uiState.value.snapshot.isComposing)
+        assertEquals(listOf("commit:ni'hao", "compose:<clear>", "commit:!"), stickySink.events)
+        stickyController.close()
+    }
+
+    @Test
+    fun directTextFlushesCompositionEvenWhenSpaceReturnsPassThroughAndErrorDismissResetsOnNewError() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val sink = RecordingInputSink(SinkCapabilities.STANDARD_IME)
+        val controller = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { StickyComposingPassThroughEngine("raw") }
+        )
+        controller.attachSink(sink)
+        advanceUntilIdle()
+
+        controller.dispatchKeyAction(KeyAction.Text("!"))
+        advanceUntilIdle()
+        assertFalse(controller.uiState.value.snapshot.isComposing)
+        assertEquals(listOf("commit:raw", "compose:<clear>", "commit:!"), sink.events)
+        controller.close()
+
+        // Error dismissal flag flips true on dismissEngineError() and resets false when a new error arrives
+        val flaky = FlakyFakeEngine(failNextKey = true)
+        val errController = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { error("Primary init boom") },
+            fallbackEngineFactory = { flaky }
+        )
+        errController.attachSink(RecordingInputSink())
+        advanceUntilIdle()
+        assertNotNull(errController.uiState.value.engineError)
+        assertFalse(errController.uiState.value.engineErrorDismissed)
+
+        errController.dismissEngineError()
+        advanceUntilIdle()
+        assertTrue(errController.uiState.value.engineErrorDismissed)
+
+        errController.dispatchKeyAction(KeyAction.Engine(KeyCodes.keysymForChar('a')))
+        advanceUntilIdle()
+        assertFalse(
+            "A new error must re-display the error strip",
+            errController.uiState.value.engineErrorDismissed
+        )
+        errController.close()
     }
 
     @Test
