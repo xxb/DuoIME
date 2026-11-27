@@ -10,6 +10,7 @@ import android.hardware.display.DisplayManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Looper
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
 import androidx.activity.ComponentActivity
@@ -67,14 +68,23 @@ class MainActivity : ComponentActivity() {
         val prefs = DuoImePreferences(this)
         setContent {
             var settings by remember { mutableStateOf(prefs.load()) }
+            DisposableEffect(prefs) {
+                val handle = prefs.observe { latest ->
+                    if (Looper.myLooper() == Looper.getMainLooper()) {
+                        settings = latest
+                    } else {
+                        runOnUiThread { settings = latest }
+                    }
+                }
+                onDispose { handle.close() }
+            }
             val scheme = if (settings.darkTheme) darkColorScheme() else lightColorScheme()
             MaterialTheme(colorScheme = scheme) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     DuoImeSettingsScreen(
                         settings = settings,
                         onSettingsChanged = { updated ->
-                            settings = updated
-                            prefs.save(updated)
+                            settings = prefs.saveGeneralSettingsPreservingKeyboardPrefs(updated)
                         }
                     )
                 }

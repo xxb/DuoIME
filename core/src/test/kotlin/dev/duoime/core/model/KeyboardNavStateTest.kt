@@ -257,17 +257,29 @@ class KeyboardNavStateTest {
             assertEquals(KeyboardPanel.NUMBER, c.forcedPanel)
         }
 
-        // TERMINAL cannot be relaxed to TEXT
+        // TERMINAL cannot be relaxed to TEXT, CHINESE initialLanguage, or COMMON defaultSymbolTab
         assertEquals(FieldKind.TERMINAL, mergeFieldKindConstraint(FieldKind.TERMINAL, FieldKind.TEXT))
-        val termConstraints = EditorContext(fieldKind = FieldKind.TERMINAL, extension = textHint).toInputConstraints()
+        val termRelaxHint = ExtensionConfig(
+            fieldKind = FieldKind.TEXT,
+            initialLanguage = Language.CHINESE,
+            defaultSymbolTab = SymbolTabId.COMMON
+        )
+        val termConstraints = EditorContext(
+            fieldKind = FieldKind.TERMINAL,
+            extension = termRelaxHint
+        ).toInputConstraints()
         assertEquals(FieldKind.TERMINAL, termConstraints.kind)
         assertTrue(termConstraints.noLearning)
         assertEquals(SymbolTabId.CLI, termConstraints.defaultSymbolTab)
         assertEquals(Language.ENGLISH, termConstraints.initialLanguage)
 
-        // URI & EMAIL cannot relax to TEXT, but may tighten to TERMINAL / numeric / PASSWORD
+        // URI & EMAIL cannot relax to TEXT or CHINESE initialLanguage, but may tighten to TERMINAL / numeric / PASSWORD
         listOf(FieldKind.URI, FieldKind.EMAIL).forEach { kind ->
             assertEquals(kind, mergeFieldKindConstraint(kind, FieldKind.TEXT))
+            val c = EditorContext(fieldKind = kind, extension = termRelaxHint).toInputConstraints()
+            assertEquals(kind, c.kind)
+            assertEquals(Language.ENGLISH, c.initialLanguage)
+            assertTrue(c.allowChinese)
             assertEquals(FieldKind.TERMINAL, mergeFieldKindConstraint(kind, FieldKind.TERMINAL))
             assertEquals(FieldKind.NUMBER, mergeFieldKindConstraint(kind, FieldKind.NUMBER))
             assertEquals(FieldKind.PASSWORD, mergeFieldKindConstraint(kind, FieldKind.PASSWORD))

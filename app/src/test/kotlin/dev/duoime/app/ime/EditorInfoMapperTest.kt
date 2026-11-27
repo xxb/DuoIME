@@ -251,7 +251,9 @@ class EditorInfoMapperTest {
 
     @Test
     fun extensionTextHintCannotRelaxPlatformNumericPhoneDatetimeOrTerminalFields() {
-        val relaxJson = """{"version":1,"fieldKind":"text","initialLanguage":"chinese","noLearning":false}"""
+        val relaxJson = """
+            {"version":1,"fieldKind":"text","initialLanguage":"chinese","defaultSymbolTab":"common","noLearning":false}
+        """.trimIndent()
         val numericPlatformInputs = listOf(
             EditorInfoMapper.TYPE_CLASS_NUMBER to FieldKind.NUMBER,
             (EditorInfoMapper.TYPE_CLASS_NUMBER or EditorInfoMapper.TYPE_NUMBER_FLAG_DECIMAL) to FieldKind.DECIMAL,
@@ -272,6 +274,7 @@ class EditorInfoMapperTest {
             assertEquals(expectedKind, constraints.kind)
             assertFalse(constraints.allowChinese)
             assertEquals(KeyboardPanel.NUMBER, constraints.forcedPanel)
+            assertEquals(Language.ENGLISH, constraints.initialLanguage)
         }
 
         val terminalCtx = EditorInfoMapper.buildEditorContext(
@@ -284,6 +287,26 @@ class EditorInfoMapperTest {
         val termConstraints = terminalCtx.toInputConstraints()
         assertEquals(FieldKind.TERMINAL, termConstraints.kind)
         assertTrue(termConstraints.noLearning)
+        assertEquals(Language.ENGLISH, termConstraints.initialLanguage)
         assertEquals(SymbolTabId.CLI, termConstraints.defaultSymbolTab)
+
+        // URI & EMAIL also keep ENGLISH initialLanguage against ext.initialLanguage = "chinese"
+        val uriAndEmailInputs = listOf(
+            (EditorInfoMapper.TYPE_CLASS_TEXT or EditorInfoMapper.TYPE_TEXT_VARIATION_URI) to FieldKind.URI,
+            (EditorInfoMapper.TYPE_CLASS_TEXT or EditorInfoMapper.TYPE_TEXT_VARIATION_EMAIL_ADDRESS) to FieldKind.EMAIL
+        )
+        uriAndEmailInputs.forEach { (inputType, expectedKind) ->
+            val ctx = EditorInfoMapper.buildEditorContext(
+                packageName = "dev.example.browser",
+                inputType = inputType,
+                imeOptions = 0,
+                rawExtensionJson = relaxJson
+            )
+            assertEquals(expectedKind, ctx.fieldKind)
+            val c = ctx.toInputConstraints()
+            assertEquals(expectedKind, c.kind)
+            assertTrue(c.allowChinese)
+            assertEquals(Language.ENGLISH, c.initialLanguage)
+        }
     }
 }

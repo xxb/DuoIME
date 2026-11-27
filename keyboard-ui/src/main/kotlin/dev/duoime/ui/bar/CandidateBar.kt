@@ -86,7 +86,12 @@ data class CandidateBarCallbacks(
  * Candidate `LazyRow` items are keyed by `(pageIndex, indexOnPage)` to avoid unnecessary churn.
  */
 @Composable
-fun CandidateBar(snapshot: EngineSnapshot, callbacks: CandidateBarCallbacks, modifier: Modifier = Modifier) {
+fun CandidateBar(
+    snapshot: EngineSnapshot,
+    callbacks: CandidateBarCallbacks,
+    modifier: Modifier = Modifier,
+    canToggleVariant: Boolean = true
+) {
     val colors = LocalDuoColors.current
     val dimensions = LocalDuoDimensions.current
 
@@ -160,7 +165,7 @@ fun CandidateBar(snapshot: EngineSnapshot, callbacks: CandidateBarCallbacks, mod
 
         SmallBarButton(
             label = if (snapshot.variant == ChineseVariant.TRADITIONAL) "繁" else "简",
-            enabled = true,
+            enabled = canToggleVariant,
             fontSizeSp = dimensions.barButtonFontSp,
             colors = colors,
             onClick = callbacks.onToggleVariant

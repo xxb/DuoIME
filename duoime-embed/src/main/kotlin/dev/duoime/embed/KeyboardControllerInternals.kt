@@ -230,8 +230,19 @@ internal class EngineSinkDispatcher(
     suspend fun commitRawComposingLatin(engine: InputEngine) {
         val snap = engine.state.value
         if (!snap.isComposing) return
-        val rawLatin = snap.composingText.ifEmpty { snap.preedit }.replace("'", "")
-        engine.reset()
+        val rawLatin = if (snap.mode != InputMode.PINYIN_T9) {
+            val enterResult = engine.onKey(EngineKeyEvent(KeyCodes.KEYSYM_RETURN))
+            if (enterResult is KeyProcessResult.CommitText) {
+                enterResult.text
+            } else {
+                snap.composingText.ifEmpty { snap.preedit }.replace("'", "")
+            }
+        } else {
+            snap.composingText.ifEmpty { snap.preedit }.replace("'", "")
+        }
+        if (engine.state.value.isComposing) {
+            engine.reset()
+        }
         withSink { sink ->
             if (rawLatin.isNotEmpty()) {
                 sink.commitText(rawLatin)

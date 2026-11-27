@@ -611,4 +611,35 @@ class KeyboardControllerOrthogonalStateTest {
         assertTrue(persistedPrefs.isEmpty())
         controller.close()
     }
+
+    @Test
+    fun xiaoheShuangpinCnToEnCommitsRawKeystrokesInsteadOfDecodedPinyin() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val sink = RecordingSink(SinkCapabilities.STANDARD_IME)
+        val controller = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { LiteInputEngine.createDefault() }
+        )
+        controller.attachSink(sink)
+        advanceUntilIdle()
+
+        controller.setChineseScheme(ChineseScheme.XIAOHE_SHUANGPIN)
+        advanceUntilIdle()
+        assertEquals(EngineSchemas.DOUBLE_PINYIN_FLYPY, controller.uiState.value.derived.activeSchemaId)
+
+        typeEngineChars(controller, "nihc")
+        advanceUntilIdle()
+        assertTrue(controller.uiState.value.snapshot.isComposing)
+        assertEquals("你好", controller.uiState.value.snapshot.candidates.firstOrNull()?.text)
+        sink.events.clear()
+
+        // Switching CN -> EN must commit the exact raw Shuangpin keystrokes "nihc", NOT decoded "nihao"
+        controller.toggleLanguage()
+        advanceUntilIdle()
+        assertEquals(Language.ENGLISH, controller.uiState.value.derived.effectiveLanguage)
+        assertFalse(controller.uiState.value.snapshot.isComposing)
+        assertEquals(listOf("commit:nihc", "compose:<clear>"), sink.events)
+        controller.close()
+    }
 }

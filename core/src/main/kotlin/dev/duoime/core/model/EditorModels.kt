@@ -113,8 +113,11 @@ fun EditorContext.toInputConstraints(): InputConstraints {
     )
     val forceAscii = (imeOptions and EditorContext.IME_FLAG_FORCE_ASCII) != 0
     val baseNoLearning = incognito || isPassword || ext?.noLearning == true
-    val defaultSymbolTab = ext?.defaultSymbolTab
-        ?: if (effectiveKind == FieldKind.TERMINAL) SymbolTabId.CLI else SymbolTabId.COMMON
+    val defaultSymbolTab = if (effectiveKind == FieldKind.TERMINAL) {
+        SymbolTabId.CLI
+    } else {
+        ext?.defaultSymbolTab ?: SymbolTabId.COMMON
+    }
 
     return InputConstraints(
         kind = effectiveKind,
@@ -143,7 +146,7 @@ private fun resolveAllowChinese(kind: FieldKind, forceAscii: Boolean): Boolean =
 
 private fun resolveInitialLanguage(kind: FieldKind, forceAscii: Boolean, extInitial: Language?): Language? = when {
     !resolveAllowChinese(kind, forceAscii) -> Language.ENGLISH
-    kind == FieldKind.URI || kind == FieldKind.EMAIL || kind == FieldKind.TERMINAL -> extInitial ?: Language.ENGLISH
+    kind == FieldKind.URI || kind == FieldKind.EMAIL || kind == FieldKind.TERMINAL -> Language.ENGLISH
     else -> extInitial
 }
 

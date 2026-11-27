@@ -124,7 +124,8 @@ fun DuoKeyboardSurface(state: DuoKeyboardSurfaceState, callbacks: DuoKeyboardCal
                     if (showCandidates) {
                         CandidateBar(
                             snapshot = snap,
-                            callbacks = candidateCallbacks
+                            callbacks = candidateCallbacks,
+                            canToggleVariant = state.canToggleLanguage
                         )
                     } else {
                         DuoToolbar(

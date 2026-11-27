@@ -165,6 +165,22 @@ class DuoImePreferences internal constructor(
         return updated
     }
 
+    /**
+     * Persists general settings edited from `MainActivity` while preserving live keyboard
+     * language, Chinese scheme, and variant preferences written from the IME service (keeping
+     * [updated]'s `includeNumberRow`, which is controlled by `MainActivity`).
+     */
+    fun saveGeneralSettingsPreservingKeyboardPrefs(updated: DuoImeSettings): DuoImeSettings {
+        val live = load()
+        val merged = updated.copy(
+            preferredLanguage = live.preferredLanguage,
+            chineseScheme = live.chineseScheme,
+            chineseVariant = live.chineseVariant
+        )
+        save(merged)
+        return merged
+    }
+
     fun updateHeightFraction(fraction: Float): DuoImeSettings {
         val updated = load().copy(heightFraction = DisplayPlacementPolicy.clampHeightFraction(fraction))
         save(updated)

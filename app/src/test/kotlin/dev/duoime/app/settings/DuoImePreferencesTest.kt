@@ -224,4 +224,39 @@ class DuoImePreferencesTest {
         assertEquals(listOf(externalUpdated.toKeyboardPrefs()), echoedPrefs)
         handle.close()
     }
+
+    @Test
+    fun saveGeneralSettingsPreservingKeyboardPrefsKeepsLiveLanguageSchemeAndVariant() {
+        val backing = InMemorySharedPreferences()
+        val prefs = DuoImePreferences(backing)
+        val staleMainActivitySnapshot = prefs.load()
+        assertEquals(Language.CHINESE, staleMainActivitySnapshot.preferredLanguage)
+        assertEquals(ChineseScheme.PINYIN_26, staleMainActivitySnapshot.chineseScheme)
+        assertEquals(ChineseVariant.SIMPLIFIED, staleMainActivitySnapshot.chineseVariant)
+        assertFalse(staleMainActivitySnapshot.includeNumberRow)
+
+        // IME service updates language/scheme/variant while MainActivity still holds stale snapshot
+        prefs.updateKeyboardPrefs(
+            KeyboardPrefs(
+                language = Language.ENGLISH,
+                chineseScheme = ChineseScheme.PINYIN_T9,
+                variant = ChineseVariant.TRADITIONAL,
+                includeNumberRow = false
+            )
+        )
+
+        // MainActivity toggles darkTheme & includeNumberRow on the stale snapshot and saves
+        val merged = prefs.saveGeneralSettingsPreservingKeyboardPrefs(
+            staleMainActivitySnapshot.copy(darkTheme = false, includeNumberRow = true)
+        )
+        assertFalse(merged.darkTheme)
+        assertTrue(merged.includeNumberRow)
+        assertEquals(Language.ENGLISH, merged.preferredLanguage)
+        assertEquals(ChineseScheme.PINYIN_T9, merged.chineseScheme)
+        assertEquals(ChineseVariant.TRADITIONAL, merged.chineseVariant)
+
+        // Persisted state matches merged snapshot on reload
+        val reloaded = DuoImePreferences(backing).load()
+        assertEquals(merged, reloaded)
+    }
 }
