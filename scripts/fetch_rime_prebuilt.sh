@@ -146,7 +146,7 @@ with tarfile.open(sys.argv[1], "r:gz") as tf:
             sys.exit(f"ERROR: refusing unsafe archive path: {member.name}")
 PY
 
-rm -rf "${OUTPUT_DIR}/jniLibs" "${OUTPUT_DIR}/manifest.json"
+rm -rf "${OUTPUT_DIR}/jniLibs/${ABI}" "${OUTPUT_DIR}/manifest.json"
 tar -xzf "$TARBALL_PATH" -C "$OUTPUT_DIR"
 
 if [[ ! -f "$SO_TARGET" ]]; then
@@ -154,6 +154,6 @@ if [[ ! -f "$SO_TARGET" ]]; then
     exit 1
 fi
 
-rm -f "${OUTPUT_DIR}"/.verified-*
+rm -f "${OUTPUT_DIR}/.verified-${ABI}-"*
 printf '%s\n' "$EXPECTED_SHA256" > "$STAMP_FILE"
 echo "==> Native Rime prebuilt ready at ${OUTPUT_DIR}"

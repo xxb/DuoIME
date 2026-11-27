@@ -158,8 +158,10 @@ jobs:
       - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           TARGET_ABI: ${{ inputs.abi || 'arm64-v8a' }}
+          TARGET_SHA: ${{ github.sha }}
         working-directory: ${{ runner.temp }}/release-assets
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
@@ -171,6 +173,7 @@ jobs:
             gh release create "$RELEASE_TAG" \
               "duoime-rime-native-${TARGET_ABI}.tar.gz" \
               SHA256SUMS \
+              --target "$TARGET_SHA" \
               --title "DuoIME Native Rime (${RELEASE_TAG})" \
               --notes "Reproducible 16 KB page-aligned Option A permissive native Rime build (${TARGET_ABI})." \
               --prerelease
