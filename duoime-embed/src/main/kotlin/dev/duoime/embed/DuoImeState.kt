@@ -42,6 +42,7 @@ class DuoImeState(val controller: KeyboardController) {
     internal fun detachSessionSink(sink: InputSink) {
         if (activeSinkRef.compareAndSet(sink, null)) {
             controller.detachSink(sink)
+            controller.reset()
             _isInputSessionActive.value = false
         }
     }

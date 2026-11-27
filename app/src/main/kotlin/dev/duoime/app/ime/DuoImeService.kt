@@ -18,8 +18,10 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
 import androidx.annotation.RequiresApi
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
@@ -36,8 +38,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -276,7 +278,7 @@ class DuoImeService : InputMethodService() {
         ) {
             if (decision.warnSystemImePin) {
                 SystemImePinBanner(
-                    darkTheme = settings.darkTheme,
+                    themePreset = settings.themePreset,
                     onClick = { openSettingsActivity() }
                 )
             }
@@ -690,21 +692,25 @@ internal fun resolveHardwareCandidatePageDirection(
 }
 
 @Composable
-private fun SystemImePinBanner(darkTheme: Boolean, onClick: () -> Unit) {
-    val bg = if (darkTheme) Color(0xFF2B2315) else Color(0xFFFFF4D6)
-    val fg = if (darkTheme) Color(0xFFFFD88A) else Color(0xFF664400)
+private fun SystemImePinBanner(themePreset: DuoThemePreset, onClick: () -> Unit) {
+    val tokens = themePreset.toColorTokens()
+    val indication = if (themePreset == DuoThemePreset.EINK) null else LocalIndication.current
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(bg)
-            .clickable(onClick = onClick)
+            .background(tokens.warningBackground)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = indication,
+                onClick = onClick
+            )
             .padding(horizontal = 10.dp, vertical = 6.dp)
     ) {
         BasicText(
             text = stringResource(R.string.pin_banner_text),
             maxLines = 2,
             style = TextStyle(
-                color = fg,
+                color = tokens.warningText,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium
             )

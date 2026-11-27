@@ -255,7 +255,7 @@ class DuoImeEmbedSdkTest {
         val sink = EmbedInputConnectionSink(connectionProvider = { bridge })
         val editorCtx = EmbedEditorInfoMapper.buildEditorContext(
             packageName = "dev.example.embed",
-            inputType = EmbedEditorInfoMapper.TYPE_CLASS_TEXT or EmbedEditorInfoMapper.TYPE_TEXT_VARIATION_URI,
+            inputType = EmbedEditorInfoMapper.TYPE_CLASS_TEXT,
             imeOptions = EditorContext.IME_ACTION_GO
         )
         val sessionJob = launch {
@@ -271,16 +271,27 @@ class DuoImeEmbedSdkTest {
 
         assertTrue(imeState.isInputSessionActive.value)
         assertEquals(sink, imeState.activeSink)
-        assertEquals(FieldKind.URI, imeState.uiState.value.derived.fieldKind)
+        assertEquals(FieldKind.TEXT, imeState.uiState.value.derived.fieldKind)
 
-        // Start composing via sink, then cancel intercepted session -> finishComposingOnDisconnect + detach
-        sink.setComposing("ni")
+        // Drive real Chinese composition through controller, then cancel intercepted session ->
+        // bridge receives finishComposingText AND engine/UI composing state is cleanly reset!
+        controller.dispatchKeyAction(KeyAction.Engine('n'.code))
+        advanceUntilIdle()
+        assertTrue(imeState.uiState.value.snapshot.isComposing)
+        assertTrue(imeState.uiState.value.snapshot.preedit.isNotEmpty())
+
         sessionJob.cancel()
         advanceUntilIdle()
 
         assertFalse(imeState.isInputSessionActive.value)
         assertNull(imeState.activeSink)
-        assertEquals(listOf("compose:ni:1", "finish"), bridge.calls)
+        assertFalse(
+            "Disconnect must reset engine composing state so no ghost candidates remain",
+            imeState.uiState.value.snapshot.isComposing
+        )
+        assertEquals("", imeState.uiState.value.snapshot.preedit)
+        assertTrue(imeState.uiState.value.snapshot.candidates.isEmpty())
+        assertTrue("Expected finishComposingText on disconnect, got ${bridge.calls}", "finish" in bridge.calls)
         imeState.close()
     }
 

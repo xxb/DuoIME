@@ -11,7 +11,9 @@ import dev.duoime.core.layout.LayoutSpec
 import dev.duoime.core.model.CandidateItem
 import dev.duoime.core.model.EngineSnapshot
 import dev.duoime.core.model.ToolbarMode
+import dev.duoime.core.model.WindowCandidateItem
 import dev.duoime.ui.bar.CandidateBarLayout
+import dev.duoime.ui.bar.resolveScrollTargetIndex
 import dev.duoime.ui.grid.KeyGridGeometry
 import dev.duoime.ui.theme.DuoDarkColors
 import dev.duoime.ui.theme.DuoDefaultDimensions
@@ -178,5 +180,23 @@ class DuoKeyboardUiSmokeTest {
         )
         assertEquals(HeaderSlotMode.NONE, idle.copy(toolbarMode = ToolbarMode.NONE).resolveHeaderSlotMode())
         assertEquals(HeaderSlotMode.NONE, composing.copy(toolbarMode = ToolbarMode.NONE).resolveHeaderSlotMode())
+    }
+
+    @Test
+    fun resolveScrollTargetIndexFollowsHighlightedCandidateOrPageStartCleanly() {
+        assertEquals(-1, resolveScrollTargetIndex(emptyList(), pageIndex = 0))
+
+        val items = listOf(
+            WindowCandidateItem(globalIndex = 0, pageIndex = 0, indexOnPage = 0, text = "一", highlighted = false),
+            WindowCandidateItem(globalIndex = 1, pageIndex = 0, indexOnPage = 1, text = "以", highlighted = false),
+            WindowCandidateItem(globalIndex = 2, pageIndex = 1, indexOnPage = 0, text = "意", highlighted = true),
+            WindowCandidateItem(globalIndex = 3, pageIndex = 1, indexOnPage = 1, text = "义", highlighted = false)
+        )
+        assertEquals(2, resolveScrollTargetIndex(items, pageIndex = 1))
+
+        val unhighlighted = items.map { it.copy(highlighted = false) }
+        assertEquals(2, resolveScrollTargetIndex(unhighlighted, pageIndex = 1))
+        assertEquals(0, resolveScrollTargetIndex(unhighlighted, pageIndex = 0))
+        assertEquals(0, resolveScrollTargetIndex(unhighlighted, pageIndex = 5))
     }
 }

@@ -78,6 +78,18 @@ internal object CandidateBarLayout {
 }
 
 /**
+ * Pure-JVM target scroll index resolver for [CandidateBar] `SCROLL` mode when hardware keys
+ * (`L1`/`R1`/`PageUp`/`PageDown`) step `snapshot.pageIndex`.
+ */
+internal fun resolveScrollTargetIndex(items: List<WindowCandidateItem>, pageIndex: Int): Int {
+    if (items.isEmpty()) return -1
+    val highlightedIdx = items.indexOfFirst { it.highlighted }
+    if (highlightedIdx >= 0) return highlightedIdx
+    val pageStartIdx = items.indexOfFirst { it.pageIndex == pageIndex }
+    return if (pageStartIdx >= 0) pageStartIdx else 0
+}
+
+/**
  * Immutable render state for [CandidateBar].
  */
 @Immutable
@@ -197,6 +209,15 @@ private fun ScrollableCandidateRow(
     ) {
         if (listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0) {
             listState.scrollToItem(0)
+        }
+    }
+
+    LaunchedEffect(state.snapshot.pageIndex) {
+        val target = resolveScrollTargetIndex(items, state.snapshot.pageIndex)
+        if (target in items.indices &&
+            (listState.firstVisibleItemIndex != target || listState.firstVisibleItemScrollOffset > 0)
+        ) {
+            listState.scrollToItem(target)
         }
     }
 

@@ -71,17 +71,26 @@ class EmbedInputConnectionSink(
     initialCapabilities: SinkCapabilities = SinkCapabilities.STANDARD_IME
 ) : InputSink {
 
+    private constructor(
+        bridge: EmbedConnectionBridge,
+        capabilities: SinkCapabilities
+    ) : this(
+        connectionProvider = { bridge },
+        initialCapabilities = capabilities
+    )
+
     constructor(
         inputConnection: InputConnection,
         capabilities: SinkCapabilities = SinkCapabilities.STANDARD_IME
     ) : this(
-        connectionProvider = { AndroidEmbedConnectionBridge(inputConnection) },
-        initialCapabilities = capabilities
+        bridge = AndroidEmbedConnectionBridge(inputConnection),
+        capabilities = capabilities
     )
 
     @Volatile
     override var capabilities: SinkCapabilities = initialCapabilities
 
+    @Volatile
     private var hasActiveComposing: Boolean = false
 
     fun updateCapabilities(newCapabilities: SinkCapabilities) {
