@@ -3,8 +3,12 @@
 package dev.duoime.ui.grid
 
 import dev.duoime.core.layout.BuiltInLayouts
+import dev.duoime.core.model.FieldKind
+import dev.duoime.core.model.LangKeyPlacement
+import kotlin.math.abs
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -180,5 +184,76 @@ class KeyGridHitTest {
         )
         assertEquals(null, tight.secondaryTop)
         assertEquals(19f, tight.primaryTop, 0.01f)
+    }
+
+    @Test
+    fun t9TrackGridAlignsSlotSymbolBottomRowAndRowSpan2EnterWithZeroDrift() {
+        val width = 1000f
+        val height = 400f
+        val hGap = 8f
+        val vGap = 10f
+        val expectedColW = (width - hGap * 4f) / 5f
+        val expectedRowH = (height - vGap * 3f) / 4f
+
+        for (placement in listOf(LangKeyPlacement.GRID, LangKeyPlacement.HOST)) {
+            val layout = BuiltInLayouts.t9(langKeyPlacement = placement)
+            val hitMap = KeyGridGeometry.computeHitMap(layout, width, height, hGap, vGap)
+
+            val slot = hitMap.slots[BuiltInLayouts.T9_LEFT_SLOT_ID]
+            assertNotNull("Expected t9_left_slot for $placement", slot)
+            requireNotNull(slot)
+            assertEquals(0f, slot.left, 0.01f)
+            assertEquals(0f, slot.top, 0.01f)
+            assertEquals(expectedColW, slot.right, 0.01f)
+            assertEquals(expectedRowH * 3f + vGap * 2f, slot.bottom, 0.01f)
+
+            // Slot is NOT in hitMap.keys and hitTestIndex inside slot returns -1
+            assertTrue(hitMap.keys.none { it.id == BuiltInLayouts.T9_LEFT_SLOT_ID })
+            assertEquals(-1, KeyGridGeometry.hitTestIndex(hitMap, slot.width * 0.5f, slot.height * 0.5f))
+
+            // Row 3 [符号] aligns pixel-exact under t9_left_slot with ZERO drift in BOTH GRID and HOST
+            val symIdx = hitMap.keys.indexOfFirst { it.id == "t9_sym" }
+            assertTrue(symIdx >= 0)
+            assertEquals(slot.left, hitMap.left(symIdx), 0.01f)
+            assertEquals(slot.right, hitMap.right(symIdx), 0.01f)
+            assertEquals(expectedRowH * 3f + vGap * 3f, hitMap.top(symIdx), 0.01f)
+            assertEquals(height, hitMap.bottom(symIdx), 0.01f)
+
+            // Row 3 [123] starts pixel-exact at Col 1 left; [空格] ends pixel-exact at Col 3 right
+            val numIdx = hitMap.keys.indexOfFirst { it.id == "t9_num" }
+            val spaceIdx = hitMap.keys.indexOfFirst { it.id == "t9_space" }
+            val col1Left = expectedColW + hGap
+            val col3Right = expectedColW * 4f + hGap * 3f
+            assertEquals(col1Left, hitMap.left(numIdx), 0.01f)
+            assertEquals(col3Right, hitMap.right(spaceIdx), 0.01f)
+
+            // Col 4 Enter spans Rows 2-3 cleanly
+            val enterIdx = hitMap.keys.indexOfFirst { it.id == "enter" }
+            assertTrue(enterIdx >= 0)
+            assertEquals(col3Right + hGap, hitMap.left(enterIdx), 0.01f)
+            assertEquals(width, hitMap.right(enterIdx), 0.01f)
+            assertEquals(expectedRowH * 2f + vGap * 2f, hitMap.top(enterIdx), 0.01f)
+            assertEquals(height, hitMap.bottom(enterIdx), 0.01f)
+            assertTrue(abs((hitMap.bottom(enterIdx) - hitMap.top(enterIdx)) - (expectedRowH * 2f + vGap)) < 0.05f)
+        }
+    }
+
+    @Test
+    fun disabledKeysReturnMinusOneOnDirectTapAndAreSkippedByGapFallback() {
+        val numPad = BuiltInLayouts.numberPad(FieldKind.NUMBER)
+        val hitMap = KeyGridGeometry.computeHitMap(numPad, 1000f, 400f, 8f, 8f)
+        val backIdx = hitMap.keys.indexOfFirst { it.id == "num_back" }
+        assertTrue(backIdx >= 0)
+        assertFalse(hitMap.keys[backIdx].enabled)
+
+        // Direct tap on disabled [返回] returns -1 (does not fall back to neighbor)
+        val cx = (hitMap.left(backIdx) + hitMap.right(backIdx)) * 0.5f
+        val cy = (hitMap.top(backIdx) + hitMap.bottom(backIdx)) * 0.5f
+        assertEquals(-1, KeyGridGeometry.hitTestIndex(hitMap, cx, cy))
+
+        // Gap between [符号] and disabled [返回] resolves to enabled [符号], never disabled [返回]
+        val symIdx = hitMap.keys.indexOfFirst { it.id == "num_sym" }
+        val gapX = (hitMap.right(symIdx) + hitMap.left(backIdx)) * 0.5f
+        assertEquals(symIdx, KeyGridGeometry.hitTestIndex(hitMap, gapX, cy))
     }
 }

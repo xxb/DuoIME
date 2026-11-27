@@ -192,6 +192,7 @@ private fun processPointerChange(
             change.consume()
             if (idx >= 0) {
                 val key = hitMap.keys[idx]
+                if (!key.enabled) return false
                 holds.onKeyDown(pid, idx, key)
                 dispatch.onPressDownState.value(FeedbackKey(key.action, key.label, key.zone))
                 true
@@ -203,7 +204,8 @@ private fun processPointerChange(
             val releasedIdx = tracker.onPointerUp(pid)
             change.consume()
             if (releasedIdx in hitMap.keys.indices) {
-                val action = holds.onKeyUp(pid, hitMap.keys[releasedIdx])
+                val releasedKey = hitMap.keys[releasedIdx]
+                val action = if (releasedKey.enabled) holds.onKeyUp(pid, releasedKey) else null
                 if (action != null) {
                     dispatch.onKeyActionState.value(action)
                 }
@@ -286,10 +288,11 @@ private fun DrawScope.drawKeyGrid(
         val top = hitMap.top(i)
         val width = hitMap.right(i) - left
         val height = hitMap.bottom(i) - top
-        val pressed = enabled && tracker.isKeyPressed(i)
+        val pressed = enabled && key.enabled && tracker.isKeyPressed(i)
 
         val bg = keyFillColor(key, pressed, colors)
         val textColor = keyTextColor(key, colors)
+        val secondaryColor = keySecondaryTextColor(key, colors)
 
         drawRoundRect(
             color = bg,
@@ -304,7 +307,7 @@ private fun DrawScope.drawKeyGrid(
             cornerRadius = radius,
             style = stroke
         )
-        drawKeyLabels(renderState, i, textColor, colors.keySecondaryText)
+        drawKeyLabels(renderState, i, textColor, secondaryColor)
     }
     val popupIndex = renderState.holdController.activePopupKeyIndex
     if (enabled && popupIndex in 0 until hitMap.size) {
@@ -387,12 +390,24 @@ private fun DrawScope.drawKeyLabels(renderState: GridRenderState, index: Int, te
     )
 }
 
-private fun keyFillColor(key: KeySpec, pressed: Boolean, colors: DuoColorTokens): Color = when (key.zone) {
-    FeedbackZone.ENTER -> if (pressed) colors.accentKeyPressedBackground else colors.accentKeyBackground
-    FeedbackZone.ACTION, FeedbackZone.BACKSPACE, FeedbackZone.TOOLBAR ->
+private fun keyFillColor(key: KeySpec, pressed: Boolean, colors: DuoColorTokens): Color = when {
+    !key.enabled -> if (key.zone == FeedbackZone.ACTION) colors.actionKeyBackground else colors.keyBackground
+    key.highlighted -> if (pressed) colors.accentKeyPressedBackground else colors.chipSelectedBackground
+    key.zone == FeedbackZone.ENTER -> if (pressed) colors.accentKeyPressedBackground else colors.accentKeyBackground
+    key.zone == FeedbackZone.ACTION || key.zone == FeedbackZone.BACKSPACE || key.zone == FeedbackZone.TOOLBAR ->
         if (pressed) colors.actionKeyPressedBackground else colors.actionKeyBackground
     else -> if (pressed) colors.keyPressedBackground else colors.keyBackground
 }
 
-private fun keyTextColor(key: KeySpec, colors: DuoColorTokens): Color =
-    if (key.zone == FeedbackZone.ENTER) colors.accentKeyText else colors.keyText
+private fun keyTextColor(key: KeySpec, colors: DuoColorTokens): Color = when {
+    !key.enabled -> colors.keySecondaryText
+    key.highlighted -> colors.chipSelectedText
+    key.zone == FeedbackZone.ENTER -> colors.accentKeyText
+    else -> colors.keyText
+}
+
+private fun keySecondaryTextColor(key: KeySpec, colors: DuoColorTokens): Color = when {
+    !key.enabled -> colors.keySecondaryText
+    key.highlighted -> colors.chipSelectedText.copy(alpha = 0.85f)
+    else -> colors.keySecondaryText
+}

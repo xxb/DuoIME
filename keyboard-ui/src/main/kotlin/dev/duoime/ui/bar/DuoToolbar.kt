@@ -3,6 +3,7 @@
 package dev.duoime.ui.bar
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,10 +33,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.duoime.core.model.ChineseScheme
 import dev.duoime.core.model.ChineseVariant
-import dev.duoime.core.model.InputMode
 import dev.duoime.core.model.KeyAction
-import dev.duoime.core.model.KeyboardPanel
+import dev.duoime.core.model.Language
+import dev.duoime.core.model.QuickPin
 import dev.duoime.core.protocol.ExtensionToolbarButton
 import dev.duoime.ui.R
 import dev.duoime.ui.theme.DuoColorTokens
@@ -43,7 +45,15 @@ import dev.duoime.ui.theme.LocalDuoColors
 import dev.duoime.ui.theme.LocalDuoDimensions
 
 /**
- * Semantic keyboard height preset tier rendered in [DuoToolbar] (`S`/`M`/`L` in English,
+ * Default priority pins rendered in [DuoToolbar] after host [ExtensionToolbarButton]s.
+ */
+val DEFAULT_TOOLBAR_PINS: List<QuickPin> = listOf(
+    QuickPin.SCHEME_SWITCH,
+    QuickPin.SWAP_SCREEN
+)
+
+/**
+ * Semantic keyboard height preset tier rendered in `DuoQuickDrawer` (`S`/`M`/`L` in English,
  * `矮`/`中`/`高` in Chinese) so users see a preset rather than a raw overlay-only percentage.
  */
 enum class HeightPresetTier {
@@ -59,25 +69,62 @@ fun resolveHeightPresetTier(heightFraction: Float): HeightPresetTier = when {
 }
 
 /**
- * Immutable state bundle for [DuoToolbar], ensuring Compose skippability even when
- * host-supplied [extensionButtons] or an active [engineIssueTag] are present.
+ * Immutable state bundle for the slim priority-slotted [DuoToolbar].
  */
 @Immutable
 data class DuoToolbarState(
-    val activeMode: InputMode,
-    val variant: ChineseVariant,
-    val heightFraction: Float,
-    val isOverlayMode: Boolean,
+    val activeChineseScheme: ChineseScheme = ChineseScheme.PINYIN_26,
+    val effectiveLanguage: Language = Language.CHINESE,
+    val variant: ChineseVariant = ChineseVariant.SIMPLIFIED,
+    val heightFraction: Float = 0.75f,
+    val isOverlayMode: Boolean = false,
+    val drawerOpen: Boolean = false,
+    val canToggleLanguage: Boolean = true,
+    val canSwapScreen: Boolean = true,
+    val canSwitchIme: Boolean = true,
+    val showDismiss: Boolean = true,
+    val includeNumberRow: Boolean = false,
+    val pins: List<QuickPin> = DEFAULT_TOOLBAR_PINS,
     val extensionButtons: List<ExtensionToolbarButton> = emptyList(),
-    val engineIssueTag: String? = null,
-    val activePanel: KeyboardPanel = KeyboardPanel.PRIMARY,
-    val canToggleLanguage: Boolean = true
+    val engineIssueTag: String? = null
 )
 
 /**
- * Top keyboard toolbar exposing an optional leading dismissible engine-warning chip, mode
- * switching (26-key/T9/EN/?123), S/T toggle, one-tap screen swap, height preset cycling
- * (60%/75%/90%), and host-declared [ExtensionToolbarButton] slots.
+ * Pure-JVM action metadata for [DuoToolbar] verified by zero-duplication invariant tests.
+ */
+object DuoToolbarMeta {
+    fun visibleActions(state: DuoToolbarState): List<KeyAction> = buildList {
+        add(KeyAction.ToggleDrawer)
+        if (!state.drawerOpen) {
+            for (pin in state.pins.distinct()) {
+                when (pin) {
+                    QuickPin.SCHEME_SWITCH -> {
+                        val scheme26 = if (state.activeChineseScheme == ChineseScheme.XIAOHE_SHUANGPIN) {
+                            ChineseScheme.XIAOHE_SHUANGPIN
+                        } else {
+                            ChineseScheme.PINYIN_26
+                        }
+                        add(KeyAction.SelectChineseScheme(scheme26))
+                        add(KeyAction.SelectChineseScheme(ChineseScheme.PINYIN_T9))
+                    }
+                    QuickPin.SWAP_SCREEN -> if (state.canSwapScreen) add(KeyAction.SwapScreen)
+                    QuickPin.VARIANT -> add(KeyAction.SwitchVariant)
+                    QuickPin.NUMBER_ROW -> add(KeyAction.ToggleNumberRow)
+                    QuickPin.HEIGHT -> add(KeyAction.CycleHeight)
+                    QuickPin.SWITCH_IME -> if (state.canSwitchIme) add(KeyAction.SwitchIme)
+                }
+            }
+        }
+        if (state.showDismiss) {
+            add(KeyAction.Dismiss)
+        }
+    }
+}
+
+/**
+ * Slim priority-slotted top keyboard toolbar (pure Compose Foundation, zero Material 3):
+ * `[☰ (ToggleDrawer)]` + priority `LazyRow` (`engineIssue` -> `extensionButtons` -> capability-gated
+ * `pins` such as `[26|9]` and `[换屏]`) + optional `[收起 (Dismiss)]`.
  */
 @Composable
 fun DuoToolbar(
@@ -105,6 +152,13 @@ fun DuoToolbar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        ToolbarChip(
+            label = "☰",
+            selected = state.drawerOpen,
+            colors = colors,
+            onClick = { onAction(KeyAction.ToggleDrawer) }
+        )
+
         LazyRow(
             modifier = Modifier
                 .weight(1f)
@@ -122,23 +176,6 @@ fun DuoToolbar(
                     )
                 }
             }
-            modeAndVariantToolbarItems(state = state, colors = colors, onAction = onAction)
-            item(key = "swap") {
-                ToolbarChip(
-                    label = if (state.isOverlayMode) "换屏●" else "换屏",
-                    selected = state.isOverlayMode,
-                    colors = colors,
-                    onClick = { onAction(KeyAction.SwapScreen) }
-                )
-            }
-            item(key = "height") {
-                ToolbarChip(
-                    label = heightLabel,
-                    selected = false,
-                    colors = colors,
-                    onClick = { onAction(KeyAction.CycleHeight) }
-                )
-            }
             items(
                 items = state.extensionButtons,
                 key = { button -> "ext:${button.id}" }
@@ -150,13 +187,166 @@ fun DuoToolbar(
                     onClick = { onExtensionButton(button) }
                 )
             }
+            if (!state.drawerOpen) {
+                toolbarPinItems(
+                    state = state,
+                    heightLabel = heightLabel,
+                    colors = colors,
+                    onAction = onAction
+                )
+            }
         }
 
-        ToolbarChip(
-            label = "收起",
-            selected = false,
+        if (state.showDismiss) {
+            ToolbarChip(
+                label = "收起",
+                selected = false,
+                colors = colors,
+                onClick = { onAction(KeyAction.Dismiss) }
+            )
+        }
+    }
+}
+
+private fun LazyListScope.toolbarPinItems(
+    state: DuoToolbarState,
+    heightLabel: String,
+    colors: DuoColorTokens,
+    onAction: (KeyAction) -> Unit
+) {
+    for (pin in state.pins.distinct()) {
+        when (pin) {
+            QuickPin.SCHEME_SWITCH -> item(key = "pin_scheme") {
+                SchemePillChip(
+                    activeScheme = state.activeChineseScheme,
+                    enabled = state.canToggleLanguage,
+                    colors = colors,
+                    onAction = onAction
+                )
+            }
+            QuickPin.SWAP_SCREEN -> if (state.canSwapScreen) {
+                item(key = "pin_swap") {
+                    ToolbarChip(
+                        label = if (state.isOverlayMode) "换屏●" else "换屏",
+                        selected = state.isOverlayMode,
+                        colors = colors,
+                        onClick = { onAction(KeyAction.SwapScreen) }
+                    )
+                }
+            }
+            QuickPin.VARIANT -> item(key = "pin_variant") {
+                ToolbarChip(
+                    label = if (state.variant == ChineseVariant.TRADITIONAL) "繁" else "简",
+                    selected = state.variant == ChineseVariant.TRADITIONAL,
+                    colors = colors,
+                    enabled = state.canToggleLanguage,
+                    onClick = { onAction(KeyAction.SwitchVariant) }
+                )
+            }
+            QuickPin.NUMBER_ROW -> item(key = "pin_numrow") {
+                ToolbarChip(
+                    label = "数字行",
+                    selected = state.includeNumberRow,
+                    colors = colors,
+                    onClick = { onAction(KeyAction.ToggleNumberRow) }
+                )
+            }
+            QuickPin.HEIGHT -> item(key = "pin_height") {
+                ToolbarChip(
+                    label = heightLabel,
+                    selected = false,
+                    colors = colors,
+                    onClick = { onAction(KeyAction.CycleHeight) }
+                )
+            }
+            QuickPin.SWITCH_IME -> if (state.canSwitchIme) {
+                item(key = "pin_ime") {
+                    ToolbarChip(
+                        label = "输入法",
+                        selected = false,
+                        colors = colors,
+                        onClick = { onAction(KeyAction.SwitchIme) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SchemePillChip(
+    activeScheme: ChineseScheme,
+    enabled: Boolean,
+    colors: DuoColorTokens,
+    onAction: (KeyAction) -> Unit
+) {
+    val isT9 = activeScheme == ChineseScheme.PINYIN_T9
+    val target26 = if (activeScheme == ChineseScheme.XIAOHE_SHUANGPIN) {
+        ChineseScheme.XIAOHE_SHUANGPIN
+    } else {
+        ChineseScheme.PINYIN_26
+    }
+    val shape = RoundedCornerShape(8.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxHeight()
+            .clip(shape)
+            .background(colors.chipBackground)
+            .border(width = 1.dp, color = colors.keyBorder, shape = shape)
+            .padding(2.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        SchemePillHalf(
+            label = "26",
+            selected = !isT9,
+            enabled = enabled,
             colors = colors,
-            onClick = { onAction(KeyAction.Dismiss) }
+            onClick = { onAction(KeyAction.SelectChineseScheme(target26)) }
+        )
+        SchemePillHalf(
+            label = "9",
+            selected = isT9,
+            enabled = enabled,
+            colors = colors,
+            onClick = { onAction(KeyAction.SelectChineseScheme(ChineseScheme.PINYIN_T9)) }
+        )
+    }
+}
+
+@Composable
+private fun SchemePillHalf(
+    label: String,
+    selected: Boolean,
+    enabled: Boolean,
+    colors: DuoColorTokens,
+    onClick: () -> Unit
+) {
+    val fontSizeSp = LocalDuoDimensions.current.toolbarFontSp
+    val bg = if (selected && enabled) colors.chipSelectedBackground else colors.chipBackground
+    val fg = when {
+        !enabled -> colors.keySecondaryText
+        selected -> colors.chipSelectedText
+        else -> colors.chipText
+    }
+    Box(
+        modifier = Modifier
+            .defaultMinSize(minWidth = 32.dp)
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(6.dp))
+            .background(bg)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        BasicText(
+            text = label,
+            maxLines = 1,
+            style = TextStyle(
+                color = fg,
+                fontSize = fontSizeSp.sp,
+                fontWeight = if (selected && enabled) FontWeight.SemiBold else FontWeight.Medium
+            )
         )
     }
 }
@@ -192,57 +382,6 @@ private fun EngineIssueChip(tag: String, colors: DuoColorTokens, onDismiss: () -
             text = "✕",
             maxLines = 1,
             style = warningStyle
-        )
-    }
-}
-
-private fun LazyListScope.modeAndVariantToolbarItems(
-    state: DuoToolbarState,
-    colors: DuoColorTokens,
-    onAction: (KeyAction) -> Unit
-) {
-    item(key = "mode_26") {
-        ToolbarChip(
-            label = "26键",
-            selected = state.activePanel == KeyboardPanel.PRIMARY && state.activeMode == InputMode.PINYIN_26,
-            colors = colors,
-            enabled = state.canToggleLanguage,
-            onClick = { onAction(KeyAction.SwitchMode(InputMode.PINYIN_26)) }
-        )
-    }
-    item(key = "mode_t9") {
-        ToolbarChip(
-            label = "九键",
-            selected = state.activePanel == KeyboardPanel.PRIMARY && state.activeMode == InputMode.PINYIN_T9,
-            colors = colors,
-            enabled = state.canToggleLanguage,
-            onClick = { onAction(KeyAction.SwitchMode(InputMode.PINYIN_T9)) }
-        )
-    }
-    item(key = "mode_en") {
-        ToolbarChip(
-            label = "EN",
-            selected = state.activePanel == KeyboardPanel.PRIMARY && state.activeMode == InputMode.ENGLISH,
-            colors = colors,
-            enabled = state.canToggleLanguage,
-            onClick = { onAction(KeyAction.SwitchMode(InputMode.ENGLISH)) }
-        )
-    }
-    item(key = "mode_sym") {
-        ToolbarChip(
-            label = "?123",
-            selected = state.activePanel == KeyboardPanel.SYMBOL,
-            colors = colors,
-            onClick = { onAction(KeyAction.OpenPanel(KeyboardPanel.SYMBOL)) }
-        )
-    }
-    item(key = "variant") {
-        ToolbarChip(
-            label = if (state.variant == ChineseVariant.TRADITIONAL) "繁" else "简",
-            selected = state.variant == ChineseVariant.TRADITIONAL,
-            colors = colors,
-            enabled = state.canToggleLanguage,
-            onClick = { onAction(KeyAction.SwitchVariant) }
         )
     }
 }

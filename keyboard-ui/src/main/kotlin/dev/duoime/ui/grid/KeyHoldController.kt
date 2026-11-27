@@ -45,6 +45,7 @@ class KeyHoldController(
 
     fun onKeyDown(pointerId: Long, keyIndex: Int, key: KeySpec) {
         cancelPointer(pointerId)
+        if (!key.enabled) return
         val secondaryAction = if (key.repeatable) null else key.resolveSecondaryAction()
         if (!key.repeatable && secondaryAction == null) {
             return
@@ -89,6 +90,7 @@ class KeyHoldController(
         if (entry != null && activePopupKeyIndex == entry.keyIndex) {
             clearPopup()
         }
+        if (!releasedKey.enabled) return null
         return when {
             entry == null -> releasedKey.action
             entry.repeated -> null

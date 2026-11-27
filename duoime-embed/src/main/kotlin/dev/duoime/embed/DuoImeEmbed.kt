@@ -9,6 +9,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import dev.duoime.core.engine.InputSink
+import dev.duoime.core.model.CandidatePaging
 import dev.duoime.engine.lite.LiteEngineMetadata
 import dev.duoime.ui.DuoKeyboardCallbacks
 import dev.duoime.ui.DuoKeyboardPlaceholder
@@ -27,12 +28,16 @@ object DuoImeEmbed {
  * Public Jetpack Compose embed entry point shared by `:app` (system IME) and third-party apps.
  * Renders the full DuoIME keyboard using pure Compose Foundation + [DuoTheme] (zero Material 3).
  */
+@Suppress("LongParameterList")
 @Composable
 fun DuoImeKeyboard(
     controller: KeyboardController,
     sink: InputSink,
     modifier: Modifier = Modifier,
-    darkTheme: Boolean = true
+    darkTheme: Boolean = true,
+    canSwapScreen: Boolean = true,
+    canSwitchIme: Boolean = true,
+    showDismiss: Boolean = true
 ) {
     DisposableEffect(controller, sink) {
         controller.attachSink(sink)
@@ -49,9 +54,12 @@ fun DuoImeKeyboard(
             onExtensionButton = controller::dispatchExtensionButton,
             onKeyPressDown = controller::onKeyPressDown,
             onKeyRepeat = controller::onKeyRepeat,
-            onDismissEngineError = controller::dismissEngineError
+            onDismissEngineError = controller::dismissEngineError,
+            onSelectWindowCandidate = controller::selectWindowCandidate,
+            onLoadMoreCandidates = controller::loadMoreCandidates
         )
     }
+    val derived = state.derived
     val surfaceState = DuoKeyboardSurfaceState(
         snapshot = state.snapshot,
         layout = state.activeLayout,
@@ -60,7 +68,21 @@ fun DuoImeKeyboard(
         isOverlayMode = state.isOverlayMode,
         extensionButtons = state.editorContext.extension?.toolbarButtons.orEmpty(),
         engineIssueTag = state.engineIssue?.tag,
-        canToggleLanguage = state.derived.canToggleLanguage
+        canToggleLanguage = derived.canToggleLanguage,
+        activeChineseScheme = derived.effectiveChineseScheme,
+        effectiveLanguage = derived.effectiveLanguage,
+        activePanel = derived.panel,
+        panelLocked = derived.panelLocked,
+        symbolTab = derived.symbolTab,
+        fieldKind = derived.fieldKind,
+        drawerOpen = derived.drawerOpen,
+        includeNumberRow = derived.includeNumberRow,
+        canSwapScreen = canSwapScreen,
+        canSwitchIme = canSwitchIme,
+        showDismiss = showDismiss,
+        candidatePaging = derived.candidatePaging ?: CandidatePaging.SCROLL,
+        windowCandidates = state.windowCandidates,
+        hasMoreWindowCandidates = state.hasMoreWindowCandidates
     )
 
     DuoTheme(darkTheme = darkTheme) {

@@ -42,6 +42,8 @@ sealed interface KeyAction {
 
     data class SelectSymbolTab(val tab: SymbolTabId) : KeyAction
 
+    data class CommitPanelSymbol(val text: String, val keepOpen: Boolean = false) : KeyAction
+
     data object SwitchVariant : KeyAction
 
     data object SwapScreen : KeyAction

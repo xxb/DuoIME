@@ -147,4 +147,30 @@ class KeyHoldControllerTest {
         assertTrue(repeatActions.isEmpty())
         assertEquals(KeyAction.Text("1"), controller.onKeyUp(pointerId = 2L, releasedKey = qKey))
     }
+
+    @Test
+    fun disabledKeysAndAllowLongPressFalseKeysSuppressHoldAndPopupCleanly() = runTest {
+        val controller = KeyHoldController(
+            scope = this,
+            onRepeatAction = {},
+            onVisualChanged = {}
+        )
+        // Composing T9 key '2' shows corner '2' but sets allowLongPress = false
+        val compT9Key2 = BuiltInLayouts.t9(isComposing = true).rows[0].keys[2]
+        assertEquals("2", compT9Key2.secondaryLabel)
+        assertNull(compT9Key2.resolveSecondaryAction())
+
+        controller.onKeyDown(pointerId = 1L, keyIndex = 1, key = compT9Key2)
+        advanceTimeBy(500L)
+        runCurrent()
+        assertEquals(-1, controller.activePopupKeyIndex)
+        assertEquals(compT9Key2.action, controller.onKeyUp(1L, compT9Key2))
+
+        // Disabled key (返回 on forced NUMBER pad) returns null on lift
+        val disabledBack = BuiltInLayouts.numberPad(dev.duoime.core.model.FieldKind.NUMBER).rows[3].keys[1]
+        controller.onKeyDown(pointerId = 2L, keyIndex = 16, key = disabledBack)
+        advanceTimeBy(500L)
+        runCurrent()
+        assertNull(controller.onKeyUp(2L, disabledBack))
+    }
 }

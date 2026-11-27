@@ -23,6 +23,7 @@ import dev.duoime.core.model.KeyAction
 import dev.duoime.core.model.KeyProcessResult
 import dev.duoime.core.model.KeyboardPanel
 import dev.duoime.core.model.KeyboardPrefs
+import dev.duoime.core.model.LangKeyPlacement
 import dev.duoime.core.model.Language
 import dev.duoime.core.model.SymbolTabId
 import dev.duoime.core.protocol.ExtensionToolbarButton
@@ -58,6 +59,10 @@ internal sealed interface ControllerEvent {
     data class Nav(val command: NavCommand) : ControllerEvent
 
     data class SelectCandidate(val indexOnPage: Int) : ControllerEvent
+
+    data class SelectWindowCandidate(val globalIndex: Int) : ControllerEvent
+
+    data object LoadMoreCandidates : ControllerEvent
 
     data class SelectSyllable(val index: Int) : ControllerEvent
 
@@ -160,21 +165,39 @@ internal fun selectEngineSchemaWithFallback(
     }
 }
 
-internal fun resolveKeyboardLayout(derived: DerivedKeyboardState): LayoutSpec = when (derived.panel) {
+internal fun resolveKeyboardLayout(
+    derived: DerivedKeyboardState,
+    prefs: KeyboardPrefs,
+    isComposing: Boolean = false
+): LayoutSpec = when (derived.panel) {
     KeyboardPanel.SYMBOL -> BuiltInLayouts.symbolsV0(mode = derived.activeMode)
-    KeyboardPanel.NUMBER -> BuiltInLayouts.numberPadV0(mode = derived.activeMode)
+    KeyboardPanel.NUMBER -> BuiltInLayouts.numberPad(fieldKind = derived.fieldKind, mode = derived.activeMode)
     KeyboardPanel.PRIMARY -> when (derived.activeMode) {
         InputMode.PINYIN_26 -> BuiltInLayouts.qwerty(
             includeNumberRow = derived.includeNumberRow,
             shifted = derived.shifted,
-            englishMode = false
+            englishMode = false,
+            variant = prefs.variant,
+            fieldKind = derived.fieldKind,
+            canToggleLanguage = derived.canToggleLanguage,
+            langKeyPlacement = derived.langKeyPlacement ?: LangKeyPlacement.GRID
         )
         InputMode.ENGLISH -> BuiltInLayouts.qwerty(
             includeNumberRow = derived.includeNumberRow,
             shifted = derived.shifted,
-            englishMode = true
+            englishMode = true,
+            variant = prefs.variant,
+            fieldKind = derived.fieldKind,
+            canToggleLanguage = derived.canToggleLanguage,
+            langKeyPlacement = derived.langKeyPlacement ?: LangKeyPlacement.GRID
         )
-        InputMode.PINYIN_T9 -> BuiltInLayouts.t9()
+        InputMode.PINYIN_T9 -> BuiltInLayouts.t9(
+            isComposing = isComposing,
+            variant = prefs.variant,
+            canToggleLanguage = derived.canToggleLanguage,
+            langKeyPlacement = derived.langKeyPlacement ?: LangKeyPlacement.GRID,
+            language = derived.effectiveLanguage
+        )
     }
 }
 

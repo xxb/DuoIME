@@ -14,6 +14,7 @@ import dev.duoime.core.model.InputConstraints
 import dev.duoime.core.model.InputMode
 import dev.duoime.core.model.KeyboardPrefs
 import dev.duoime.core.model.SessionState
+import dev.duoime.core.model.WindowCandidateItem
 import dev.duoime.core.model.deriveKeyboardState
 import dev.duoime.core.policy.DisplayPlacementPolicy
 import kotlinx.coroutines.CoroutineDispatcher
@@ -57,7 +58,9 @@ data class KeyboardUiState(
     val prefs: KeyboardPrefs = KeyboardPrefs(),
     val session: SessionState = SessionState(),
     val constraints: InputConstraints = InputConstraints(),
-    val derived: DerivedKeyboardState = deriveKeyboardState(prefs, session, constraints)
+    val derived: DerivedKeyboardState = deriveKeyboardState(prefs, session, constraints),
+    val windowCandidates: List<WindowCandidateItem> = emptyList(),
+    val hasMoreWindowCandidates: Boolean = false
 )
 
 /**

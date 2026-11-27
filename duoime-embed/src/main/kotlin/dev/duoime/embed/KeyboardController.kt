@@ -71,6 +71,7 @@ class KeyboardController(
     private var constraints: InputConstraints = InputConstraints()
     private var languageMemoryKey: String? = config.languageMemoryKey
     private val languageMemory = LanguageMemoryStore()
+    private val candidateWindow = CandidateWindowTracker()
     private var lastSelectedSchemaId: String? = null
     private var heightFraction: Float = DisplayPlacementPolicy.clampHeightFraction(config.initialHeightFraction)
     private var isOverlayMode: Boolean = config.initialOverlayMode
@@ -104,61 +105,37 @@ class KeyboardController(
         }
     }
 
-    fun attachSink(sink: InputSink) {
-        activeSinkRef.set(sink)
-    }
+    fun attachSink(sink: InputSink) = activeSinkRef.set(sink)
 
     fun detachSink(sink: InputSink) {
         activeSinkRef.compareAndSet(sink, null)
     }
 
-    fun onKeyPressDown(feedbackKey: FeedbackKey) {
-        hostCallbacks.onFeedbackKey(feedbackKey)
-    }
+    fun onKeyPressDown(feedbackKey: FeedbackKey) = hostCallbacks.onFeedbackKey(feedbackKey)
 
-    fun onKeyRepeat(feedbackKey: FeedbackKey) {
-        hostCallbacks.onRepeatFeedbackKey(feedbackKey)
-    }
+    fun onKeyRepeat(feedbackKey: FeedbackKey) = hostCallbacks.onRepeatFeedbackKey(feedbackKey)
 
     fun dispatchKeyAction(action: KeyAction) {
         eventChannel.trySend(ControllerEvent.Action(action))
     }
 
-    fun toggleLanguage() {
-        eventChannel.trySend(ControllerEvent.Nav(NavCommand.ToggleLanguage))
-    }
+    fun toggleLanguage() = sendNav(NavCommand.ToggleLanguage)
 
-    fun setLanguage(language: Language) {
-        eventChannel.trySend(ControllerEvent.Nav(NavCommand.SetLanguage(language)))
-    }
+    fun setLanguage(language: Language) = sendNav(NavCommand.SetLanguage(language))
 
-    fun setChineseScheme(scheme: ChineseScheme) {
-        eventChannel.trySend(ControllerEvent.Nav(NavCommand.SelectChineseScheme(scheme)))
-    }
+    fun setChineseScheme(scheme: ChineseScheme) = sendNav(NavCommand.SelectChineseScheme(scheme))
 
-    fun cycleChineseScheme() {
-        eventChannel.trySend(ControllerEvent.Nav(NavCommand.CycleChineseScheme))
-    }
+    fun cycleChineseScheme() = sendNav(NavCommand.CycleChineseScheme)
 
-    fun setVariant(variant: ChineseVariant) {
-        eventChannel.trySend(ControllerEvent.Nav(NavCommand.SetVariant(variant)))
-    }
+    fun setVariant(variant: ChineseVariant) = sendNav(NavCommand.SetVariant(variant))
 
-    fun openPanel(panel: KeyboardPanel, tab: SymbolTabId? = null) {
-        eventChannel.trySend(ControllerEvent.Nav(NavCommand.OpenPanel(panel, tab)))
-    }
+    fun openPanel(panel: KeyboardPanel, tab: SymbolTabId? = null) = sendNav(NavCommand.OpenPanel(panel, tab))
 
-    fun closePanel() {
-        eventChannel.trySend(ControllerEvent.Nav(NavCommand.ClosePanel))
-    }
+    fun closePanel() = sendNav(NavCommand.ClosePanel)
 
-    fun togglePanelLock() {
-        eventChannel.trySend(ControllerEvent.Nav(NavCommand.TogglePanelLock))
-    }
+    fun togglePanelLock() = sendNav(NavCommand.TogglePanelLock)
 
-    fun toggleDrawer() {
-        eventChannel.trySend(ControllerEvent.Nav(NavCommand.ToggleDrawer))
-    }
+    fun toggleDrawer() = sendNav(NavCommand.ToggleDrawer)
 
     fun updateConstraints(constraints: InputConstraints, restarting: Boolean = false) {
         eventChannel.trySend(ControllerEvent.ConstraintsChanged(constraints, restarting))
@@ -169,13 +146,19 @@ class KeyboardController(
     }
 
     fun setLanguageMemoryKey(key: String?) {
-        eventChannel.trySend(
-            ControllerEvent.HostStateChanged(memoryKeyUpdate = true, languageMemoryKey = key)
-        )
+        eventChannel.trySend(ControllerEvent.HostStateChanged(memoryKeyUpdate = true, languageMemoryKey = key))
     }
 
     fun selectCandidate(indexOnPage: Int) {
         eventChannel.trySend(ControllerEvent.SelectCandidate(indexOnPage))
+    }
+
+    fun selectWindowCandidate(globalIndex: Int) {
+        eventChannel.trySend(ControllerEvent.SelectWindowCandidate(globalIndex))
+    }
+
+    fun loadMoreCandidates() {
+        eventChannel.trySend(ControllerEvent.LoadMoreCandidates)
     }
 
     fun selectSyllable(index: Int) {
@@ -198,9 +181,7 @@ class KeyboardController(
         eventChannel.trySend(ControllerEvent.HostStateChanged(isOverlay = isOverlay))
     }
 
-    fun setIncludeNumberRow(enabled: Boolean) {
-        eventChannel.trySend(ControllerEvent.Nav(NavCommand.SetNumberRow(enabled)))
-    }
+    fun setIncludeNumberRow(enabled: Boolean) = sendNav(NavCommand.SetNumberRow(enabled))
 
     fun dismissEngineError() {
         eventChannel.trySend(ControllerEvent.DismissEngineError)
@@ -213,6 +194,10 @@ class KeyboardController(
     fun close() {
         eventChannel.close()
         actorJob.cancel()
+    }
+
+    private fun sendNav(command: NavCommand) {
+        eventChannel.trySend(ControllerEvent.Nav(command))
     }
 
     @Suppress("TooGenericExceptionCaught")
@@ -255,6 +240,8 @@ class KeyboardController(
     private fun isEngineInputEvent(event: ControllerEvent): Boolean = when (event) {
         is ControllerEvent.Action,
         is ControllerEvent.SelectCandidate,
+        is ControllerEvent.SelectWindowCandidate,
+        is ControllerEvent.LoadMoreCandidates,
         is ControllerEvent.SelectSyllable,
         is ControllerEvent.Page,
         is ControllerEvent.ExtensionButton -> true
@@ -266,6 +253,8 @@ class KeyboardController(
             is ControllerEvent.Action -> handleKeyAction(engine, event.action)
             is ControllerEvent.Nav -> handleNavCommand(engine, event.command)
             is ControllerEvent.SelectCandidate -> handleSelectCandidate(engine, event.indexOnPage)
+            is ControllerEvent.SelectWindowCandidate -> handleSelectWindowCandidate(engine, event.globalIndex)
+            is ControllerEvent.LoadMoreCandidates -> if (candidateWindow.loadMore(engine)) publishState(engine)
             is ControllerEvent.SelectSyllable -> handleSelectSyllable(engine, event.index)
             is ControllerEvent.Page -> if (engine.page(event.forward)) publishState(engine)
             is ControllerEvent.ExtensionButton -> handleExtensionButton(engine, event.button)
@@ -446,6 +435,7 @@ class KeyboardController(
     private suspend fun handleKeyAction(engine: InputEngine, action: KeyAction) {
         when (action) {
             is KeyAction.Text -> handleDirectText(engine, action.text)
+            is KeyAction.CommitPanelSymbol -> handleDirectText(engine, action.text, keepPanelOpen = action.keepOpen)
             is KeyAction.Code -> withSink { it.sendKey(action.keyCode, action.metaState) }
             is KeyAction.Engine -> {
                 sinkDispatcher.dispatchEngineKey(engine, EngineKeyEvent(action.keysym, action.mask))
@@ -520,12 +510,12 @@ class KeyboardController(
         }
     }
 
-    private suspend fun handleDirectText(engine: InputEngine, text: String) {
+    private suspend fun handleDirectText(engine: InputEngine, text: String, keepPanelOpen: Boolean = false) {
         val beforeDerived = currentDerived()
         sinkDispatcher.flushComposition(engine)
         withSink { it.commitText(text) }
         if (beforeDerived.panel != KeyboardPanel.PRIMARY) {
-            if (!beforeDerived.panelLocked) {
+            if (!keepPanelOpen && !beforeDerived.panelLocked) {
                 session = KeyboardNavReducer.closePanel(prefs, session, constraints).session
             }
         } else if (beforeDerived.effectiveLanguage == Language.ENGLISH) {
@@ -536,6 +526,16 @@ class KeyboardController(
 
     private suspend fun handleSelectCandidate(engine: InputEngine, indexOnPage: Int) {
         val result = engine.selectCandidate(indexOnPage)
+        val snap = engine.state.value
+        candidateWindow.syncWithSnapshot(snap, forceReset = true)
+        if (result !is KeyProcessResult.PassThrough) {
+            sinkDispatcher.applyEngineResult(result, snap)
+        }
+        publishState(engine)
+    }
+
+    private suspend fun handleSelectWindowCandidate(engine: InputEngine, globalIndex: Int) {
+        val result = candidateWindow.selectWindowCandidate(engine, globalIndex)
         val snap = engine.state.value
         if (result !is KeyProcessResult.PassThrough) {
             sinkDispatcher.applyEngineResult(result, snap)
@@ -588,7 +588,9 @@ class KeyboardController(
         deriveKeyboardState(prefs, session, constraints, activeSchemaIds)
 
     private fun publishState(engine: InputEngine) {
-        _uiState.value = buildUiState(isEngineReady = true, snapshot = engine.state.value)
+        val snap = engine.state.value
+        candidateWindow.syncWithSnapshot(snap)
+        _uiState.value = buildUiState(isEngineReady = true, snapshot = snap)
     }
 
     private fun buildUiState(isEngineReady: Boolean, snapshot: EngineSnapshot): KeyboardUiState {
@@ -597,7 +599,7 @@ class KeyboardController(
             isEngineReady = isEngineReady,
             engineIssue = engineIssue,
             snapshot = snapshot,
-            activeLayout = resolveKeyboardLayout(derived),
+            activeLayout = resolveKeyboardLayout(derived, prefs, isComposing = snapshot.isComposing),
             shifted = derived.shifted,
             includeNumberRow = derived.includeNumberRow,
             heightFraction = heightFraction,
@@ -606,7 +608,9 @@ class KeyboardController(
             prefs = prefs,
             session = session,
             constraints = constraints,
-            derived = derived
+            derived = derived,
+            windowCandidates = candidateWindow.items,
+            hasMoreWindowCandidates = candidateWindow.hasMore
         )
     }
 

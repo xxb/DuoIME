@@ -39,6 +39,19 @@ data class CandidateItem(
 )
 
 /**
+ * Multi-page accumulated candidate item exposed for smooth horizontal scrolling in `CandidateBar`,
+ * preserving the backing [pageIndex] and [indexOnPage] needed to step [dev.duoime.core.engine.InputEngine]
+ * before selection.
+ */
+data class WindowCandidateItem(
+    val globalIndex: Int,
+    val pageIndex: Int,
+    val indexOnPage: Int,
+    val text: String,
+    val comment: String? = null
+)
+
+/**
  * Immutable engine UI snapshot observed by `:keyboard-ui` and `:duoime-embed`.
  *
  * @property preedit Raw segmented input displayed in the candidate bar (for example, `"ni'hao"`).

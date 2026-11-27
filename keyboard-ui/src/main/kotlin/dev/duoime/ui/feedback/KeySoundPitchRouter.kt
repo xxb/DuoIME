@@ -357,13 +357,21 @@ internal object KeySoundPitchRouter {
         key.zone == FeedbackZone.SPACE || key.action is KeyAction.Space -> 0.94f
         key.zone == FeedbackZone.BACKSPACE || key.action is KeyAction.Backspace -> 0.89f
         key.zone == FeedbackZone.CANDIDATE -> 1.04f
-        key.action is KeyAction.SwitchMode ||
-            key.action is KeyAction.ToggleLanguage ||
-            key.action is KeyAction.SelectChineseScheme ||
-            key.action is KeyAction.OpenPanel ||
-            key.action is KeyAction.ClosePanel -> 1.06f
+        isNavigationModifierAction(key.action) -> 1.06f
         key.zone == FeedbackZone.TOOLBAR -> 1.02f
         else -> 1.0f
+    }
+
+    private fun isNavigationModifierAction(action: KeyAction): Boolean = when (action) {
+        is KeyAction.SwitchMode,
+        is KeyAction.ToggleLanguage,
+        is KeyAction.SelectChineseScheme,
+        is KeyAction.OpenPanel,
+        is KeyAction.ClosePanel,
+        is KeyAction.ToggleDrawer,
+        is KeyAction.TogglePanelLock,
+        is KeyAction.ClearPreedit -> true
+        else -> false
     }
 
     private fun resolveKeyDegreeIndex(key: FeedbackKey, scale: KeyMusicalScale): Int {
@@ -389,6 +397,7 @@ internal object KeySoundPitchRouter {
     private fun extractPayload(key: FeedbackKey): String = when (val action = key.action) {
         is KeyAction.Engine -> KeyCodes.charForKeysym(action.keysym)?.toString() ?: key.label
         is KeyAction.Text -> action.text.ifEmpty { key.label }
+        is KeyAction.CommitPanelSymbol -> action.text.ifEmpty { key.label }
         else -> key.label
     }
 

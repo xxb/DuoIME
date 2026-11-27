@@ -19,6 +19,7 @@ object KeyCodes {
 
     const val KEYSYM_NO_SYMBOL: Int = 0
     const val KEYSYM_SPACE: Int = 0x0020
+    const val KEYSYM_APOSTROPHE: Int = 0x0027
     const val KEYSYM_BACKSPACE: Int = 0xff08
     const val KEYSYM_TAB: Int = 0xff09
     const val KEYSYM_RETURN: Int = 0xff0d
