@@ -4,6 +4,11 @@ package dev.duoime.app.settings
 
 import android.content.Context
 import android.content.SharedPreferences
+import dev.duoime.core.model.ChineseScheme
+import dev.duoime.core.model.ChineseVariant
+import dev.duoime.core.model.KeyboardPrefs
+import dev.duoime.core.model.Language
+import dev.duoime.core.model.migrateLegacyInputMode
 import dev.duoime.core.policy.DisplayPlacementPolicy
 import dev.duoime.ui.feedback.KeyFeedbackOptions
 import dev.duoime.ui.feedback.KeySoundStyle
@@ -16,6 +21,9 @@ import kotlin.math.roundToInt
 data class DuoImeSettings(
     val darkTheme: Boolean = true,
     val includeNumberRow: Boolean = false,
+    val preferredLanguage: Language = Language.CHINESE,
+    val chineseScheme: ChineseScheme = ChineseScheme.PINYIN_26,
+    val chineseVariant: ChineseVariant = ChineseVariant.SIMPLIFIED,
     val alwaysIncognito: Boolean = false,
     val heightFraction: Float = DisplayPlacementPolicy.DEFAULT_HEIGHT_FRACTION,
     val swapToSameScreen: Boolean = false,
@@ -29,6 +37,13 @@ data class DuoImeSettings(
     val soundVolume: Float = KeyFeedbackOptions.DEFAULT_SOUND_VOLUME,
     val followSystemRingerMode: Boolean = false
 ) {
+    fun toKeyboardPrefs(): KeyboardPrefs = KeyboardPrefs(
+        language = preferredLanguage,
+        chineseScheme = chineseScheme,
+        variant = chineseVariant,
+        includeNumberRow = includeNumberRow
+    )
+
     fun toFeedbackOptions(): KeyFeedbackOptions = KeyFeedbackOptions(
         hapticEnabled = hapticEnabled,
         hapticStrength = KeyFeedbackOptions.clampHapticStrength(hapticStrength),
@@ -58,9 +73,12 @@ internal fun resolveLiveSettingsAction(previous: DuoImeSettings, updated: DuoIme
         else -> LiveSettingsPlacementAction.NONE
     }
 
-class DuoImePreferences(context: Context) {
-    private val prefs: SharedPreferences =
+class DuoImePreferences internal constructor(
+    private val prefs: SharedPreferences
+) {
+    constructor(context: Context) : this(
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    )
 
     fun load(): DuoImeSettings {
         val rawPeerId = prefs.getInt(KEY_PAIRED_PEER_DISPLAY_ID, NO_PAIRED_DISPLAY)
@@ -69,9 +87,19 @@ class DuoImePreferences(context: Context) {
             ?.filter { it.isNotEmpty() }
             ?.toSet()
             .orEmpty()
+        val keyboardPrefs = resolvePersistedKeyboardPrefs(
+            rawLanguage = prefs.getString(KEY_PREFERRED_LANGUAGE, null),
+            rawScheme = prefs.getString(KEY_CHINESE_SCHEME, null),
+            rawVariant = prefs.getString(KEY_CHINESE_VARIANT, null),
+            rawLegacyInputMode = prefs.getString(KEY_LEGACY_INPUT_MODE, null),
+            includeNumberRow = prefs.getBoolean(KEY_NUMBER_ROW, false)
+        )
         return DuoImeSettings(
             darkTheme = prefs.getBoolean(KEY_DARK_THEME, true),
-            includeNumberRow = prefs.getBoolean(KEY_NUMBER_ROW, false),
+            includeNumberRow = keyboardPrefs.includeNumberRow,
+            preferredLanguage = keyboardPrefs.language,
+            chineseScheme = keyboardPrefs.chineseScheme,
+            chineseVariant = keyboardPrefs.variant,
             alwaysIncognito = prefs.getBoolean(KEY_ALWAYS_INCOGNITO, false),
             heightFraction = DisplayPlacementPolicy.clampHeightFraction(
                 prefs.getFloat(KEY_HEIGHT_FRACTION, DisplayPlacementPolicy.DEFAULT_HEIGHT_FRACTION)
@@ -101,6 +129,10 @@ class DuoImePreferences(context: Context) {
         prefs.edit()
             .putBoolean(KEY_DARK_THEME, settings.darkTheme)
             .putBoolean(KEY_NUMBER_ROW, settings.includeNumberRow)
+            .putString(KEY_PREFERRED_LANGUAGE, settings.preferredLanguage.name)
+            .putString(KEY_CHINESE_SCHEME, settings.chineseScheme.name)
+            .putString(KEY_CHINESE_VARIANT, settings.chineseVariant.name)
+            .remove(KEY_LEGACY_INPUT_MODE)
             .putBoolean(KEY_ALWAYS_INCOGNITO, settings.alwaysIncognito)
             .putFloat(KEY_HEIGHT_FRACTION, DisplayPlacementPolicy.clampHeightFraction(settings.heightFraction))
             .putBoolean(KEY_SWAP_TO_SAME_SCREEN, settings.swapToSameScreen)
@@ -114,6 +146,21 @@ class DuoImePreferences(context: Context) {
             .putFloat(KEY_SOUND_VOLUME, KeyFeedbackOptions.clampSoundVolume(settings.soundVolume))
             .putBoolean(KEY_FOLLOW_SYSTEM_RINGER_MODE, settings.followSystemRingerMode)
             .apply()
+    }
+
+    fun updateKeyboardPrefs(keyboardPrefs: KeyboardPrefs): DuoImeSettings {
+        val current = load()
+        val updated = current.copy(
+            preferredLanguage = keyboardPrefs.language,
+            chineseScheme = keyboardPrefs.chineseScheme,
+            chineseVariant = keyboardPrefs.variant,
+            includeNumberRow = keyboardPrefs.includeNumberRow
+        )
+        if (updated == current && !prefs.contains(KEY_LEGACY_INPUT_MODE)) {
+            return current
+        }
+        save(updated)
+        return updated
     }
 
     fun updateHeightFraction(fraction: Float): DuoImeSettings {
@@ -149,6 +196,10 @@ class DuoImePreferences(context: Context) {
         private const val PREFS_NAME = "duoime_settings"
         private const val KEY_DARK_THEME = "dark_theme"
         private const val KEY_NUMBER_ROW = "include_number_row"
+        internal const val KEY_PREFERRED_LANGUAGE = "preferred_language"
+        internal const val KEY_CHINESE_SCHEME = "chinese_scheme"
+        internal const val KEY_CHINESE_VARIANT = "chinese_variant"
+        internal const val KEY_LEGACY_INPUT_MODE = "input_mode"
         private const val KEY_ALWAYS_INCOGNITO = "always_incognito"
         private const val KEY_HEIGHT_FRACTION = "height_fraction"
         private const val KEY_SWAP_TO_SAME_SCREEN = "swap_to_same_screen"
@@ -162,6 +213,34 @@ class DuoImePreferences(context: Context) {
         private const val KEY_SOUND_VOLUME = "sound_volume"
         private const val KEY_FOLLOW_SYSTEM_RINGER_MODE = "follow_system_ringer_mode"
         private const val NO_PAIRED_DISPLAY = -1
+
+        /**
+         * Resolves persisted orthogonal [KeyboardPrefs], falling back to [migrateLegacyInputMode]
+         * when upgrading from a legacy `input_mode` preference key.
+         */
+        internal fun resolvePersistedKeyboardPrefs(
+            rawLanguage: String?,
+            rawScheme: String?,
+            rawVariant: String?,
+            rawLegacyInputMode: String?,
+            includeNumberRow: Boolean
+        ): KeyboardPrefs {
+            val migrated = if (rawLegacyInputMode != null) migrateLegacyInputMode(rawLegacyInputMode) else null
+            val language = parseEnumOrNull<Language>(rawLanguage) ?: migrated?.first ?: Language.CHINESE
+            val scheme = parseEnumOrNull<ChineseScheme>(rawScheme) ?: migrated?.second ?: ChineseScheme.PINYIN_26
+            val variant = parseEnumOrNull<ChineseVariant>(rawVariant) ?: ChineseVariant.SIMPLIFIED
+            return KeyboardPrefs(
+                language = language,
+                chineseScheme = scheme,
+                variant = variant,
+                includeNumberRow = includeNumberRow
+            )
+        }
+
+        private inline fun <reified T : Enum<T>> parseEnumOrNull(raw: String?): T? {
+            val normalized = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+            return enumValues<T>().firstOrNull { it.name.equals(normalized, ignoreCase = true) }
+        }
 
         /**
          * Fraction of the single-screen window height allocated to the Inline keyboard at 100%

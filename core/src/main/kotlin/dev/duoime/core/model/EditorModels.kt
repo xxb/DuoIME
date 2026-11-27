@@ -67,13 +67,50 @@ data class EditorContext(
 }
 
 /**
+ * Merges a platform-derived [FieldKind] with an optional host-declared [ExtensionConfig.fieldKind]
+ * monotonically and fail-closed:
+ * - `PASSWORD` always stays `PASSWORD` (and any field may tighten into `PASSWORD`).
+ * - Authoritative platform numeric/phone/datetime/terminal fields cannot be weakened by extension hints.
+ * - Platform `TEXT` may be specialized by any [extensionKind]; `URI`/`EMAIL` may tighten into
+ *   `TERMINAL`, numeric kinds, or `PASSWORD`, but never relax back to `TEXT`.
+ */
+fun mergeFieldKindConstraint(
+    platformKind: FieldKind,
+    extensionKind: FieldKind?,
+    platformIsPassword: Boolean = false
+): FieldKind {
+    if (platformIsPassword || platformKind == FieldKind.PASSWORD || extensionKind == FieldKind.PASSWORD) {
+        return FieldKind.PASSWORD
+    }
+    if (extensionKind == null) return platformKind
+    return when (platformKind) {
+        FieldKind.TEXT -> extensionKind
+        FieldKind.URI, FieldKind.EMAIL -> when {
+            extensionKind == FieldKind.TERMINAL || extensionKind.isNumericFieldKind() -> extensionKind
+            else -> platformKind
+        }
+        FieldKind.NUMBER,
+        FieldKind.DECIMAL,
+        FieldKind.SIGNED_NUMBER,
+        FieldKind.PHONE,
+        FieldKind.DATETIME,
+        FieldKind.TERMINAL,
+        FieldKind.PASSWORD -> platformKind
+    }
+}
+
+/**
  * Converts [EditorContext] into fail-closed [InputConstraints] for the orthogonal navigation state
  * machine. Security constraints (`PASSWORD`, `incognito`, `IME_FLAG_FORCE_ASCII`, `TERMINAL`
  * no-learning) can only tighten and can never be weakened by host [ExtensionConfig] declarations.
  */
 fun EditorContext.toInputConstraints(): InputConstraints {
     val ext = extension
-    val effectiveKind = resolveEffectiveFieldKind(ext)
+    val effectiveKind = mergeFieldKindConstraint(
+        platformKind = fieldKind,
+        extensionKind = ext?.fieldKind,
+        platformIsPassword = isPassword
+    )
     val forceAscii = (imeOptions and EditorContext.IME_FLAG_FORCE_ASCII) != 0
     val baseNoLearning = incognito || isPassword || ext?.noLearning == true
     val defaultSymbolTab = ext?.defaultSymbolTab
@@ -90,12 +127,6 @@ fun EditorContext.toInputConstraints(): InputConstraints {
         langKeyPlacementOverride = ext?.langKeyPlacement,
         candidatePagingOverride = ext?.candidatePaging
     )
-}
-
-private fun EditorContext.resolveEffectiveFieldKind(ext: ExtensionConfig?): FieldKind = when {
-    isPassword || fieldKind == FieldKind.PASSWORD -> FieldKind.PASSWORD
-    ext?.fieldKind != null -> ext.fieldKind
-    else -> fieldKind
 }
 
 private fun FieldKind.isNumericFieldKind(): Boolean = when (this) {

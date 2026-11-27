@@ -145,18 +145,19 @@ class DuoImeService : InputMethodService() {
                 engineDispatcher = Dispatchers.Default,
                 sinkDispatcher = Dispatchers.Main.immediate,
                 initialHeightFraction = initialSettings.heightFraction,
-                initialOverlayMode = false
+                initialOverlayMode = false,
+                initialPrefs = initialSettings.toKeyboardPrefs()
             ),
             hostCallbacks = KeyboardHostCallbacks(
                 onSwapScreenRequested = { handleSwapScreenRequested() },
                 onDismissRequested = { hideAllKeyboardSurfaces() },
                 onSwitchImeRequested = { showImePicker() },
                 onHeightFractionChanged = { fraction -> handleHeightChanged(fraction) },
+                onPrefsChanged = { updatedPrefs -> preferences.updateKeyboardPrefs(updatedPrefs) },
                 onFeedbackKey = { key -> feedbackController.onKeyPress(key, cachedFeedbackOptions) },
                 onRepeatFeedbackKey = { key -> feedbackController.onKeyRepeat(key, cachedFeedbackOptions) }
             )
         )
-        controller.setIncludeNumberRow(initialSettings.includeNumberRow)
 
         val overlaySurface = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             OverlayHost(
@@ -556,10 +557,14 @@ class DuoImeService : InputMethodService() {
     }
 
     private fun refreshSettings() {
+        val previous = settingsFlow.value
         val latest = preferences.load()
         settingsFlow.value = latest
         cachedFeedbackOptions = latest.toFeedbackOptions()
-        controller.setIncludeNumberRow(latest.includeNumberRow)
+        val latestPrefs = latest.toKeyboardPrefs()
+        if (latestPrefs != previous.toKeyboardPrefs()) {
+            controller.updatePrefs(latestPrefs)
+        }
     }
 
     private fun applyLiveSettings(updated: DuoImeSettings) {
@@ -568,8 +573,9 @@ class DuoImeService : InputMethodService() {
         if (updated == previous) return
         settingsFlow.value = updated
         cachedFeedbackOptions = updated.toFeedbackOptions()
-        if (updated.includeNumberRow != previous.includeNumberRow) {
-            controller.setIncludeNumberRow(updated.includeNumberRow)
+        val updatedPrefs = updated.toKeyboardPrefs()
+        if (updatedPrefs != previous.toKeyboardPrefs()) {
+            controller.updatePrefs(updatedPrefs)
         }
         if (updated.alwaysIncognito != previous.alwaysIncognito) {
             applyEditorInfo(lastEditorInfo, restarting = true)

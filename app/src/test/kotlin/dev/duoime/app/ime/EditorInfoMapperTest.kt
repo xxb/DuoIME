@@ -248,4 +248,42 @@ class EditorInfoMapperTest {
         assertEquals(KeyboardPanel.NUMBER, numConstraints.forcedPanel)
         assertFalse(numConstraints.allowChinese)
     }
+
+    @Test
+    fun extensionTextHintCannotRelaxPlatformNumericPhoneDatetimeOrTerminalFields() {
+        val relaxJson = """{"version":1,"fieldKind":"text","initialLanguage":"chinese","noLearning":false}"""
+        val numericPlatformInputs = listOf(
+            EditorInfoMapper.TYPE_CLASS_NUMBER to FieldKind.NUMBER,
+            (EditorInfoMapper.TYPE_CLASS_NUMBER or EditorInfoMapper.TYPE_NUMBER_FLAG_DECIMAL) to FieldKind.DECIMAL,
+            (EditorInfoMapper.TYPE_CLASS_NUMBER or EditorInfoMapper.TYPE_NUMBER_FLAG_SIGNED) to
+                FieldKind.SIGNED_NUMBER,
+            EditorInfoMapper.TYPE_CLASS_PHONE to FieldKind.PHONE,
+            EditorInfoMapper.TYPE_CLASS_DATETIME to FieldKind.DATETIME
+        )
+        numericPlatformInputs.forEach { (inputType, expectedKind) ->
+            val ctx = EditorInfoMapper.buildEditorContext(
+                packageName = "dev.example.form",
+                inputType = inputType,
+                imeOptions = 0,
+                rawExtensionJson = relaxJson
+            )
+            assertEquals("Platform $expectedKind must not relax to TEXT", expectedKind, ctx.fieldKind)
+            val constraints = ctx.toInputConstraints()
+            assertEquals(expectedKind, constraints.kind)
+            assertFalse(constraints.allowChinese)
+            assertEquals(KeyboardPanel.NUMBER, constraints.forcedPanel)
+        }
+
+        val terminalCtx = EditorInfoMapper.buildEditorContext(
+            packageName = "dev.example.term",
+            inputType = EditorInfoMapper.TYPE_NULL,
+            imeOptions = 0,
+            rawExtensionJson = relaxJson
+        )
+        assertEquals(FieldKind.TERMINAL, terminalCtx.fieldKind)
+        val termConstraints = terminalCtx.toInputConstraints()
+        assertEquals(FieldKind.TERMINAL, termConstraints.kind)
+        assertTrue(termConstraints.noLearning)
+        assertEquals(SymbolTabId.CLI, termConstraints.defaultSymbolTab)
+    }
 }

@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -69,7 +70,8 @@ data class DuoToolbarState(
     val isOverlayMode: Boolean,
     val extensionButtons: List<ExtensionToolbarButton> = emptyList(),
     val engineIssueTag: String? = null,
-    val activePanel: KeyboardPanel = KeyboardPanel.PRIMARY
+    val activePanel: KeyboardPanel = KeyboardPanel.PRIMARY,
+    val canToggleLanguage: Boolean = true
 )
 
 /**
@@ -120,46 +122,7 @@ fun DuoToolbar(
                     )
                 }
             }
-            item(key = "mode_26") {
-                ToolbarChip(
-                    label = "26键",
-                    selected = state.activePanel == KeyboardPanel.PRIMARY && state.activeMode == InputMode.PINYIN_26,
-                    colors = colors,
-                    onClick = { onAction(KeyAction.SwitchMode(InputMode.PINYIN_26)) }
-                )
-            }
-            item(key = "mode_t9") {
-                ToolbarChip(
-                    label = "九键",
-                    selected = state.activePanel == KeyboardPanel.PRIMARY && state.activeMode == InputMode.PINYIN_T9,
-                    colors = colors,
-                    onClick = { onAction(KeyAction.SwitchMode(InputMode.PINYIN_T9)) }
-                )
-            }
-            item(key = "mode_en") {
-                ToolbarChip(
-                    label = "EN",
-                    selected = state.activePanel == KeyboardPanel.PRIMARY && state.activeMode == InputMode.ENGLISH,
-                    colors = colors,
-                    onClick = { onAction(KeyAction.SwitchMode(InputMode.ENGLISH)) }
-                )
-            }
-            item(key = "mode_sym") {
-                ToolbarChip(
-                    label = "?123",
-                    selected = state.activePanel == KeyboardPanel.SYMBOL,
-                    colors = colors,
-                    onClick = { onAction(KeyAction.OpenPanel(KeyboardPanel.SYMBOL)) }
-                )
-            }
-            item(key = "variant") {
-                ToolbarChip(
-                    label = if (state.variant == ChineseVariant.TRADITIONAL) "繁" else "简",
-                    selected = state.variant == ChineseVariant.TRADITIONAL,
-                    colors = colors,
-                    onClick = { onAction(KeyAction.SwitchVariant) }
-                )
-            }
+            modeAndVariantToolbarItems(state = state, colors = colors, onAction = onAction)
             item(key = "swap") {
                 ToolbarChip(
                     label = if (state.isOverlayMode) "换屏●" else "换屏",
@@ -233,18 +196,79 @@ private fun EngineIssueChip(tag: String, colors: DuoColorTokens, onDismiss: () -
     }
 }
 
+private fun LazyListScope.modeAndVariantToolbarItems(
+    state: DuoToolbarState,
+    colors: DuoColorTokens,
+    onAction: (KeyAction) -> Unit
+) {
+    item(key = "mode_26") {
+        ToolbarChip(
+            label = "26键",
+            selected = state.activePanel == KeyboardPanel.PRIMARY && state.activeMode == InputMode.PINYIN_26,
+            colors = colors,
+            enabled = state.canToggleLanguage,
+            onClick = { onAction(KeyAction.SwitchMode(InputMode.PINYIN_26)) }
+        )
+    }
+    item(key = "mode_t9") {
+        ToolbarChip(
+            label = "九键",
+            selected = state.activePanel == KeyboardPanel.PRIMARY && state.activeMode == InputMode.PINYIN_T9,
+            colors = colors,
+            enabled = state.canToggleLanguage,
+            onClick = { onAction(KeyAction.SwitchMode(InputMode.PINYIN_T9)) }
+        )
+    }
+    item(key = "mode_en") {
+        ToolbarChip(
+            label = "EN",
+            selected = state.activePanel == KeyboardPanel.PRIMARY && state.activeMode == InputMode.ENGLISH,
+            colors = colors,
+            enabled = state.canToggleLanguage,
+            onClick = { onAction(KeyAction.SwitchMode(InputMode.ENGLISH)) }
+        )
+    }
+    item(key = "mode_sym") {
+        ToolbarChip(
+            label = "?123",
+            selected = state.activePanel == KeyboardPanel.SYMBOL,
+            colors = colors,
+            onClick = { onAction(KeyAction.OpenPanel(KeyboardPanel.SYMBOL)) }
+        )
+    }
+    item(key = "variant") {
+        ToolbarChip(
+            label = if (state.variant == ChineseVariant.TRADITIONAL) "繁" else "简",
+            selected = state.variant == ChineseVariant.TRADITIONAL,
+            colors = colors,
+            enabled = state.canToggleLanguage,
+            onClick = { onAction(KeyAction.SwitchVariant) }
+        )
+    }
+}
+
 @Composable
-private fun ToolbarChip(label: String, selected: Boolean, colors: DuoColorTokens, onClick: () -> Unit) {
+private fun ToolbarChip(
+    label: String,
+    selected: Boolean,
+    colors: DuoColorTokens,
+    onClick: () -> Unit,
+    enabled: Boolean = true
+) {
     val fontSizeSp = LocalDuoDimensions.current.toolbarFontSp
-    val bg = if (selected) colors.chipSelectedBackground else colors.chipBackground
-    val fg = if (selected) colors.chipSelectedText else colors.chipText
+    val bg = if (selected && enabled) colors.chipSelectedBackground else colors.chipBackground
+    val fg = when {
+        !enabled -> colors.keySecondaryText
+        selected -> colors.chipSelectedText
+        else -> colors.chipText
+    }
     Box(
         modifier = Modifier
             .defaultMinSize(minWidth = 44.dp)
             .fillMaxHeight()
             .clip(RoundedCornerShape(8.dp))
             .background(bg)
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 10.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -254,7 +278,7 @@ private fun ToolbarChip(label: String, selected: Boolean, colors: DuoColorTokens
             style = TextStyle(
                 color = fg,
                 fontSize = fontSizeSp.sp,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
+                fontWeight = if (selected && enabled) FontWeight.SemiBold else FontWeight.Medium
             )
         )
     }

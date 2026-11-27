@@ -95,9 +95,7 @@ class KeyboardController(
             if (initialDerived.activeSchemaId != defaultPrimarySchema) {
                 selectEngineSchemaWithFallback(engine, initialDerived, activeSchemaIds)
             }
-            if (prefs.variant == ChineseVariant.TRADITIONAL) {
-                engine.setOption(EngineOptions.TRADITIONALIZATION, true)
-            }
+            engine.setOption(EngineOptions.TRADITIONALIZATION, prefs.variant == ChineseVariant.TRADITIONAL)
             applyPrivacyOptions(engine, constraints, editorContext)
             publishState(engine)
             for (event in eventChannel) {
@@ -345,10 +343,10 @@ class KeyboardController(
 
     private suspend fun handlePrefsChanged(engine: InputEngine, updatedPrefs: KeyboardPrefs) {
         val before = currentDerived()
-        val variantChanged = updatedPrefs.variant != prefs.variant
+        val previousVariant = prefs.variant
         prefs = updatedPrefs
         val after = currentDerived()
-        if (variantChanged) {
+        if (updatedPrefs.variant != previousVariant || engine.state.value.variant != updatedPrefs.variant) {
             engine.setOption(EngineOptions.TRADITIONALIZATION, prefs.variant == ChineseVariant.TRADITIONAL)
         }
         syncSchemaWithComposingCleanup(engine, before, after)
@@ -386,8 +384,10 @@ class KeyboardController(
                 KeyboardNavReducer.selectSymbolTab(p, s, command.tab)
             }
             is NavCommand.SetNumberRow -> {
+                val previousPrefs = prefs
                 prefs = prefs.copy(includeNumberRow = command.enabled)
                 publishState(engine)
+                notifyPrefsChangedIfMutated(previousPrefs)
             }
         }
     }
@@ -397,6 +397,7 @@ class KeyboardController(
         recordMemory: Boolean,
         transition: (KeyboardPrefs, SessionState, InputConstraints) -> KeyboardNavUpdate
     ) {
+        val previousPrefs = prefs
         val before = currentDerived()
         val updated = transition(prefs, session, constraints)
         prefs = updated.prefs
@@ -408,6 +409,7 @@ class KeyboardController(
             languageMemory.put(resolveMemoryKey(editorContext), after.effectiveLanguage)
         }
         publishState(engine)
+        notifyPrefsChangedIfMutated(previousPrefs)
     }
 
     private suspend fun syncSchemaWithComposingCleanup(
@@ -424,10 +426,21 @@ class KeyboardController(
         syncEngineSchemaIfChanged(engine, after)
     }
 
-    private fun applyVariantChange(engine: InputEngine, variant: ChineseVariant) {
+    private suspend fun applyVariantChange(engine: InputEngine, variant: ChineseVariant) {
+        val previousPrefs = prefs
         prefs = prefs.copy(variant = variant)
         engine.setOption(EngineOptions.TRADITIONALIZATION, variant == ChineseVariant.TRADITIONAL)
         publishState(engine)
+        notifyPrefsChangedIfMutated(previousPrefs)
+    }
+
+    private suspend fun notifyPrefsChangedIfMutated(previousPrefs: KeyboardPrefs) {
+        if (prefs != previousPrefs) {
+            val updated = prefs
+            withContext(config.sinkDispatcher) {
+                hostCallbacks.onPrefsChanged(updated)
+            }
+        }
     }
 
     private suspend fun handleKeyAction(engine: InputEngine, action: KeyAction) {

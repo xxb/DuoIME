@@ -236,4 +236,50 @@ class KeyboardNavStateTest {
         assertEquals(SymbolTabId.COMMON, fresh.session.symbolTab)
         assertEquals(Language.ENGLISH, fresh.session.languageOverride)
     }
+
+    @Test
+    fun monotonicFieldKindMergePreventsRelaxingAuthoritativePlatformConstraints() {
+        val textHint = ExtensionConfig(fieldKind = FieldKind.TEXT)
+
+        // Numeric / phone / datetime fields cannot be relaxed to TEXT
+        val numericKinds = listOf(
+            FieldKind.NUMBER,
+            FieldKind.DECIMAL,
+            FieldKind.SIGNED_NUMBER,
+            FieldKind.PHONE,
+            FieldKind.DATETIME
+        )
+        numericKinds.forEach { kind ->
+            assertEquals(kind, mergeFieldKindConstraint(kind, FieldKind.TEXT))
+            val c = EditorContext(fieldKind = kind, extension = textHint).toInputConstraints()
+            assertEquals(kind, c.kind)
+            assertFalse("$kind must keep allowChinese=false", c.allowChinese)
+            assertEquals(KeyboardPanel.NUMBER, c.forcedPanel)
+        }
+
+        // TERMINAL cannot be relaxed to TEXT
+        assertEquals(FieldKind.TERMINAL, mergeFieldKindConstraint(FieldKind.TERMINAL, FieldKind.TEXT))
+        val termConstraints = EditorContext(fieldKind = FieldKind.TERMINAL, extension = textHint).toInputConstraints()
+        assertEquals(FieldKind.TERMINAL, termConstraints.kind)
+        assertTrue(termConstraints.noLearning)
+        assertEquals(SymbolTabId.CLI, termConstraints.defaultSymbolTab)
+        assertEquals(Language.ENGLISH, termConstraints.initialLanguage)
+
+        // URI & EMAIL cannot relax to TEXT, but may tighten to TERMINAL / numeric / PASSWORD
+        listOf(FieldKind.URI, FieldKind.EMAIL).forEach { kind ->
+            assertEquals(kind, mergeFieldKindConstraint(kind, FieldKind.TEXT))
+            assertEquals(FieldKind.TERMINAL, mergeFieldKindConstraint(kind, FieldKind.TERMINAL))
+            assertEquals(FieldKind.NUMBER, mergeFieldKindConstraint(kind, FieldKind.NUMBER))
+            assertEquals(FieldKind.PASSWORD, mergeFieldKindConstraint(kind, FieldKind.PASSWORD))
+        }
+
+        // Platform TEXT may specialize to any kind; any kind may tighten to PASSWORD
+        assertEquals(FieldKind.TERMINAL, mergeFieldKindConstraint(FieldKind.TEXT, FieldKind.TERMINAL))
+        assertEquals(FieldKind.NUMBER, mergeFieldKindConstraint(FieldKind.TEXT, FieldKind.NUMBER))
+        assertEquals(FieldKind.PASSWORD, mergeFieldKindConstraint(FieldKind.NUMBER, FieldKind.PASSWORD))
+        assertEquals(
+            FieldKind.PASSWORD,
+            mergeFieldKindConstraint(FieldKind.TEXT, FieldKind.TEXT, platformIsPassword = true)
+        )
+    }
 }

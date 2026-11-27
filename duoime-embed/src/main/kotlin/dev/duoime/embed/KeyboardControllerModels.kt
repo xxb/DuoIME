@@ -86,6 +86,7 @@ data class KeyboardHostCallbacks(
     val onSwitchImeRequested: () -> Unit = {},
     val onDismissRequested: () -> Unit = {},
     val onHeightFractionChanged: (Float) -> Unit = {},
+    val onPrefsChanged: (KeyboardPrefs) -> Unit = {},
     val onFeedbackKey: (FeedbackKey) -> Unit = {},
     val onRepeatFeedbackKey: (FeedbackKey) -> Unit = {}
 )

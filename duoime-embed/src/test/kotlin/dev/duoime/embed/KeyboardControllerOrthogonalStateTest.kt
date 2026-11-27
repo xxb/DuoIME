@@ -526,4 +526,89 @@ class KeyboardControllerOrthogonalStateTest {
         assertEquals(ChineseVariant.SIMPLIFIED, stubController.uiState.value.prefs.variant)
         stubController.close()
     }
+
+    @Test
+    fun initialTraditionalizationSyncsUnconditionallyAndUpdatePrefsCorrectsVariantDrift() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val preTraditionalEngine = LiteInputEngine.createDefault(initialVariant = ChineseVariant.TRADITIONAL)
+        val controller = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(
+                engineDispatcher = dispatcher,
+                sinkDispatcher = dispatcher,
+                initialPrefs = KeyboardPrefs(variant = ChineseVariant.SIMPLIFIED)
+            ),
+            engineFactory = { preTraditionalEngine }
+        )
+        advanceUntilIdle()
+
+        // Default SIMPLIFIED prefs must sync pre-configured TRADITIONAL engine down to SIMPLIFIED at init
+        assertEquals(ChineseVariant.SIMPLIFIED, controller.uiState.value.prefs.variant)
+        assertEquals(ChineseVariant.SIMPLIFIED, controller.uiState.value.snapshot.variant)
+
+        // First SwitchVariant flips cleanly to TRADITIONAL
+        controller.dispatchKeyAction(KeyAction.SwitchVariant)
+        advanceUntilIdle()
+        assertEquals(ChineseVariant.TRADITIONAL, controller.uiState.value.prefs.variant)
+        assertEquals(ChineseVariant.TRADITIONAL, controller.uiState.value.snapshot.variant)
+
+        // Simulate engine drifting back to TRADITIONAL while prefs are updated to SIMPLIFIED, then
+        // re-syncing even if prefs.variant already equals SIMPLIFIED
+        controller.updatePrefs(controller.uiState.value.prefs.copy(variant = ChineseVariant.SIMPLIFIED))
+        advanceUntilIdle()
+        assertEquals(ChineseVariant.SIMPLIFIED, controller.uiState.value.snapshot.variant)
+
+        preTraditionalEngine.setOption(dev.duoime.core.engine.EngineOptions.TRADITIONALIZATION, true)
+        assertEquals(ChineseVariant.TRADITIONAL, preTraditionalEngine.state.value.variant)
+        controller.updatePrefs(controller.uiState.value.prefs.copy(variant = ChineseVariant.SIMPLIFIED))
+        advanceUntilIdle()
+        assertEquals(ChineseVariant.SIMPLIFIED, controller.uiState.value.snapshot.variant)
+        controller.close()
+    }
+
+    @Test
+    fun onPrefsChangedCallbackFiresOnUserMutationsAndNeverLoopsOnExternalUpdatePrefs() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val persistedPrefs = mutableListOf<KeyboardPrefs>()
+        val controller = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { LiteInputEngine.createDefault() },
+            hostCallbacks = KeyboardHostCallbacks(onPrefsChanged = { persistedPrefs.add(it) })
+        )
+        advanceUntilIdle()
+        assertTrue(persistedPrefs.isEmpty())
+
+        // User mutations fire onPrefsChanged
+        controller.setChineseScheme(ChineseScheme.PINYIN_T9)
+        controller.toggleLanguage()
+        controller.setVariant(ChineseVariant.TRADITIONAL)
+        controller.dispatchKeyAction(KeyAction.ToggleNumberRow)
+        advanceUntilIdle()
+        assertEquals(4, persistedPrefs.size)
+        assertEquals(
+            KeyboardPrefs(
+                language = Language.ENGLISH,
+                chineseScheme = ChineseScheme.PINYIN_T9,
+                variant = ChineseVariant.TRADITIONAL,
+                includeNumberRow = true
+            ),
+            persistedPrefs.last()
+        )
+
+        // External updatePrefs must NOT invoke onPrefsChanged (prevents echo loops)
+        persistedPrefs.clear()
+        controller.updatePrefs(KeyboardPrefs(language = Language.CHINESE, chineseScheme = ChineseScheme.PINYIN_26))
+        advanceUntilIdle()
+        assertTrue("External updatePrefs must not trigger onPrefsChanged", persistedPrefs.isEmpty())
+
+        // Constrained non-text/incognito language toggles do not mutate prefs and do not fire onPrefsChanged
+        controller.updateEditorContext(EditorContext(packageName = "dev.browser", fieldKind = FieldKind.URI))
+        controller.toggleLanguage()
+        controller.updateEditorContext(EditorContext(packageName = "dev.auth", isPassword = true))
+        controller.toggleLanguage()
+        advanceUntilIdle()
+        assertTrue(persistedPrefs.isEmpty())
+        controller.close()
+    }
 }

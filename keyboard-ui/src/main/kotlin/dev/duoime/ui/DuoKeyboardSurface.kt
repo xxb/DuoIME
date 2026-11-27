@@ -44,7 +44,8 @@ data class DuoKeyboardSurfaceState(
     val heightFraction: Float,
     val isOverlayMode: Boolean,
     val extensionButtons: List<ExtensionToolbarButton> = emptyList(),
-    val engineIssueTag: String? = null
+    val engineIssueTag: String? = null,
+    val canToggleLanguage: Boolean = true
 )
 
 /**
@@ -82,7 +83,8 @@ fun DuoKeyboardSurface(state: DuoKeyboardSurfaceState, callbacks: DuoKeyboardCal
         isOverlayMode = state.isOverlayMode,
         extensionButtons = state.extensionButtons,
         engineIssueTag = state.engineIssueTag,
-        activePanel = state.layout.panel
+        activePanel = state.layout.panel,
+        canToggleLanguage = state.canToggleLanguage
     )
     val candidateCallbacks = remember(callbacks) {
         CandidateBarCallbacks(

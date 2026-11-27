@@ -8,6 +8,7 @@ import androidx.core.view.inputmethod.EditorInfoCompat
 import dev.duoime.core.model.EditorContext
 import dev.duoime.core.model.FieldKind
 import dev.duoime.core.model.SinkCapabilities
+import dev.duoime.core.model.mergeFieldKindConstraint
 import dev.duoime.core.protocol.ExtensionConfigParser
 
 /**
@@ -71,14 +72,13 @@ object EditorInfoMapper {
         val noLearningFlag = (imeOptions and IME_FLAG_NO_PERSONALIZED_LEARNING) != 0
         val extension = ExtensionConfigParser.parse(rawExtensionJson)
 
-        // Security fail-closed: PASSWORD can never be weakened into TEXT/TERMINAL by an extension,
-        // and noLearning/incognito can only tighten, never weaken password/incognito.
-        val extFieldKind = extension?.fieldKind
-        val mergedKind = when {
-            basePassword || baseKind == FieldKind.PASSWORD -> FieldKind.PASSWORD
-            extFieldKind != null -> extFieldKind
-            else -> baseKind
-        }
+        // Monotonic fail-closed merge: authoritative platform constraints (PASSWORD, numeric,
+        // phone, datetime, terminal) cannot be weakened by host extension hints.
+        val mergedKind = mergeFieldKindConstraint(
+            platformKind = baseKind,
+            extensionKind = extension?.fieldKind,
+            platformIsPassword = basePassword
+        )
         val effectivePassword = basePassword || mergedKind == FieldKind.PASSWORD
         val extNoLearning = extension?.noLearning == true
         return EditorContext(
