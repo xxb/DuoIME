@@ -26,6 +26,7 @@ import dev.duoime.core.model.LangKeyPlacement
 import dev.duoime.core.model.Language
 import dev.duoime.core.model.SessionState
 import dev.duoime.core.model.SymbolTabId
+import dev.duoime.core.model.ToolbarMode
 import dev.duoime.core.model.deriveKeyboardState
 import dev.duoime.core.model.toInputConstraints
 import dev.duoime.core.policy.DisplayPlacementPolicy
@@ -70,8 +71,9 @@ class KeyboardController(
     private var prefs: KeyboardPrefs = config.initialPrefs
     private var session: SessionState = SessionState()
     private var constraints: InputConstraints = InputConstraints()
-    private var hostLangKeyPlacement: LangKeyPlacement = LangKeyPlacement.GRID
+    private var hostLangKeyPlacement: LangKeyPlacement = LangKeyPlacement.TOOLBAR
     private var hostInitialSymbolTab: SymbolTabId = SymbolTabId.COMMON
+    private var hostToolbarMode: ToolbarMode = ToolbarMode.FULL
     private var languageMemoryKey: String? = config.languageMemoryKey
     private val languageMemory = LanguageMemoryStore()
     private val candidateWindow = CandidateWindowTracker()
@@ -185,10 +187,11 @@ class KeyboardController(
     }
 
     fun updateHostPolicy(
-        langKeyPlacement: LangKeyPlacement = LangKeyPlacement.GRID,
-        initialSymbolTab: SymbolTabId = SymbolTabId.COMMON
+        langKeyPlacement: LangKeyPlacement = LangKeyPlacement.TOOLBAR,
+        initialSymbolTab: SymbolTabId = SymbolTabId.COMMON,
+        toolbarMode: ToolbarMode = ToolbarMode.FULL
     ) {
-        eventChannel.trySend(ControllerEvent.HostPolicyChanged(langKeyPlacement, initialSymbolTab))
+        eventChannel.trySend(ControllerEvent.HostPolicyChanged(langKeyPlacement, initialSymbolTab, toolbarMode))
     }
 
     fun setIncludeNumberRow(enabled: Boolean) = sendNav(NavCommand.SetNumberRow(enabled))
@@ -322,6 +325,7 @@ class KeyboardController(
         val prevTab = hostInitialSymbolTab
         hostLangKeyPlacement = event.langKeyPlacement
         hostInitialSymbolTab = event.initialSymbolTab
+        hostToolbarMode = event.toolbarMode
         if (session.panel != KeyboardPanel.SYMBOL &&
             session.symbolTab == prevTab &&
             editorContext.extension?.defaultSymbolTab == null
@@ -617,7 +621,7 @@ class KeyboardController(
         LanguageMemoryStore.normalizeKey(languageMemoryKey ?: context.packageName)
 
     private fun effectiveConstraints(base: InputConstraints = constraints): InputConstraints =
-        applyHostPolicyDefaults(base, editorContext, hostLangKeyPlacement, hostInitialSymbolTab)
+        applyHostPolicyDefaults(base, editorContext, hostLangKeyPlacement, hostInitialSymbolTab, hostToolbarMode)
 
     private fun currentDerived(): DerivedKeyboardState =
         deriveKeyboardState(prefs, session, effectiveConstraints(), activeSchemaIds)

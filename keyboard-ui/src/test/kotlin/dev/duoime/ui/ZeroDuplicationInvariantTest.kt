@@ -20,6 +20,7 @@ import dev.duoime.core.model.QuickPin
 import dev.duoime.core.model.SessionState
 import dev.duoime.core.model.ToolbarMode
 import dev.duoime.core.model.deriveKeyboardState
+import dev.duoime.core.model.resolveEffectiveLangKeyPlacement
 import dev.duoime.core.model.toInputConstraints
 import dev.duoime.ui.bar.DEFAULT_TOOLBAR_PINS
 import dev.duoime.ui.bar.DuoToolbarMeta
@@ -142,10 +143,6 @@ class ZeroDuplicationInvariantTest {
             fieldKind = fieldKind
         ).toInputConstraints().copy(langKeyPlacementOverride = placement)
         val closedDerived = deriveKeyboardState(prefs, baseSession, constraints)
-        val activeLayout = buildLayoutFor(closedDerived, prefs, placement, isComposing)
-        val bodyGridActions =
-            collectBodyActions(closedDerived, activeLayout, placement, "$language/$scheme/$panel/$fieldKind/$placement")
-
         val snapshot = EngineSnapshot(
             mode = closedDerived.activeMode,
             variant = prefs.variant,
@@ -153,13 +150,33 @@ class ZeroDuplicationInvariantTest {
         )
 
         var checked = 0
-        for (drawerOpen in listOf(false, true)) {
-            val derived = if (drawerOpen) {
-                deriveKeyboardState(prefs, baseSession.copy(drawerOpen = true), constraints)
-            } else {
-                closedDerived
+        for (toolbarMode in ToolbarMode.entries) {
+            val effectivePlacement = resolveEffectiveLangKeyPlacement(placement, toolbarMode)
+            if (placement == LangKeyPlacement.TOOLBAR) {
+                val expectedPlacement = if (toolbarMode == ToolbarMode.FULL) {
+                    LangKeyPlacement.TOOLBAR
+                } else {
+                    LangKeyPlacement.GRID
+                }
+                assertEquals(
+                    "TOOLBAR placement fallback mismatch for toolbarMode=$toolbarMode",
+                    expectedPlacement,
+                    effectivePlacement
+                )
             }
-            for (toolbarMode in ToolbarMode.entries) {
+            val activeLayout = buildLayoutFor(closedDerived, prefs, effectivePlacement, isComposing)
+            val bodyGridActions = collectBodyActions(
+                derived = closedDerived,
+                layout = activeLayout,
+                placement = effectivePlacement,
+                label = "$language/$scheme/$panel/$fieldKind/$placement/$toolbarMode"
+            )
+            for (drawerOpen in listOf(false, true)) {
+                val derived = if (drawerOpen) {
+                    deriveKeyboardState(prefs, baseSession.copy(drawerOpen = true), constraints)
+                } else {
+                    closedDerived
+                }
                 for (pins in pinConfigs) {
                     for (caps in capabilityCombos) {
                         val surfaceState = DuoKeyboardSurfaceState(
@@ -181,13 +198,14 @@ class ZeroDuplicationInvariantTest {
                             canSwitchIme = caps.canSwitchIme,
                             showDismiss = caps.showDismiss,
                             toolbarPins = pins,
-                            toolbarMode = toolbarMode
+                            toolbarMode = toolbarMode,
+                            langKeyPlacement = effectivePlacement
                         )
                         verifySingleSurfaceState(
                             surfaceState = surfaceState,
                             bodyGridActions = bodyGridActions,
-                            label = "$language/$scheme/$panel/$fieldKind/$placement/comp=$isComposing/" +
-                                "drawer=$drawerOpen/tb=$toolbarMode/pins=$pins/$caps"
+                            label = "$language/$scheme/$panel/$fieldKind/$placement/eff=$effectivePlacement/" +
+                                "comp=$isComposing/drawer=$drawerOpen/tb=$toolbarMode/pins=$pins/$caps"
                         )
                         checked++
                     }
@@ -295,10 +313,10 @@ class ZeroDuplicationInvariantTest {
             .mapNotNull { it.resolveSecondaryAction() }
         if (derived.panel == KeyboardPanel.PRIMARY) {
             val hasToggleLang = primaryActions.any { it == KeyAction.ToggleLanguage }
-            if (placement == LangKeyPlacement.HOST) {
-                assertFalse("HOST placement must omit ToggleLanguage in $label", hasToggleLang)
-            } else {
+            if (placement == LangKeyPlacement.GRID) {
                 assertTrue("GRID placement must include ToggleLanguage in $label", hasToggleLang)
+            } else {
+                assertFalse("$placement placement must omit ToggleLanguage in $label", hasToggleLang)
             }
         }
         return primaryActions + secondaryActions

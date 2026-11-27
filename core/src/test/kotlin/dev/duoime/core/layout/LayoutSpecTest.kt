@@ -10,6 +10,8 @@ import dev.duoime.core.model.KeyboardPanel
 import dev.duoime.core.model.LangKeyPlacement
 import dev.duoime.core.model.Language
 import dev.duoime.core.model.SymbolTabId
+import dev.duoime.core.model.ToolbarMode
+import dev.duoime.core.model.resolveEffectiveLangKeyPlacement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -43,11 +45,13 @@ class LayoutSpecTest {
         assertEquals("。", bottom[4].label)
         assertEquals(KeyAction.Enter, bottom[5].action)
 
-        // HOST placement omits 中/英 and widens Space to 5.1f
-        val hostBottom = BuiltInLayouts.qwerty(langKeyPlacement = LangKeyPlacement.HOST).rows.last().keys
-        assertEquals(5, hostBottom.size)
-        assertTrue(hostBottom.none { it.action == KeyAction.ToggleLanguage })
-        assertEquals(5.1f, hostBottom.first { it.action == KeyAction.Space }.weight, 0.001f)
+        // HOST and TOOLBAR placements both omit 中/英 and widen Space to 5.1f
+        for (placement in listOf(LangKeyPlacement.HOST, LangKeyPlacement.TOOLBAR)) {
+            val wideBottom = BuiltInLayouts.qwerty(langKeyPlacement = placement).rows.last().keys
+            assertEquals(5, wideBottom.size)
+            assertTrue(wideBottom.none { it.action == KeyAction.ToggleLanguage })
+            assertEquals(5.1f, wideBottom.first { it.action == KeyAction.Space }.weight, 0.001f)
+        }
 
         // URI & EMAIL left punctuation + Traditional badge + password disabled lang key
         val uriBottom = BuiltInLayouts.qwerty(
@@ -121,11 +125,34 @@ class LayoutSpecTest {
         assertEquals(KeyAction.ClearPreedit, comp.rows[1].keys.last().action)
         assertNull(comp.rows[3].keys.last().resolveSecondaryAction())
 
-        // HOST placement omits 中/英 and gives [符号 1.0, 123 0.85, 空格 2.15]
-        val hostRow3 = BuiltInLayouts.t9(langKeyPlacement = LangKeyPlacement.HOST).rows[3].keys
-        assertEquals(3, hostRow3.size)
-        assertEquals(0.85f, hostRow3[1].weight, 0.001f)
-        assertEquals(2.15f, hostRow3[2].weight, 0.001f)
+        // HOST and TOOLBAR placements both omit 中/英 and give [符号 1.0, 123 0.85, 空格 2.15]
+        for (placement in listOf(LangKeyPlacement.HOST, LangKeyPlacement.TOOLBAR)) {
+            val wideRow3 = BuiltInLayouts.t9(langKeyPlacement = placement).rows[3].keys
+            assertEquals(3, wideRow3.size)
+            assertTrue(wideRow3.none { it.action == KeyAction.ToggleLanguage })
+            assertEquals(0.85f, wideRow3[1].weight, 0.001f)
+            assertEquals(2.15f, wideRow3[2].weight, 0.001f)
+        }
+    }
+
+    @Test
+    fun resolveEffectiveLangKeyPlacementFallsBackToGridWhenToolbarHidden() {
+        assertEquals(
+            LangKeyPlacement.TOOLBAR,
+            resolveEffectiveLangKeyPlacement(LangKeyPlacement.TOOLBAR, ToolbarMode.FULL)
+        )
+        assertEquals(
+            LangKeyPlacement.GRID,
+            resolveEffectiveLangKeyPlacement(LangKeyPlacement.TOOLBAR, ToolbarMode.CANDIDATE_ONLY)
+        )
+        assertEquals(
+            LangKeyPlacement.GRID,
+            resolveEffectiveLangKeyPlacement(LangKeyPlacement.TOOLBAR, ToolbarMode.NONE)
+        )
+        for (mode in ToolbarMode.entries) {
+            assertEquals(LangKeyPlacement.GRID, resolveEffectiveLangKeyPlacement(LangKeyPlacement.GRID, mode))
+            assertEquals(LangKeyPlacement.HOST, resolveEffectiveLangKeyPlacement(LangKeyPlacement.HOST, mode))
+        }
     }
 
     @Test

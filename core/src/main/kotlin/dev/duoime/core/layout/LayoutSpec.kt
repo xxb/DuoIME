@@ -147,7 +147,7 @@ object BuiltInLayouts {
             if (shifted) append("_shift")
             if (variant == ChineseVariant.TRADITIONAL) append("_trad")
             if (!canToggleLanguage) append("_nolang")
-            if (langKeyPlacement == LangKeyPlacement.HOST) append("_host")
+            append(langPlacementIdSuffix(langKeyPlacement))
             if (fieldKind == FieldKind.URI || fieldKind == FieldKind.EMAIL) {
                 append('_').append(fieldKind.name.lowercase())
             }
@@ -220,7 +220,7 @@ object BuiltInLayouts {
             append(if (isComposing) "comp" else "idle")
             if (variant == ChineseVariant.TRADITIONAL) append("_trad")
             if (!canToggleLanguage) append("_nolang")
-            if (langKeyPlacement == LangKeyPlacement.HOST) append("_host")
+            append(langPlacementIdSuffix(langKeyPlacement))
             if (language == Language.ENGLISH) append("_en")
         }
         return LayoutSpec(
@@ -465,7 +465,7 @@ object BuiltInLayouts {
             else -> "，"
         }
         val rightPunct = if (!englishMode && fieldKind != FieldKind.URI && fieldKind != FieldKind.EMAIL) "。" else "."
-        val spaceWeight = if (langKeyPlacement == LangKeyPlacement.HOST) 5.1f else 3.9f
+        val spaceWeight = if (langKeyPlacement == LangKeyPlacement.GRID) 3.9f else 5.1f
         val language = if (englishMode) Language.ENGLISH else Language.CHINESE
 
         return KeyRowSpec(
@@ -598,6 +598,12 @@ object BuiltInLayouts {
         repeatable = true,
         allowLongPress = false
     )
+
+    private fun langPlacementIdSuffix(placement: LangKeyPlacement): String = when (placement) {
+        LangKeyPlacement.HOST -> "_host"
+        LangKeyPlacement.TOOLBAR -> "_toolbar"
+        LangKeyPlacement.GRID -> ""
+    }
 
     private fun enterKey(weight: Float, rowSpan: Int = 1): KeySpec = KeySpec(
         id = "enter",

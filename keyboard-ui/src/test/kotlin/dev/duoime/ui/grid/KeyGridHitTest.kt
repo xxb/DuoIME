@@ -195,7 +195,7 @@ class KeyGridHitTest {
         val expectedColW = (width - hGap * 4f) / 5f
         val expectedRowH = (height - vGap * 3f) / 4f
 
-        for (placement in listOf(LangKeyPlacement.GRID, LangKeyPlacement.HOST)) {
+        for (placement in LangKeyPlacement.entries) {
             val layout = BuiltInLayouts.t9(langKeyPlacement = placement)
             val hitMap = KeyGridGeometry.computeHitMap(layout, width, height, hGap, vGap)
 

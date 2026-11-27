@@ -75,7 +75,8 @@ enum class CandidatePaging {
  */
 enum class LangKeyPlacement {
     GRID,
-    HOST
+    HOST,
+    TOOLBAR
 }
 
 /**
@@ -86,6 +87,18 @@ enum class ToolbarMode {
     CANDIDATE_ONLY,
     NONE
 }
+
+/**
+ * Resolves the effective [LangKeyPlacement] given the active [ToolbarMode].
+ * When [LangKeyPlacement.TOOLBAR] is requested while [toolbarMode] is not [ToolbarMode.FULL],
+ * falls back safely to [LangKeyPlacement.GRID] so the language toggle remains reachable.
+ */
+fun resolveEffectiveLangKeyPlacement(requested: LangKeyPlacement, toolbarMode: ToolbarMode): LangKeyPlacement =
+    if (requested == LangKeyPlacement.TOOLBAR && toolbarMode != ToolbarMode.FULL) {
+        LangKeyPlacement.GRID
+    } else {
+        requested
+    }
 
 /**
  * Quick-pin actions configurable in the toolbar/drawer.

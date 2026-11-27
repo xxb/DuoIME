@@ -197,6 +197,7 @@ object ExtensionConfigParser {
     private fun parseSoftLangKeyPlacement(element: JsonElement?): LangKeyPlacement? = when (parseSoftString(element)) {
         "grid" -> LangKeyPlacement.GRID
         "host" -> LangKeyPlacement.HOST
+        "toolbar" -> LangKeyPlacement.TOOLBAR
         else -> null
     }
 

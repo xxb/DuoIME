@@ -26,6 +26,8 @@ import dev.duoime.core.model.KeyboardPrefs
 import dev.duoime.core.model.LangKeyPlacement
 import dev.duoime.core.model.Language
 import dev.duoime.core.model.SymbolTabId
+import dev.duoime.core.model.ToolbarMode
+import dev.duoime.core.model.resolveEffectiveLangKeyPlacement
 import dev.duoime.core.protocol.ExtensionToolbarButton
 import kotlinx.coroutines.CancellationException
 
@@ -84,7 +86,8 @@ internal sealed interface ControllerEvent {
 
     data class HostPolicyChanged(
         val langKeyPlacement: LangKeyPlacement,
-        val initialSymbolTab: SymbolTabId
+        val initialSymbolTab: SymbolTabId,
+        val toolbarMode: ToolbarMode = ToolbarMode.FULL
     ) : ControllerEvent
 
     data object DismissEngineError : ControllerEvent
@@ -174,9 +177,11 @@ internal fun applyHostPolicyDefaults(
     base: InputConstraints,
     editorContext: EditorContext,
     hostLangKeyPlacement: LangKeyPlacement,
-    hostInitialSymbolTab: SymbolTabId
+    hostInitialSymbolTab: SymbolTabId,
+    hostToolbarMode: ToolbarMode = ToolbarMode.FULL
 ): InputConstraints {
-    val resolvedPlacement = base.langKeyPlacementOverride ?: hostLangKeyPlacement
+    val requestedPlacement = base.langKeyPlacementOverride ?: hostLangKeyPlacement
+    val resolvedPlacement = resolveEffectiveLangKeyPlacement(requestedPlacement, hostToolbarMode)
     val hasExplicitEditorTab = base.kind == FieldKind.TERMINAL ||
         base.defaultSymbolTab != SymbolTabId.COMMON ||
         editorContext.extension?.defaultSymbolTab != null

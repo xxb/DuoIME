@@ -28,6 +28,7 @@ import dev.duoime.core.model.FeedbackKey
 import dev.duoime.core.model.FieldKind
 import dev.duoime.core.model.KeyAction
 import dev.duoime.core.model.KeyboardPanel
+import dev.duoime.core.model.LangKeyPlacement
 import dev.duoime.core.model.Language
 import dev.duoime.core.model.QuickPin
 import dev.duoime.core.model.SymbolTabId
@@ -81,8 +82,16 @@ data class DuoKeyboardSurfaceState(
     val windowCandidates: List<WindowCandidateItem> = emptyList(),
     val hasMoreWindowCandidates: Boolean = false,
     val toolbarPins: List<QuickPin> = DEFAULT_TOOLBAR_PINS,
-    val toolbarMode: ToolbarMode = ToolbarMode.FULL
+    val toolbarMode: ToolbarMode = ToolbarMode.FULL,
+    val langKeyPlacement: LangKeyPlacement = LangKeyPlacement.TOOLBAR
 )
+
+/**
+ * Pure-JVM locked reference row count for adaptive header sizing so `toolbarHeight`,
+ * `candidateBarHeight`, and the header divider never jump when switching across 5-row QWERTY,
+ * 4-row T9, 5×4 Numpad, Symbol Panel, or Quick Drawer under equal [includeNumberRow].
+ */
+internal fun resolveHeaderReferenceRowCount(includeNumberRow: Boolean): Int = if (includeNumberRow) 5 else 4
 
 /**
  * Pure-JVM resolved header slot visibility for [DuoKeyboardSurface].
@@ -120,7 +129,8 @@ fun DuoKeyboardSurfaceState.toToolbarState(): DuoToolbarState = DuoToolbarState(
     includeNumberRow = includeNumberRow,
     pins = toolbarPins,
     extensionButtons = extensionButtons,
-    engineIssueTag = engineIssueTag
+    engineIssueTag = engineIssueTag,
+    langKeyPlacement = langKeyPlacement
 )
 
 /**
@@ -168,7 +178,7 @@ data class DuoKeyboardCallbacks(
 fun DuoKeyboardSurface(state: DuoKeyboardSurfaceState, callbacks: DuoKeyboardCallbacks, modifier: Modifier = Modifier) {
     val colors = LocalDuoColors.current
     val baseDimensions = LocalDuoDimensions.current
-    val keyRowCount = state.layout.rows.size.coerceAtLeast(1)
+    val keyRowCount = resolveHeaderReferenceRowCount(state.includeNumberRow)
     val toolbarState = state.toToolbarState()
     val candidateCallbacks = remember(callbacks) {
         CandidateBarCallbacks(
@@ -223,7 +233,8 @@ fun DuoKeyboardSurface(state: DuoKeyboardSurfaceState, callbacks: DuoKeyboardCal
                                 state = toolbarState,
                                 onAction = callbacks.onKeyAction,
                                 onExtensionButton = callbacks.onExtensionButton,
-                                onDismissEngineError = callbacks.onDismissEngineError
+                                onDismissEngineError = callbacks.onDismissEngineError,
+                                onKeyPressDown = callbacks.onKeyPressDown
                             )
                             HeaderSlotMode.NONE -> Unit
                         }

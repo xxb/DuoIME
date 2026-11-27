@@ -10,11 +10,19 @@ import dev.duoime.core.layout.BuiltInLayouts
 import dev.duoime.core.layout.LayoutSpec
 import dev.duoime.core.model.CandidateItem
 import dev.duoime.core.model.EngineSnapshot
+import dev.duoime.core.model.FeedbackKey
+import dev.duoime.core.model.FeedbackZone
+import dev.duoime.core.model.KeyAction
 import dev.duoime.core.model.ToolbarMode
 import dev.duoime.core.model.WindowCandidateItem
 import dev.duoime.ui.bar.CandidateBarLayout
 import dev.duoime.ui.bar.resolveScrollTargetIndex
 import dev.duoime.ui.grid.KeyGridGeometry
+import dev.duoime.ui.grid.clearSyllableFeedbackKey
+import dev.duoime.ui.grid.formatT9SyllableLabel
+import dev.duoime.ui.grid.resolveT9SyllableClick
+import dev.duoime.ui.grid.resolveT9SyllableItemHeightDp
+import dev.duoime.ui.grid.syllableFeedbackKey
 import dev.duoime.ui.theme.DuoDarkColors
 import dev.duoime.ui.theme.DuoDefaultDimensions
 import dev.duoime.ui.theme.DuoDimensionTokens
@@ -198,5 +206,105 @@ class DuoKeyboardUiSmokeTest {
         assertEquals(2, resolveScrollTargetIndex(unhighlighted, pageIndex = 1))
         assertEquals(0, resolveScrollTargetIndex(unhighlighted, pageIndex = 0))
         assertEquals(0, resolveScrollTargetIndex(unhighlighted, pageIndex = 5))
+    }
+
+    @Test
+    fun resolveHeaderReferenceRowCountLocksHeaderHeightAcrossQwertyT9AndNumpad() {
+        assertEquals(4, resolveHeaderReferenceRowCount(includeNumberRow = false))
+        assertEquals(5, resolveHeaderReferenceRowCount(includeNumberRow = true))
+
+        val qwerty5 = BuiltInLayouts.qwerty(includeNumberRow = true)
+        val t9 = BuiltInLayouts.t9()
+        val numpad = BuiltInLayouts.numberPad()
+        assertEquals(5, qwerty5.rows.size)
+        assertEquals(4, t9.rows.size)
+        assertEquals(4, numpad.rows.size)
+
+        for (includeNumberRow in listOf(false, true)) {
+            val refRows = resolveHeaderReferenceRowCount(includeNumberRow)
+            for (availableHeightDp in listOf(260f, 360f, 432f, 448f)) {
+                val qwertyDims = resolveAdaptiveDimensions(
+                    availableHeightDp = availableHeightDp,
+                    keyRowCount = refRows,
+                    hasSyllableRail = false
+                )
+                val t9Dims = resolveAdaptiveDimensions(
+                    availableHeightDp = availableHeightDp,
+                    keyRowCount = refRows,
+                    hasSyllableRail = false
+                )
+                val numpadDims = resolveAdaptiveDimensions(
+                    availableHeightDp = availableHeightDp,
+                    keyRowCount = refRows,
+                    hasSyllableRail = false
+                )
+                assertEquals(qwertyDims.toolbarHeight, t9Dims.toolbarHeight)
+                assertEquals(qwertyDims.candidateBarHeight, t9Dims.candidateBarHeight)
+                assertEquals(qwertyDims.toolbarHeight, numpadDims.toolbarHeight)
+                assertEquals(qwertyDims.candidateBarHeight, numpadDims.candidateBarHeight)
+            }
+        }
+    }
+
+    @Test
+    fun t9LeftSyllableRailSizingAndInlineSelectedClearToggleWorkAcrossCounts() {
+        val gapDp = 6f
+        val railHeightDp = 240f
+        val minScrollHeightDp = 56f
+        val expectedThreeRowHeight = (railHeightDp - gapDp * 2f) / 3f
+
+        // 1, 2, and 3 syllables match adjacent 3 rows of T9 digit keys 1:1
+        for (count in listOf(1, 2, 3)) {
+            assertEquals(
+                expectedThreeRowHeight,
+                resolveT9SyllableItemHeightDp(railHeightDp, count, minScrollHeightDp, gapDp),
+                0.001f
+            )
+        }
+
+        // 4 and 8 syllables use 3.45 visible rows (peeking 4th chip) clamped >= minScrollItemHeightDp
+        val expectedScrollHeight = (railHeightDp - gapDp * 3f) / 3.45f
+        for (count in listOf(4, 8)) {
+            val h = resolveT9SyllableItemHeightDp(railHeightDp, count, minScrollHeightDp, gapDp)
+            assertEquals(expectedScrollHeight, h, 0.001f)
+            assertTrue("Expected scroll chip height >= minScrollHeightDp", h >= minScrollHeightDp)
+            assertTrue("4th chip must peek below 3rd row", h * 3f + gapDp * 3f < railHeightDp)
+        }
+
+        // Compact rail clamps scroll item height up to minScrollItemHeightDp
+        assertEquals(
+            minScrollHeightDp,
+            resolveT9SyllableItemHeightDp(150f, 8, minScrollHeightDp, gapDp),
+            0.001f
+        )
+
+        // Selected label formatting ("$syl ×") & large-target toggle callback
+        assertEquals("ni", formatT9SyllableLabel("ni", selected = false))
+        assertEquals("ni ×", formatT9SyllableLabel("ni", selected = true))
+
+        val feedback = mutableListOf<FeedbackKey>()
+        val selections = mutableListOf<Int>()
+        resolveT9SyllableClick(
+            index = 1,
+            syllable = "mi",
+            selected = false,
+            onKeyPressDown = { feedback += it },
+            onSelectSyllable = { selections += it }
+        )
+        assertEquals(listOf(syllableFeedbackKey(1, "mi")), feedback)
+        assertEquals(listOf(1), selections)
+
+        feedback.clear()
+        selections.clear()
+        resolveT9SyllableClick(
+            index = 1,
+            syllable = "mi",
+            selected = true,
+            onKeyPressDown = { feedback += it },
+            onSelectSyllable = { selections += it }
+        )
+        assertEquals(listOf(clearSyllableFeedbackKey()), feedback)
+        assertEquals(listOf(FeedbackKey(KeyAction.SelectSyllable(-1), "×", FeedbackZone.CANDIDATE)), feedback)
+        assertEquals(listOf(-1), selections)
     }
 }

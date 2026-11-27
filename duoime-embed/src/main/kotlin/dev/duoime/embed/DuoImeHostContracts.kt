@@ -18,7 +18,7 @@ import dev.duoime.ui.theme.DuoThemePreset
 data class ChromePolicy(
     val toolbarMode: ToolbarMode = ToolbarMode.FULL,
     val pins: List<QuickPin> = EMBED_DEFAULT_PINS,
-    val langKeyPlacement: LangKeyPlacement = LangKeyPlacement.GRID,
+    val langKeyPlacement: LangKeyPlacement = LangKeyPlacement.TOOLBAR,
     val candidatePaging: CandidatePaging? = null,
     val themePreset: DuoThemePreset = DuoThemePreset.DARK,
     val initialSymbolTab: SymbolTabId = SymbolTabId.COMMON

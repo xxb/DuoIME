@@ -14,6 +14,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import dev.duoime.core.engine.InputSink
 import dev.duoime.core.model.KeyAction
+import dev.duoime.core.model.resolveEffectiveLangKeyPlacement
 import dev.duoime.engine.lite.LiteEngineMetadata
 import dev.duoime.ui.DuoKeyboardCallbacks
 import dev.duoime.ui.DuoKeyboardPlaceholder
@@ -157,10 +158,15 @@ private fun DuoImeKeyboardContent(
     modifier: Modifier = Modifier,
     preDispatch: SessionPreDispatch = SessionPreDispatch.NONE
 ) {
-    LaunchedEffect(controller, chromePolicy.langKeyPlacement, chromePolicy.initialSymbolTab) {
+    val effectiveHostLangPlacement = resolveEffectiveLangKeyPlacement(
+        requested = chromePolicy.langKeyPlacement,
+        toolbarMode = chromePolicy.toolbarMode
+    )
+    LaunchedEffect(controller, effectiveHostLangPlacement, chromePolicy.initialSymbolTab, chromePolicy.toolbarMode) {
         controller.updateHostPolicy(
-            langKeyPlacement = chromePolicy.langKeyPlacement,
-            initialSymbolTab = chromePolicy.initialSymbolTab
+            langKeyPlacement = effectiveHostLangPlacement,
+            initialSymbolTab = chromePolicy.initialSymbolTab,
+            toolbarMode = chromePolicy.toolbarMode
         )
     }
 
@@ -176,6 +182,10 @@ private fun DuoImeKeyboardContent(
     }
 
     val derived = state.derived
+    val surfaceLangPlacement = resolveEffectiveLangKeyPlacement(
+        requested = derived.langKeyPlacement ?: effectiveHostLangPlacement,
+        toolbarMode = chromePolicy.toolbarMode
+    )
     val surfaceState = DuoKeyboardSurfaceState(
         snapshot = state.snapshot,
         layout = state.activeLayout,
@@ -200,7 +210,8 @@ private fun DuoImeKeyboardContent(
         windowCandidates = state.windowCandidates,
         hasMoreWindowCandidates = state.hasMoreWindowCandidates,
         toolbarPins = chromePolicy.pins,
-        toolbarMode = chromePolicy.toolbarMode
+        toolbarMode = chromePolicy.toolbarMode,
+        langKeyPlacement = surfaceLangPlacement
     )
 
     DuoTheme(preset = chromePolicy.themePreset) {

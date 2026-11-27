@@ -17,6 +17,7 @@ import dev.duoime.core.model.LangKeyPlacement
 import dev.duoime.core.model.QuickPin
 import dev.duoime.core.model.SinkCapabilities
 import dev.duoime.core.model.SymbolTabId
+import dev.duoime.core.model.ToolbarMode
 import dev.duoime.core.protocol.ExtensionConfig
 import dev.duoime.engine.lite.LiteInputEngine
 import dev.duoime.ui.theme.DuoThemePreset
@@ -134,6 +135,8 @@ class DuoImeEmbedSdkTest {
     fun chromePolicyAndHostChromeResolveCapabilitiesAndEinkPagedDefault() {
         assertEquals(listOf(QuickPin.SCHEME_SWITCH), ChromePolicy.EMBED_DEFAULT.pins)
         assertEquals(listOf(QuickPin.SCHEME_SWITCH, QuickPin.SWAP_SCREEN), ChromePolicy.APP_DEFAULT.pins)
+        assertEquals(LangKeyPlacement.TOOLBAR, ChromePolicy.EMBED_DEFAULT.langKeyPlacement)
+        assertEquals(LangKeyPlacement.TOOLBAR, ChromePolicy.APP_DEFAULT.langKeyPlacement)
 
         val darkPolicy = ChromePolicy(themePreset = DuoThemePreset.DARK)
         val einkPolicy = ChromePolicy(themePreset = DuoThemePreset.EINK)
@@ -227,6 +230,27 @@ class DuoImeEmbedSdkTest {
         advanceUntilIdle()
         assertEquals(SymbolTabId.COMMON, controller.uiState.value.derived.symbolTab)
         assertEquals(LangKeyPlacement.HOST, controller.uiState.value.derived.langKeyPlacement)
+
+        // TOOLBAR placement under FULL omits grid ToggleLanguage; under CANDIDATE_ONLY / NONE falls back to GRID
+        controller.updateHostPolicy(
+            langKeyPlacement = LangKeyPlacement.TOOLBAR,
+            toolbarMode = ToolbarMode.FULL
+        )
+        advanceUntilIdle()
+        assertEquals(LangKeyPlacement.TOOLBAR, controller.uiState.value.derived.langKeyPlacement)
+        assertTrue(
+            controller.uiState.value.activeLayout.rows.flattenKeys().none { it.action == KeyAction.ToggleLanguage }
+        )
+
+        controller.updateHostPolicy(
+            langKeyPlacement = LangKeyPlacement.TOOLBAR,
+            toolbarMode = ToolbarMode.CANDIDATE_ONLY
+        )
+        advanceUntilIdle()
+        assertEquals(LangKeyPlacement.GRID, controller.uiState.value.derived.langKeyPlacement)
+        assertTrue(
+            controller.uiState.value.activeLayout.rows.flattenKeys().any { it.action == KeyAction.ToggleLanguage }
+        )
         controller.close()
     }
 

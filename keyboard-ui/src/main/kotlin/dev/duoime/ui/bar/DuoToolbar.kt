@@ -38,7 +38,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.duoime.core.model.ChineseScheme
 import dev.duoime.core.model.ChineseVariant
+import dev.duoime.core.model.FeedbackKey
+import dev.duoime.core.model.FeedbackZone
 import dev.duoime.core.model.KeyAction
+import dev.duoime.core.model.LangKeyPlacement
 import dev.duoime.core.model.Language
 import dev.duoime.core.model.QuickPin
 import dev.duoime.core.protocol.ExtensionToolbarButton
@@ -91,8 +94,18 @@ data class DuoToolbarState(
     val includeNumberRow: Boolean = false,
     val pins: List<QuickPin> = DEFAULT_TOOLBAR_PINS,
     val extensionButtons: List<ExtensionToolbarButton> = emptyList(),
-    val engineIssueTag: String? = null
+    val engineIssueTag: String? = null,
+    val langKeyPlacement: LangKeyPlacement = LangKeyPlacement.TOOLBAR
 )
+
+private fun DuoToolbarState.effectivePins(): List<QuickPin> {
+    val distinctPins = pins.distinct()
+    return if (langKeyPlacement == LangKeyPlacement.TOOLBAR) {
+        distinctPins.filterNot { it == QuickPin.SCHEME_SWITCH || it == QuickPin.VARIANT }
+    } else {
+        distinctPins
+    }
+}
 
 /**
  * Pure-JVM action metadata for [DuoToolbar] verified by zero-duplication invariant tests.
@@ -101,43 +114,55 @@ object DuoToolbarMeta {
     fun visibleActions(state: DuoToolbarState): List<KeyAction> = buildList {
         add(KeyAction.ToggleDrawer)
         if (!state.drawerOpen) {
-            for (pin in state.pins.distinct()) {
-                when (pin) {
-                    QuickPin.SCHEME_SWITCH -> {
-                        val scheme26 = if (state.activeChineseScheme == ChineseScheme.XIAOHE_SHUANGPIN) {
-                            ChineseScheme.XIAOHE_SHUANGPIN
-                        } else {
-                            ChineseScheme.PINYIN_26
-                        }
-                        add(KeyAction.SelectChineseScheme(scheme26))
-                        add(KeyAction.SelectChineseScheme(ChineseScheme.PINYIN_T9))
-                    }
-                    QuickPin.SWAP_SCREEN -> if (state.canSwapScreen) add(KeyAction.SwapScreen)
-                    QuickPin.VARIANT -> add(KeyAction.SwitchVariant)
-                    QuickPin.NUMBER_ROW -> add(KeyAction.ToggleNumberRow)
-                    QuickPin.HEIGHT -> add(KeyAction.CycleHeight)
-                    QuickPin.SWITCH_IME -> if (state.canSwitchIme) add(KeyAction.SwitchIme)
-                }
+            if (state.langKeyPlacement == LangKeyPlacement.TOOLBAR) {
+                add(KeyAction.ToggleLanguage)
+                add(KeyAction.SelectChineseScheme(nextQuickChineseScheme(state.activeChineseScheme)))
+                add(KeyAction.SwitchVariant)
+            }
+            for (pin in state.effectivePins()) {
+                appendPinActions(pin, state)
             }
         }
         if (state.showDismiss) {
             add(KeyAction.Dismiss)
         }
     }
+
+    private fun MutableList<KeyAction>.appendPinActions(pin: QuickPin, state: DuoToolbarState) {
+        when (pin) {
+            QuickPin.SCHEME_SWITCH -> {
+                val scheme26 = if (state.activeChineseScheme == ChineseScheme.XIAOHE_SHUANGPIN) {
+                    ChineseScheme.XIAOHE_SHUANGPIN
+                } else {
+                    ChineseScheme.PINYIN_26
+                }
+                add(KeyAction.SelectChineseScheme(scheme26))
+                add(KeyAction.SelectChineseScheme(ChineseScheme.PINYIN_T9))
+            }
+            QuickPin.SWAP_SCREEN -> if (state.canSwapScreen) add(KeyAction.SwapScreen)
+            QuickPin.VARIANT -> add(KeyAction.SwitchVariant)
+            QuickPin.NUMBER_ROW -> add(KeyAction.ToggleNumberRow)
+            QuickPin.HEIGHT -> add(KeyAction.CycleHeight)
+            QuickPin.SWITCH_IME -> if (state.canSwitchIme) add(KeyAction.SwitchIme)
+        }
+    }
 }
 
 /**
  * Slim priority-slotted top keyboard toolbar (pure Compose Foundation, zero Material 3):
- * `[☰ (ToggleDrawer)]` + priority `LazyRow` (`engineIssue` -> `extensionButtons` -> capability-gated
- * `pins` such as `[26|9]` and `[换屏]`) + optional `[收起 (Dismiss)]`.
+ * `[☰ (ToggleDrawer)]` + optional stationary `88.dp` [UnifiedLangModeChip] (when
+ * `langKeyPlacement == TOOLBAR` and drawer closed) + priority `LazyRow` (`engineIssue` ->
+ * `extensionButtons` -> capability-gated `pins`) + optional `[收起 (Dismiss)]`.
  */
+@Suppress("LongParameterList")
 @Composable
 fun DuoToolbar(
     state: DuoToolbarState,
     onAction: (KeyAction) -> Unit,
     onExtensionButton: (ExtensionToolbarButton) -> Unit,
     modifier: Modifier = Modifier,
-    onDismissEngineError: () -> Unit = {}
+    onDismissEngineError: () -> Unit = {},
+    onKeyPressDown: (FeedbackKey) -> Unit = {}
 ) {
     val colors = LocalDuoColors.current
     val dimensions = LocalDuoDimensions.current
@@ -147,6 +172,7 @@ fun DuoToolbar(
         HeightPresetTier.TALL -> stringResource(R.string.duo_height_preset_tall)
     }
     val issueTag = state.engineIssueTag
+    val showUnifiedLangChip = !state.drawerOpen && state.langKeyPlacement == LangKeyPlacement.TOOLBAR
 
     Row(
         modifier = modifier
@@ -161,8 +187,20 @@ fun DuoToolbar(
             label = "☰",
             selected = state.drawerOpen,
             colors = colors,
-            onClick = { onAction(KeyAction.ToggleDrawer) }
+            onClick = {
+                onKeyPressDown(FeedbackKey(KeyAction.ToggleDrawer, "☰", FeedbackZone.TOOLBAR))
+                onAction(KeyAction.ToggleDrawer)
+            }
         )
+
+        if (showUnifiedLangChip) {
+            UnifiedLangModeChip(
+                state = state,
+                colors = colors,
+                onAction = onAction,
+                onKeyPressDown = onKeyPressDown
+            )
+        }
 
         LazyRow(
             modifier = Modifier
@@ -189,7 +227,10 @@ fun DuoToolbar(
                     label = button.label,
                     selected = false,
                     colors = colors,
-                    onClick = { onExtensionButton(button) }
+                    onClick = {
+                        onKeyPressDown(FeedbackKey(KeyAction.Custom(button.id), button.label, FeedbackZone.TOOLBAR))
+                        onExtensionButton(button)
+                    }
                 )
             }
             if (!state.drawerOpen) {
@@ -197,7 +238,8 @@ fun DuoToolbar(
                     state = state,
                     heightLabel = heightLabel,
                     colors = colors,
-                    onAction = onAction
+                    onAction = onAction,
+                    onKeyPressDown = onKeyPressDown
                 )
             }
         }
@@ -207,7 +249,10 @@ fun DuoToolbar(
                 label = "收起",
                 selected = false,
                 colors = colors,
-                onClick = { onAction(KeyAction.Dismiss) }
+                onClick = {
+                    onKeyPressDown(FeedbackKey(KeyAction.Dismiss, "收起", FeedbackZone.TOOLBAR))
+                    onAction(KeyAction.Dismiss)
+                }
             )
         }
     }
@@ -217,9 +262,10 @@ private fun LazyListScope.toolbarPinItems(
     state: DuoToolbarState,
     heightLabel: String,
     colors: DuoColorTokens,
-    onAction: (KeyAction) -> Unit
+    onAction: (KeyAction) -> Unit,
+    onKeyPressDown: (FeedbackKey) -> Unit
 ) {
-    for (pin in state.pins.distinct()) {
+    for (pin in state.effectivePins()) {
         when (pin) {
             QuickPin.SCHEME_SWITCH -> item(key = "pin_scheme") {
                 SchemePillChip(
@@ -231,21 +277,29 @@ private fun LazyListScope.toolbarPinItems(
             }
             QuickPin.SWAP_SCREEN -> if (state.canSwapScreen) {
                 item(key = "pin_swap") {
+                    val label = if (state.isOverlayMode) "换屏●" else "换屏"
                     ToolbarChip(
-                        label = if (state.isOverlayMode) "换屏●" else "换屏",
+                        label = label,
                         selected = state.isOverlayMode,
                         colors = colors,
-                        onClick = { onAction(KeyAction.SwapScreen) }
+                        onClick = {
+                            onKeyPressDown(FeedbackKey(KeyAction.SwapScreen, label, FeedbackZone.TOOLBAR))
+                            onAction(KeyAction.SwapScreen)
+                        }
                     )
                 }
             }
             QuickPin.VARIANT -> item(key = "pin_variant") {
+                val label = if (state.variant == ChineseVariant.TRADITIONAL) "繁" else "简"
                 ToolbarChip(
-                    label = if (state.variant == ChineseVariant.TRADITIONAL) "繁" else "简",
+                    label = label,
                     selected = state.variant == ChineseVariant.TRADITIONAL,
                     colors = colors,
                     enabled = state.canToggleLanguage,
-                    onClick = { onAction(KeyAction.SwitchVariant) }
+                    onClick = {
+                        onKeyPressDown(FeedbackKey(KeyAction.SwitchVariant, label, FeedbackZone.TOOLBAR))
+                        onAction(KeyAction.SwitchVariant)
+                    }
                 )
             }
             QuickPin.NUMBER_ROW -> item(key = "pin_numrow") {
@@ -253,7 +307,10 @@ private fun LazyListScope.toolbarPinItems(
                     label = "数字行",
                     selected = state.includeNumberRow,
                     colors = colors,
-                    onClick = { onAction(KeyAction.ToggleNumberRow) }
+                    onClick = {
+                        onKeyPressDown(FeedbackKey(KeyAction.ToggleNumberRow, "数字行", FeedbackZone.TOOLBAR))
+                        onAction(KeyAction.ToggleNumberRow)
+                    }
                 )
             }
             QuickPin.HEIGHT -> item(key = "pin_height") {
@@ -261,7 +318,10 @@ private fun LazyListScope.toolbarPinItems(
                     label = heightLabel,
                     selected = false,
                     colors = colors,
-                    onClick = { onAction(KeyAction.CycleHeight) }
+                    onClick = {
+                        onKeyPressDown(FeedbackKey(KeyAction.CycleHeight, heightLabel, FeedbackZone.TOOLBAR))
+                        onAction(KeyAction.CycleHeight)
+                    }
                 )
             }
             QuickPin.SWITCH_IME -> if (state.canSwitchIme) {
@@ -270,7 +330,10 @@ private fun LazyListScope.toolbarPinItems(
                         label = "输入法",
                         selected = false,
                         colors = colors,
-                        onClick = { onAction(KeyAction.SwitchIme) }
+                        onClick = {
+                            onKeyPressDown(FeedbackKey(KeyAction.SwitchIme, "输入法", FeedbackZone.TOOLBAR))
+                            onAction(KeyAction.SwitchIme)
+                        }
                     )
                 }
             }

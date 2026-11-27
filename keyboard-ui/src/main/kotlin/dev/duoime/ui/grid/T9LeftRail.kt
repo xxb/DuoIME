@@ -9,8 +9,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -28,6 +28,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.duoime.core.model.FeedbackKey
@@ -50,9 +52,51 @@ data class T9LeftRailState(
 )
 
 /**
+ * Pure-JVM sizing for vertical T9 syllable buttons inside `t9_left_slot`:
+ * - 1–3 syllables match the adjacent 3 rows of T9 digit keys 1:1 vertically.
+ * - 4+ syllables show ~3.45 items (`>= minScrollItemHeightDp`) so each target stays thumb-sized
+ *   while peeking the 4th chip cleanly as a vertical scroll affordance.
+ */
+internal fun resolveT9SyllableItemHeightDp(
+    railHeightDp: Float,
+    itemCount: Int,
+    minScrollItemHeightDp: Float,
+    gapDp: Float
+): Float {
+    val safeRail = if (railHeightDp.isFinite()) railHeightDp.coerceAtLeast(1f) else 1f
+    val safeGap = if (gapDp.isFinite()) gapDp.coerceAtLeast(0f) else 0f
+    val safeMin = if (minScrollItemHeightDp.isFinite()) minScrollItemHeightDp.coerceAtLeast(1f) else 1f
+    return if (itemCount <= 3) {
+        ((safeRail - safeGap * 2f) / 3f).coerceAtLeast(1f)
+    } else {
+        ((safeRail - safeGap * 3f) / 3.45f).coerceAtLeast(safeMin)
+    }
+}
+
+internal fun formatT9SyllableLabel(syllable: String, selected: Boolean): String =
+    if (selected) "$syllable ×" else syllable
+
+internal fun resolveT9SyllableClick(
+    index: Int,
+    syllable: String,
+    selected: Boolean,
+    onKeyPressDown: (FeedbackKey) -> Unit,
+    onSelectSyllable: (Int) -> Unit
+) {
+    if (selected) {
+        onKeyPressDown(clearSyllableFeedbackKey())
+        onSelectSyllable(-1)
+    } else {
+        onKeyPressDown(syllableFeedbackKey(index, syllable))
+        onSelectSyllable(index)
+    }
+}
+
+/**
  * Pure Compose Foundation vertical rail positioned inside T9's `t9_left_slot`:
  * - Idle: 3 equal vertical punctuation buttons (`，`, `。`, `？`).
- * - Composing: vertical scrollable syllable selector with subtle `"拼音"` tint and optional `×` clear.
+ * - Composing: full-height thumb-friendly vertical syllable keys matching adjacent T9 row geometry,
+ *   with inline `"$syl ×"` selected toggle-to-clear styling.
  */
 @Composable
 fun T9LeftRail(
@@ -125,77 +169,94 @@ private fun ComposingSyllableRail(
     modifier: Modifier = Modifier
 ) {
     val dimensions = LocalDuoDimensions.current
-    val corner = RoundedCornerShape(dimensions.keyCornerRadius)
-    Column(
+    val gapDp = dimensions.keyVerticalGap
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
             .pointerInput(Unit) {}
-            .clip(corner)
-            .background(colors.barBackground)
-            .border(width = 1.dp, color = colors.keyBorder, shape = corner)
-            .padding(horizontal = 3.dp, vertical = 4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        BasicText(
-            text = "拼音",
-            maxLines = 1,
-            style = TextStyle(
-                color = colors.preeditText,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold
-            )
-        )
-        LazyColumn(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-            contentPadding = PaddingValues(vertical = 2.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            if (state.selectedSyllableIndex >= 0) {
-                item(key = "clear_syllable") {
+        val itemHeight = resolveT9SyllableItemHeightDp(
+            railHeightDp = maxHeight.value,
+            itemCount = state.syllables.size,
+            minScrollItemHeightDp = dimensions.candidateBarHeight.value,
+            gapDp = gapDp.value
+        ).dp
+
+        if (state.syllables.size <= 3) {
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(gapDp)
+            ) {
+                state.syllables.forEachIndexed { idx, syl ->
+                    val isSelected = idx == state.selectedSyllableIndex
                     VerticalSyllableChip(
-                        label = "×",
-                        selected = false,
+                        label = formatT9SyllableLabel(syl, isSelected),
+                        selected = isSelected,
+                        height = itemHeight,
                         colors = colors,
                         onClick = {
-                            onKeyPressDown(clearSyllableFeedbackKey())
-                            onSelectSyllable(-1)
+                            resolveT9SyllableClick(
+                                index = idx,
+                                syllable = syl,
+                                selected = isSelected,
+                                onKeyPressDown = onKeyPressDown,
+                                onSelectSyllable = onSelectSyllable
+                            )
                         }
                     )
                 }
             }
-            itemsIndexed(
-                items = state.syllables,
-                key = { idx, syl -> "$idx:$syl" }
-            ) { idx, syl ->
-                VerticalSyllableChip(
-                    label = syl,
-                    selected = idx == state.selectedSyllableIndex,
-                    colors = colors,
-                    onClick = {
-                        onKeyPressDown(syllableFeedbackKey(idx, syl))
-                        onSelectSyllable(idx)
-                    }
-                )
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(gapDp)
+            ) {
+                itemsIndexed(
+                    items = state.syllables,
+                    key = { idx, syl -> "$idx:$syl" }
+                ) { idx, syl ->
+                    val isSelected = idx == state.selectedSyllableIndex
+                    VerticalSyllableChip(
+                        label = formatT9SyllableLabel(syl, isSelected),
+                        selected = isSelected,
+                        height = itemHeight,
+                        colors = colors,
+                        onClick = {
+                            resolveT9SyllableClick(
+                                index = idx,
+                                syllable = syl,
+                                selected = isSelected,
+                                onKeyPressDown = onKeyPressDown,
+                                onSelectSyllable = onSelectSyllable
+                            )
+                        }
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun VerticalSyllableChip(label: String, selected: Boolean, colors: DuoColorTokens, onClick: () -> Unit) {
-    val fontSizeSp = LocalDuoDimensions.current.syllableFontSp
+private fun VerticalSyllableChip(
+    label: String,
+    selected: Boolean,
+    height: Dp,
+    colors: DuoColorTokens,
+    onClick: () -> Unit
+) {
+    val dimensions = LocalDuoDimensions.current
+    val corner = RoundedCornerShape(dimensions.keyCornerRadius)
     val indication = if (LocalDuoThemePreset.current == DuoThemePreset.EINK) null else LocalIndication.current
     val bg = if (selected) colors.chipSelectedBackground else colors.chipBackground
     val fg = if (selected) colors.chipSelectedText else colors.chipText
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(36.dp)
-            .clip(RoundedCornerShape(6.dp))
+            .height(height)
+            .clip(corner)
             .background(bg)
+            .border(width = 1.dp, color = colors.keyBorder, shape = corner)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = indication,
@@ -207,10 +268,11 @@ private fun VerticalSyllableChip(label: String, selected: Boolean, colors: DuoCo
         BasicText(
             text = label,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             style = TextStyle(
                 color = fg,
-                fontSize = fontSizeSp.sp,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
+                fontSize = dimensions.candidateFontSp.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold
             )
         )
     }
