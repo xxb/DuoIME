@@ -349,7 +349,7 @@ class DuoToolbarGestureTest {
         enabledConfig.applyUnifiedLangSemantics(
             state = toolbarState.value,
             spec = spec,
-            onAction = gestureController::emitAction
+            onGesture = gestureController::emitGesture
         )
 
         assertEquals(Role.Button, enabledConfig[SemanticsProperties.Role])
@@ -384,25 +384,39 @@ class DuoToolbarGestureTest {
             feedback
         )
 
-        // Disabled state exposes SemanticsProperties.Disabled, omits actions, and suppresses emitAction
+        // Live-state resolution: invoking the existing enabledConfig without rebuilding resolves against
+        // the latest activeChineseScheme rather than stale semantics-creation state
+        actions.clear()
+        feedback.clear()
+        toolbarState.value = toolbarState.value.copy(activeChineseScheme = ChineseScheme.PINYIN_T9)
+        assertTrue(customActions[0].action())
+        val to26 = KeyAction.SelectChineseScheme(ChineseScheme.PINYIN_26)
+        assertEquals(listOf<KeyAction>(to26), actions)
+        assertEquals(
+            listOf(FeedbackKey(to26, "中·9", FeedbackZone.TOOLBAR)),
+            feedback
+        )
+
+        // Mutating canToggleLanguage=false suppresses stale enabledConfig callbacks cleanly
+        actions.clear()
+        feedback.clear()
         toolbarState.value = toolbarState.value.copy(canToggleLanguage = false)
+        assertTrue(onClick.action?.invoke() == true)
+        assertTrue(customActions[0].action())
+        assertTrue(customActions[1].action())
+        assertTrue("Stale semantics callbacks while disabled must suppress actions", actions.isEmpty())
+        assertTrue("Stale semantics callbacks while disabled must suppress feedback", feedback.isEmpty())
+
+        // Rebuilt disabled semantics exposes SemanticsProperties.Disabled and omits clickable actions
         val disabledConfig = SemanticsConfiguration()
         disabledConfig.applyUnifiedLangSemantics(
             state = toolbarState.value,
             spec = spec,
-            onAction = gestureController::emitAction
+            onGesture = gestureController::emitGesture
         )
         assertEquals(Role.Button, disabledConfig[SemanticsProperties.Role])
         assertTrue(SemanticsProperties.Disabled in disabledConfig)
         assertFalse(SemanticsActions.OnClick in disabledConfig)
         assertFalse(SemanticsActions.CustomActions in disabledConfig)
-
-        actions.clear()
-        feedback.clear()
-        gestureController.emitAction(KeyAction.ToggleLanguage)
-        gestureController.emitAction(toT9)
-        gestureController.emitAction(KeyAction.SwitchVariant)
-        assertTrue("emitAction while disabled must suppress actions", actions.isEmpty())
-        assertTrue("emitAction while disabled must suppress feedback", feedback.isEmpty())
     }
 }

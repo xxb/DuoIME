@@ -30,7 +30,6 @@ import dev.duoime.ui.grid.formatT9SyllableLabel
 import dev.duoime.ui.grid.resolveT9SyllableClick
 import dev.duoime.ui.grid.resolveT9SyllableItemHeightDp
 import dev.duoime.ui.grid.syllableFeedbackKey
-import dev.duoime.ui.grid.unlockSyllablesFeedbackKey
 import dev.duoime.ui.theme.DuoDarkColors
 import dev.duoime.ui.theme.DuoDefaultDimensions
 import dev.duoime.ui.theme.DuoDimensionTokens
@@ -408,7 +407,10 @@ class DuoKeyboardUiSmokeTest {
         )
         assertEquals(listOf(0), unlocked)
         assertTrue(selections.isEmpty())
-        assertEquals(listOf(unlockSyllablesFeedbackKey(0)), feedback)
+        assertEquals(
+            listOf(FeedbackKey(KeyAction.UnlockSyllablesFrom(0), "×", FeedbackZone.CANDIDATE)),
+            feedback
+        )
 
         // Partial unlock on two locked syllables (e.g. ["ma", "ma"] -> click locked index 1)
         val doubleLockedItems = buildT9SyllableRailItems(
@@ -429,7 +431,10 @@ class DuoKeyboardUiSmokeTest {
             onUnlockSyllablesFrom = { unlocked += it }
         )
         assertEquals(listOf(1), unlocked)
-        assertEquals(listOf(unlockSyllablesFeedbackKey(1)), feedback)
+        assertEquals(
+            listOf(FeedbackKey(KeyAction.UnlockSyllablesFrom(1), "×", FeedbackZone.CANDIDATE)),
+            feedback
+        )
 
         feedback.clear()
         dispatchT9RailItemClick(
