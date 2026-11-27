@@ -107,14 +107,52 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ---
 
-## Planned Permissive Dependencies (M2–M4)
+## Native Rime Engine Pipeline (M2, Option A 100% Permissive)
 
-As native engines and optional models are integrated in subsequent milestones, their exact
-upstream commit/version pins and license notices (such as `librime` BSD-3-Clause, `librime-lua` BSD-3-Clause,
-`Lua` MIT, `OpenCC` Apache-2.0 NOTICE, `marisa-trie` BSD-2-Clause, `leveldb` BSD-3-Clause,
-`yaml-cpp` MIT, `Boost` BSL-1.0, `onnxruntime-android` MIT, and `PP-OCRv5` Apache-2.0)
-will be recorded here alongside the in-app Open-Source Licenses screen.
+DuoIME's self-built native Rime library (`libduoime_rime.so`, built reproducibly from source via `native/rime/build_android.sh` and `.github/workflows/build-rime-native.yml` using exact version/SHA-256 pins in `native/rime/versions.env`) links only permissive upstream components:
 
-Optional GPL-3.0 dictionaries (such as `rime-ice` / `rime-frost`) and non-permissive voice weights
-(such as `SenseVoice`) are never committed to this repository or bundled in default binaries;
-they are strictly user-initiated downloads or local SAF imports with upfront license notices.
+- **rime/librime** (`1.18.0`, https://github.com/rime/librime)
+  - Copyright (c) RIME Developers
+  - License: BSD-3-Clause (`SPDX-License-Identifier: BSD-3-Clause`)
+  - Scope: Core Rime input method engine linked statically (`ENABLE_LOGGING=OFF`, `BUILD_WITH_ICU=OFF`, `BUILD_MERGED_PLUGINS=ON`).
+- **hchunhui/librime-lua** (`6da5d6cedb853380ed1b5b9b6979cb1a9c028353`, https://github.com/hchunhui/librime-lua)
+  - Copyright (c) librime-lua contributors
+  - License: BSD-3-Clause (`SPDX-License-Identifier: BSD-3-Clause`)
+  - Scope: Lua scripting plugin merged statically into `librime`.
+- **Lua** (`5.4.9`, https://www.lua.org/)
+  - Copyright (c) 1994-2026 Lua.org, PUC-Rio
+  - License: MIT (`SPDX-License-Identifier: MIT`)
+  - Scope: Embedded Lua 5.4 runtime compiled into `librime-lua`.
+- **Boost** (`1.87.0` header-only, https://github.com/boostorg/boost)
+  - Copyright (c) Boost contributors
+  - License: Boost Software License 1.0 (`SPDX-License-Identifier: BSL-1.0`; full license text included in [`licenses/BSL-1.0.txt`](licenses/BSL-1.0.txt))
+  - Scope: Header-only C++ templates with `BOOST_REGEX_STANDALONE` (zero compiled Boost binaries).
+- **jbeder/yaml-cpp** (`0.9.0`, https://github.com/jbeder/yaml-cpp)
+  - Copyright (c) 2008-2026 Jesse Beder and yaml-cpp contributors
+  - License: MIT (`SPDX-License-Identifier: MIT`)
+  - Scope: YAML parser/emitter linked statically into `librime`.
+- **google/leveldb** (`bb74ef739973a70ca9f0d90788a1da89b788c0ad`, https://github.com/google/leveldb)
+  - Copyright (c) 2011 The LevelDB Authors
+  - License: BSD-3-Clause (`SPDX-License-Identifier: BSD-3-Clause`)
+  - Scope: Local key-value userdb storage linked statically into `librime`.
+- **s-yata/marisa-trie** (`0.3.1`, https://github.com/s-yata/marisa-trie)
+  - Copyright (c) 2010-2025 Susumu Yata
+  - License: Dual-licensed `BSD-2-Clause OR LGPL-2.1-or-later`; **DuoIME explicitly elects `BSD-2-Clause`** (full license text included in [`licenses/BSD-2-Clause.txt`](licenses/BSD-2-Clause.txt))
+  - Scope: Compact trie storage shared statically by `librime` and `OpenCC`.
+- **BYVoid/OpenCC** (`1.4.2`, https://github.com/BYVoid/OpenCC)
+  - Copyright (c) 2010-2026 Carbo Kuo (BYVoid) and OpenCC contributors
+  - License: Apache License, Version 2.0 (`SPDX-License-Identifier: Apache-2.0`; full license text included in [`licenses/Apache-2.0.txt`](licenses/Apache-2.0.txt)); bundled header-only helpers (`darts-clone` BSD-2-Clause, `RapidJSON` MIT, `TCLAP` MIT)
+  - Scope: Simplified-to-Traditional conversion engine linked statically into `librime`.
+
+---
+
+## Planned Permissive Dependencies (M3–M4)
+
+As optional on-device models are integrated in subsequent milestones, their exact upstream
+commit/version pins and license notices (`onnxruntime-android` MIT, `PP-OCRv5` Apache-2.0) will be
+recorded here alongside the in-app Open-Source Licenses screen.
+
+Copyleft Rime upstream packages (`rime-prelude`, `rime-essay`, `rime-luna-pinyin` under LGPL-3.0;
+`rime-ice` / `rime-frost` under GPL-3.0) and non-permissive voice weights (such as `SenseVoice`) are
+never committed to this repository or bundled in default binaries; optional user dictionaries remain
+strictly user-initiated local SAF imports with upfront license notices.

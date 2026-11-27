@@ -1,0 +1,177 @@
+name: Build Native Rime
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "native/rime/**"
+      - ".github/workflows/build-rime-native.yml"
+  push:
+    branches: [main]
+    paths:
+      - "native/rime/**"
+      - ".github/workflows/build-rime-native.yml"
+  workflow_dispatch:
+    inputs:
+      abi:
+        description: "Target Android ABI"
+        required: false
+        default: "arm64-v8a"
+        type: choice
+        options:
+          - arm64-v8a
+          - x86_64
+      publish_release:
+        description: "Publish checksummed prebuilt tarball to GitHub Releases (main branch only)"
+        required: false
+        default: false
+        type: boolean
+      release_tag:
+        description: "GitHub Release tag when publish_release=true (e.g. rime-native-v1.18.0-r1)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-rime-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-native:
+    name: Build 16 KB Native Rime (${{ inputs.abi || 'arm64-v8a' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TARGET_ABI: ${{ inputs.abi || 'arm64-v8a' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Lint native build scripts & check Option A license hygiene
+        run: |
+          shellcheck -x -P SCRIPTDIR native/rime/build_android.sh scripts/fetch_rime_prebuilt.sh
+          bash scripts/license_check.sh
+          bash scripts/pii_check.sh --no-commits
+
+      - name: Install host build tools (ninja-build)
+        run: |
+          if ! command -v ninja >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ninja-build
+          fi
+
+      - name: Resolve pinned Android NDK
+        run: |
+          source native/rime/versions.env
+          SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          NDK_PATH="${SDK_DIR}/ndk/${ANDROID_NDK_VERSION}"
+          if [[ ! -d "$NDK_PATH" ]]; then
+            SDKM="$(find "${SDK_DIR}/cmdline-tools" -name sdkmanager | sort -V | tail -n 1)"
+            yes | "$SDKM" --licenses >/dev/null || true
+            "$SDKM" "ndk;${ANDROID_NDK_VERSION}"
+          fi
+          echo "ANDROID_NDK_HOME=${NDK_PATH}" >> "$GITHUB_ENV"
+          echo "Using NDK at ${NDK_PATH}"
+
+      - name: Cache verified upstream source archives
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/rime-src-cache
+          key: rime-src-v1-${{ hashFiles('native/rime/versions.env') }}
+
+      - name: Build libduoime_rime.so (16 KB aligned, c++_static)
+        run: |
+          mkdir -p "${RUNNER_TEMP}/rime-src-cache" "${RUNNER_TEMP}/rime-work" "${RUNNER_TEMP}/rime-dist"
+          bash native/rime/build_android.sh \
+            --abi "${TARGET_ABI}" \
+            --work-dir "${RUNNER_TEMP}/rime-work" \
+            --cache-dir "${RUNNER_TEMP}/rime-src-cache" \
+            --output-dir "${RUNNER_TEMP}/rime-dist"
+
+      - name: Enforce APK native size budget (<= 12 MiB uncompressed .so)
+        run: |
+          python3 - "${RUNNER_TEMP}/rime-dist/duoime-rime-native-${TARGET_ABI}.tar.gz" <<'PY'
+          import json
+          import sys
+          import tarfile
+
+          archive = sys.argv[1]
+          max_so_bytes = 12 * 1024 * 1024
+          with tarfile.open(archive, "r:gz") as tf:
+              manifest = json.loads(tf.extractfile("manifest.json").read().decode("utf-8"))
+          size_bytes = int(manifest["size_bytes"])
+          size_mib = size_bytes / (1024 * 1024)
+          print(f"libduoime_rime.so ({manifest['abi']}): {size_bytes} bytes ({size_mib:.2f} MiB; limit 12.00 MiB)")
+          if size_bytes > max_so_bytes:
+              sys.exit(f"ERROR: libduoime_rime.so size {size_bytes} exceeds 12 MiB budget")
+          PY
+
+      - name: Upload checksummed prebuilt artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: duoime-rime-native-${{ inputs.abi || 'arm64-v8a' }}
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/rime-dist/duoime-rime-native-*.tar.gz
+            ${{ runner.temp }}/rime-dist/SHA256SUMS
+
+      - name: Ensure clean worktree
+        run: |
+          git status --short
+          test -z "$(git status --porcelain)"
+
+  publish-release:
+    name: Publish Prebuilt Native Release
+    needs: build-native
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.publish_release == true &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Validate release tag input
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^rime-native-v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._-]+)?$ ]]; then
+            echo "ERROR: release_tag must match rime-native-v<semver>[-suffix], got: '${RELEASE_TAG}'" >&2
+            exit 1
+          fi
+
+      - name: Download built prebuilt artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: duoime-rime-native-${{ inputs.abi || 'arm64-v8a' }}
+          path: ${{ runner.temp }}/release-assets
+
+      - name: Verify SHA256SUMS before publishing
+        working-directory: ${{ runner.temp }}/release-assets
+        run: sha256sum -c SHA256SUMS
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          TARGET_ABI: ${{ inputs.abi || 'arm64-v8a' }}
+        working-directory: ${{ runner.temp }}/release-assets
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" \
+              "duoime-rime-native-${TARGET_ABI}.tar.gz" \
+              SHA256SUMS \
+              --clobber
+          else
+            gh release create "$RELEASE_TAG" \
+              "duoime-rime-native-${TARGET_ABI}.tar.gz" \
+              SHA256SUMS \
+              --title "DuoIME Native Rime (${RELEASE_TAG})" \
+              --notes "Reproducible 16 KB page-aligned Option A permissive native Rime build (${TARGET_ABI})." \
+              --prerelease
+          fi

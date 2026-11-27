@@ -32,22 +32,29 @@ tracked = git_run("ls-files", "-z").stdout.split(b"\x00")
 untracked = git_run("ls-files", "--others", "--exclude-standard", "-z").stdout.split(b"\x00")
 paths = sorted({raw.decode("utf-8", errors="surrogateescape") for raw in tracked + untracked if raw})
 
-SOURCE_EXTS = {".kt", ".java", ".cc", ".h", ".sh", ".py"}
+SOURCE_EXTS = {".kt", ".java", ".cc", ".cpp", ".h", ".hpp", ".sh", ".py", ".cmake", ".nix"}
+SOURCE_FILENAMES = {"CMakeLists.txt"}
 ALLOWED_SPDX = (
     "SPDX-License-Identifier: BSD-3-Clause",
     "SPDX-License-Identifier: MIT",
+    "SPDX-License-Identifier: Apache-2.0",
 )
 RE_COPYLEFT_SPDX = re.compile(r"SPDX-License-Identifier:\s*.*(?:GPL|LGPL|AGPL)", re.IGNORECASE)
 
 BANNED_PATH_PATTERNS = [
+    (re.compile(r"\.(?:so|a)$", re.IGNORECASE), "banned_committed_native_binary"),
     (re.compile(r"(?:^|/)libyuyanime\.so$", re.IGNORECASE), "banned_yuyan_so"),
     (re.compile(r"(?:^|/)libyuyanwriting\.so$", re.IGNORECASE), "banned_yuyan_so"),
     (re.compile(r"(?:^|/)rec\.nb$", re.IGNORECASE), "banned_yuyan_model"),
     (re.compile(r"(?:^|/)pinyin4j(?:/|$)", re.IGNORECASE), "banned_pinyin4j"),
     (re.compile(r"(?:^|/)assets/pinyindb(?:/|$)", re.IGNORECASE), "banned_pinyindb"),
     (re.compile(r"(?:^|/)assets/rime/build/.*\.bin$", re.IGNORECASE), "banned_prebuilt_rime_bin"),
+    (re.compile(r"(?:^|/)assets/.*\.(?:table|prism|reverse)\.bin$", re.IGNORECASE), "banned_prebuilt_rime_bin"),
     (re.compile(r"(?:^|/)dict-[^/]+(?:/|$)", re.IGNORECASE), "banned_gpl_dict_module"),
     (re.compile(r"(?:^|/)assets/.*(?:rime-ice|rime-frost).*", re.IGNORECASE), "banned_gpl_dict_asset"),
+    (re.compile(r"(?:^|/)(?:rime-prelude|rime-essay|rime-luna-pinyin)(?:/|$)", re.IGNORECASE), "banned_lgpl_rime_data"),
+    (re.compile(r"(?:^|/)essay\.txt$", re.IGNORECASE), "banned_lgpl_rime_essay"),
+    (re.compile(r"(?:^|/)luna_pinyin.*\.yaml$", re.IGNORECASE), "banned_lgpl_luna_pinyin"),
 ]
 
 violations = []
@@ -68,13 +75,18 @@ for rel in paths:
         continue
 
     suffix = full.suffix.lower()
-    if suffix in SOURCE_EXTS:
+    needs_spdx = (
+        suffix in SOURCE_EXTS
+        or full.name in SOURCE_FILENAMES
+        or (rel.startswith("native/rime/schemas/") and suffix in {".yaml", ".yml"})
+    )
+    if needs_spdx:
         text = full.read_text(encoding="utf-8", errors="replace")
         head = "\n".join(text.splitlines()[:15])
         if RE_COPYLEFT_SPDX.search(head):
             fail(rel, "copyleft_spdx_forbidden_under_option_a")
         elif not any(tag in head for tag in ALLOWED_SPDX):
-            fail(rel, "missing_permissive_spdx_header", "expected BSD-3-Clause or MIT within first 15 lines")
+            fail(rel, "missing_permissive_spdx_header", "expected BSD-3-Clause, MIT, or Apache-2.0 within first 15 lines")
 
     # Enforce build/dependency rules on Gradle and version catalog files.
     if rel == "gradle/libs.versions.toml" or rel.endswith("build.gradle.kts") or rel == "settings.gradle.kts":
@@ -86,7 +98,7 @@ for rel in paths:
         if re.search(r"""project\s*\(\s*["']:dict-""", text) or re.search(r"""include\s*\(\s*["']:dict-""", text):
             fail(rel, "banned_gpl_dict_dependency")
 
-    # Enforce M1-M2 manifest privacy and embed isolation rules.
+    # Enforce M1-M2 manifest privacy and library isolation rules.
     if rel.endswith("AndroidManifest.xml"):
         text = full.read_text(encoding="utf-8", errors="replace")
         if "android.permission.INTERNET" in text:
@@ -96,9 +108,11 @@ for rel in paths:
         if rel == "app/src/main/AndroidManifest.xml":
             if not re.search(r"""android:allowBackup\s*=\s*["']false["']""", text):
                 fail(rel, "missing_allow_backup_false")
-        if rel.startswith("duoime-embed/"):
+        if rel.startswith("duoime-embed/") or rel.startswith("engine-rime/"):
             if "<service" in text or "BIND_INPUT_METHOD" in text:
-                fail(rel, "embed_aar_must_not_declare_ime_service")
+                fail(rel, "library_aar_must_not_declare_ime_service")
+            if "<uses-permission" in text:
+                fail(rel, "library_aar_must_declare_zero_permissions")
 
 if violations:
     print("License & dependency policy check FAILED:", file=sys.stderr)

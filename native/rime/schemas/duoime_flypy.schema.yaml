@@ -1,0 +1,99 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 DuoIME Contributors
+#
+# Clean-room DuoIME Xiaohe Shuangpin (小鹤双拼) schema (Option A permissive).
+
+schema:
+  schema_id: duoime_flypy
+  name: "DuoIME 小鹤双拼"
+  version: "1.0"
+  description: "DuoIME clean-room Xiaohe double-pinyin schema backed by permissive MIT starter lexicon."
+
+switches:
+  - name: ascii_mode
+    reset: 0
+    states: ["中文", "英文"]
+  - name: full_shape
+    reset: 0
+    states: ["半角", "全角"]
+  - name: traditionalization
+    reset: 0
+    states: ["简体", "繁體"]
+
+engine:
+  processors:
+    - ascii_composer
+    - key_binder
+    - speller
+    - punctuator
+    - selector
+    - navigator
+    - express_editor
+  segmentors:
+    - ascii_segmentor
+    - matcher
+    - abc_segmentor
+    - punct_segmentor
+    - fallback_segmentor
+  translators:
+    - punct_translator
+    - script_translator
+  filters:
+    - simplifier
+    - uniquifier
+
+speller:
+  alphabet: zyxwvutsrqponmlkjihgfedcba
+  delimiter: " '"
+  algebra:
+    - erase/^xx$/
+    - xform/^([aoe])$/$1$1/
+    - xform/^a(ng)$/ah/
+    - xform/^e(ng)$/eg/
+    - xform/^([bpmfdtnlgkhjqxzcsryw]|[zcs]h)iu$/$1Q/
+    - xform/^([bpmfdtnlgkhjqxzcsryw]|[zcs]h)ei$/$1W/
+    - xform/^([bpmfdtnlgkhjqxzcsryw]|[zcs]h)uan$/$1R/
+    - xform/^([bpmfdtnlgkhjqxzcsryw]|[zcs]h)[uv]e$/$1T/
+    - xform/^([bpmfdtnlgkhjqxzcsryw]|[zcs]h)un$/$1Y/
+    - xform/^([bpmfdtnlgkhjqxzcsryw]|[zcs]h)uo$/$1O/
+    - xform/^([bpmfdtnlgkhjqxzcsryw]|[zcs]h)ie$/$1P/
+    - xform/^([bpmfdtnlgkhjqxzcsryw]|[zcs]h)i?ong$/$1S/
+    - xform/^([bpmfdtnlgkhjqxzcsryw]|[zcs]h)ai$/$1D/
+    - xform/^([bpmfdtnlgkhjqxzcsryw]|[zcs]h)en$/$1F/
+    - xform/^([bpmfdtnlgkhjqxzcsryw]|[zcs]h)eng$/$1G/
+    - xform/^([bpmfdtnlgkhjqxzcsryw]|[zcs]h)ang$/$1H/
+    - xform/^([bpmfdtnlgkhjqxzcsryw]|[zcs]h)an$/$1J/
+    - xform/^([bpmfdtnlgkhjqxzcsryw]|[zcs]h)(?:uai|ing)$/$1K/
+    - xform/^([bpmfdtnlgkhjqxzcsryw]|[zcs]h)[iu]ang$/$1L/
+    - xform/^([bpmfdtnlgkhjqxzcsryw]|[zcs]h)ou$/$1Z/
+    - xform/^([bpmfdtnlgkhjqxzcsryw]|[zcs]h)[iu]a$/$1X/
+    - xform/^([bpmfdtnlgkhjqxzcsryw]|[zcs]h)ao$/$1C/
+    - xform/^([bpmfdtnlgkhjqxzcsryw]|[zcs]h)(?:ui|v)$/$1V/
+    - xform/^([bpmfdtnlgkhjqxzcsryw]|[zcs]h)in$/$1B/
+    - xform/^([bpmfdtnlgkhjqxzcsryw]|[zcs]h)iao$/$1N/
+    - xform/^([bpmfdtnlgkhjqxzcsryw]|[zcs]h)ian$/$1M/
+    - xform/^zh/v/
+    - xform/^ch/i/
+    - xform/^sh/u/
+    - xlit/QWRTYOPASDFGHJKLZXCVBNM/qwrtyopasdfghjklzxcvbnm/
+
+translator:
+  dictionary: duoime_pinyin
+  prism: duoime_flypy
+  enable_user_dict: true
+  enable_sentence: true
+  enable_completion: true
+
+simplifier:
+  option_name: traditionalization
+  opencc_config: duoime_s2t.json
+  tips: none
+
+punctuator:
+  __include: default:/punctuator
+
+key_binder:
+  __include: default:/key_binder
+
+menu:
+  page_size: 8

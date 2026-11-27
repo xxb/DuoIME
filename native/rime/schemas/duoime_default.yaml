@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 DuoIME Contributors
+#
+# Clean-room DuoIME default Rime configuration (Option A permissive; zero rime-prelude).
+# Installed as default.yaml inside the app-private Rime shared_data_dir.
+
+config_version: "1.0"
+
+schema_list:
+  - schema: duoime_pinyin_26
+  - schema: duoime_t9
+  - schema: duoime_flypy
+  - schema: duoime_pinyin_26_incognito
+  - schema: duoime_t9_incognito
+  - schema: duoime_flypy_incognito
+
+menu:
+  page_size: 8
+
+switcher:
+  caption: "〔DuoIME〕"
+  hotkeys: []
+
+ascii_composer:
+  good_old_caps_lock: true
+  switch_key:
+    Shift_L: noop
+    Shift_R: noop
+    Control_L: noop
+    Control_R: noop
+    Caps_Lock: noop
+    Eisu_toggle: noop
+
+punctuator:
+  full_shape:
+    ",": "，"
+    ".": "。"
+    "?": "？"
+    "!": "！"
+    ";": "；"
+    ":": "："
+    "(": "（"
+    ")": "）"
+    "[": "【"
+    "]": "】"
+    "<": "《"
+    ">": "》"
+    "\\": "、"
+    "/": "／"
+    "\"": { pair: ["“", "”"] }
+    "'": { pair: ["‘", "’"] }
+    "^": "……"
+    "_": "——"
+    "~": "～"
+  half_shape:
+    ",": "，"
+    ".": "。"
+    "?": "？"
+    "!": "！"
+    ";": "；"
+    ":": "："
+    "(": "（"
+    ")": "）"
+    "[": "【"
+    "]": "】"
+    "<": "《"
+    ">": "》"
+    "\\": "、"
+    "/": "/"
+    "\"": { pair: ["“", "”"] }
+    "'": { pair: ["‘", "’"] }
+    "^": "……"
+    "_": "——"
+    "~": "～"
+
+key_binder:
+  bindings:
+    - { when: has_menu, accept: minus, send: Page_Up }
+    - { when: has_menu, accept: equal, send: Page_Down }
+    - { when: paging, accept: comma, send: Page_Up }
+    - { when: has_menu, accept: period, send: Page_Down }

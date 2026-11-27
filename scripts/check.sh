@@ -23,10 +23,11 @@ cd "$REPO_ROOT"
 echo "==> Running PII & license hygiene gates..."
 bash scripts/pii_check.sh
 bash scripts/license_check.sh
+python3 scripts/test_generate_rime_starter_assets.py
 
 if command -v shellcheck >/dev/null 2>&1; then
     echo "==> Running shellcheck..."
-    shellcheck scripts/*.sh .githooks/pre-commit
+    shellcheck -x -P SCRIPTDIR scripts/*.sh native/rime/*.sh .githooks/pre-commit
 elif [[ "$MODE" == "--ci-fast" ]]; then
     echo "ERROR: shellcheck is required in --ci-fast mode but was not found in PATH." >&2
     exit 1

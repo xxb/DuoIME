@@ -18,7 +18,8 @@ An open-source, dual-screen-first Android input method editor (IME) built with *
 | `:core` | Pure JVM | Domain models, `InputEngine`, `InputSink`, keyboard layouts, pure `DisplayPlacementPolicy`, extension protocol schema |
 | `:engine-lite` | Pure JVM | Lightweight pure-Kotlin input engine (M1 brain & permanent fallback) |
 | `:keyboard-ui` | Android Library (Compose) | Theme tokens, single-pointer `KeyGrid`, `CandidateBar`, toolbar, feedback & sketch packages |
-| `:duoime-embed` | Android Library (AAR) | Public Jetpack Compose embed API wrapping `:keyboard-ui` + `:engine-lite` (and M2 `:engine-rime`) |
+| `:duoime-embed` | Android Library (AAR) | Pure-Kotlin Jetpack Compose embed API wrapping `:keyboard-ui` + `:engine-lite` (zero native `.so`, zero Material 3) |
+| `:engine-rime` *(M2)* | Android Library (optional) | Clean-room BSD-3 JNI over self-built `librime` + `librime-lua` + OpenCC (16 KB page-aligned; kept outside `:duoime-embed`) |
 | `:app` | Android Application | System `InputMethodService`, inline & opposite-display overlay hosts, settings, onboarding |
 
 ## Roadmap
@@ -48,6 +49,21 @@ bash scripts/check.sh
 bash scripts/test_pii_check.sh
 ```
 
+### Native Rime Build (M2)
+
+GitHub Actions (`.github/workflows/build-rime-native.yml`) is the **default reproducible builder** for DuoIME's 16 KB page-aligned `libduoime_rime.so` (Option A 100% permissive: `librime` + `librime-lua` + `Lua 5.4` + header-only `Boost` + `yaml-cpp` + `leveldb` + `marisa-trie` under BSD-2-Clause + `OpenCC`). Native `.so` binaries are never committed to git.
+
+```bash
+# Fetch a published SHA-256-verified prebuilt bundle outside the repository
+bash scripts/fetch_rime_prebuilt.sh --tag <release-tag> --sha256 <hex>
+
+# Generate permissive starter Rime dictionary & OpenCC text config into an external directory
+python3 scripts/generate_rime_starter_assets.py --output-dir /tmp/duoime-rime-starter
+
+# Optional local Android NDK build (requires Android NDK r27+ via ANDROID_NDK_HOME)
+ANDROID_NDK_HOME=/path/to/ndk bash native/rime/build_android.sh --output-dir /tmp/duoime-rime-dist
+```
+
 ### NixOS Notes
 
 On NixOS with a read-only Android SDK, pass the Nix-packaged `aapt2` binary (detected automatically by `scripts/check.sh`):
@@ -57,7 +73,9 @@ On NixOS with a read-only Android SDK, pass the Nix-packaged `aapt2` binary (det
   -Pandroid.aapt2FromMavenOverride="$ANDROID_HOME/build-tools/34.0.0/aapt2"
 ```
 
-Never commit `local.properties`, absolute host paths, or keystore files.
+An optional [`flake.nix`](flake.nix) is provided for reproducible dev shells (`nix develop` for JDK 21 / hygiene tools, and `nix develop .#android-ndk` on `x86_64-linux` for optional local NDK builds). GitHub Actions remains the default native build path so day-to-day Kotlin development never requires installing the Android NDK locally.
+
+Never commit `local.properties`, absolute host paths, `.so`/`.a` binaries, or keystore files.
 
 ## License
 
