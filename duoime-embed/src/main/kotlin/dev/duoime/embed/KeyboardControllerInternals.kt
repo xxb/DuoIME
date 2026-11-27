@@ -21,10 +21,13 @@ import dev.duoime.core.model.InputConstraints
 import dev.duoime.core.model.InputMode
 import dev.duoime.core.model.KeyAction
 import dev.duoime.core.model.KeyProcessResult
+import dev.duoime.core.model.KeyboardNavReducer
+import dev.duoime.core.model.KeyboardNavUpdate
 import dev.duoime.core.model.KeyboardPanel
 import dev.duoime.core.model.KeyboardPrefs
 import dev.duoime.core.model.LangKeyPlacement
 import dev.duoime.core.model.Language
+import dev.duoime.core.model.SessionState
 import dev.duoime.core.model.SymbolTabId
 import dev.duoime.core.model.ToolbarMode
 import dev.duoime.core.model.resolveEffectiveLangKeyPlacement
@@ -51,6 +54,8 @@ internal sealed interface NavCommand {
     data object ToggleDrawer : NavCommand
 
     data class SelectSymbolTab(val tab: SymbolTabId) : NavCommand
+
+    data object ToggleShift : NavCommand
 
     data class SetNumberRow(val enabled: Boolean) : NavCommand
 }
@@ -199,6 +204,48 @@ internal fun closeEngineSafely(engine: InputEngine?) {
     }
 }
 
+@Suppress("TooGenericExceptionCaught")
+internal suspend fun clearSinkComposingSafely(sinkDispatcher: EngineSinkDispatcher) {
+    try {
+        sinkDispatcher.syncComposingOnly(EngineSnapshot.EMPTY)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Throwable) {
+        // Best-effort composing cleanup during reload or error recovery.
+    }
+}
+
+internal fun configureBootstrappedEngine(
+    boot: EngineBootstrapResult,
+    derived: DerivedKeyboardState,
+    variant: ChineseVariant,
+    effectiveConstraints: InputConstraints,
+    editorContext: EditorContext
+) {
+    val engine = boot.engine
+    if (derived.activeSchemaId != engine.state.value.schemaId) {
+        selectEngineSchemaWithFallback(engine, derived, boot.schemaIds)
+    }
+    engine.setOption(
+        dev.duoime.core.engine.EngineOptions.TRADITIONALIZATION,
+        variant == ChineseVariant.TRADITIONAL
+    )
+    applyEnginePrivacyOptions(engine, effectiveConstraints, editorContext)
+}
+
+internal fun passThroughFallbackResult(
+    schemaIds: Map<InputMode, String>,
+    chineseSchemeSchemaIds: Map<ChineseScheme, String>,
+    error: Throwable
+): EngineBootstrapResult = EngineBootstrapResult(
+    engine = PassThroughEngine(),
+    schemaIds = schemaIds,
+    chineseSchemeSchemaIds = chineseSchemeSchemaIds,
+    issue = EngineIssue(EngineIssueKind.PERSISTENT, "Plain: ${errorClassTag(error)}"),
+    forcedPlainEnglish = true,
+    usedFallback = true
+)
+
 internal fun applyEnginePrivacyOptions(
     engine: InputEngine,
     activeConstraints: InputConstraints,
@@ -229,6 +276,49 @@ internal fun isEngineInputEvent(event: ControllerEvent): Boolean = when (event) 
     is ControllerEvent.Page,
     is ControllerEvent.ExtensionButton -> true
     else -> false
+}
+
+internal data class NavTransitionOutcome(
+    val update: KeyboardNavUpdate,
+    val recordMemory: Boolean
+)
+
+internal fun reduceNavTransitionCommand(
+    command: NavCommand,
+    prefs: KeyboardPrefs,
+    session: SessionState,
+    constraints: InputConstraints
+): NavTransitionOutcome? = when (command) {
+    is NavCommand.ToggleLanguage ->
+        NavTransitionOutcome(KeyboardNavReducer.toggleLanguage(prefs, session, constraints), recordMemory = true)
+    is NavCommand.SetLanguage ->
+        NavTransitionOutcome(
+            KeyboardNavReducer.setLanguage(prefs, session, constraints, command.language),
+            recordMemory = true
+        )
+    is NavCommand.SelectChineseScheme ->
+        NavTransitionOutcome(
+            KeyboardNavReducer.selectChineseScheme(prefs, session, constraints, command.scheme),
+            recordMemory = true
+        )
+    is NavCommand.CycleChineseScheme ->
+        NavTransitionOutcome(KeyboardNavReducer.cycleChineseScheme(prefs, session, constraints), recordMemory = true)
+    is NavCommand.OpenPanel ->
+        NavTransitionOutcome(
+            KeyboardNavReducer.openPanel(prefs, session, constraints, command.panel, command.tab),
+            recordMemory = false
+        )
+    is NavCommand.ClosePanel ->
+        NavTransitionOutcome(KeyboardNavReducer.closePanel(prefs, session, constraints), recordMemory = false)
+    is NavCommand.TogglePanelLock ->
+        NavTransitionOutcome(KeyboardNavReducer.togglePanelLock(prefs, session, constraints), recordMemory = false)
+    is NavCommand.ToggleDrawer ->
+        NavTransitionOutcome(KeyboardNavReducer.toggleDrawer(prefs, session), recordMemory = false)
+    is NavCommand.SelectSymbolTab ->
+        NavTransitionOutcome(KeyboardNavReducer.selectSymbolTab(prefs, session, command.tab), recordMemory = false)
+    is NavCommand.ToggleShift ->
+        NavTransitionOutcome(KeyboardNavReducer.toggleShift(prefs, session), recordMemory = false)
+    is NavCommand.SetVariant, is NavCommand.SetNumberRow -> null
 }
 
 internal fun selectEngineSchemaWithFallback(

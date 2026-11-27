@@ -108,15 +108,34 @@ internal data class EngineBootstrapPlan(
  * Builds primary & fallback engine factories for [DuoImeService] and updates
  * [DuoImeEngineStatusRegistry] strictly in generation order.
  */
-internal class DuoImeEngineSessionFactory(
-    private val appContext: Context,
-    private val distributionVersion: String,
+internal class DuoImeEngineSessionFactory internal constructor(
+    private val rimeEngineCreator: (DuoImeSettings) -> RimeInputEngine,
     private val statusSink: (ActiveEngineStatus) -> Unit = DuoImeEngineStatusRegistry::update
 ) {
+    constructor(
+        appContext: Context,
+        distributionVersion: String,
+        statusSink: (ActiveEngineStatus) -> Unit = DuoImeEngineStatusRegistry::update
+    ) : this(
+        rimeEngineCreator = { settings ->
+            RimeInputEngine.create(
+                context = appContext,
+                distributionVersion = distributionVersion,
+                initialSchemaId = resolveInitialSchemaId(settings),
+                initialVariant = settings.chineseVariant,
+                initialIncognito = settings.alwaysIncognito
+            )
+        },
+        statusSink = statusSink
+    )
+
     private val generation = AtomicLong(0L)
 
     @Volatile
     private var requestedBackend: EngineBackend = EngineBackend.RIME
+
+    @Volatile
+    private var currentStatus: ActiveEngineStatus = ActiveEngineStatus()
 
     fun prepare(settings: DuoImeSettings): EngineBootstrapPlan {
         val gen = generation.incrementAndGet()
@@ -132,13 +151,7 @@ internal class DuoImeEngineSessionFactory(
         return when (backend) {
             EngineBackend.RIME -> EngineBootstrapPlan(
                 primaryFactory = {
-                    val engine = RimeInputEngine.create(
-                        context = appContext,
-                        distributionVersion = distributionVersion,
-                        initialSchemaId = resolveInitialSchemaId(settings),
-                        initialVariant = settings.chineseVariant,
-                        initialIncognito = settings.alwaysIncognito
-                    )
+                    val engine = rimeEngineCreator(settings)
                     publishIfLatest(
                         gen = gen,
                         status = ActiveEngineStatus(
@@ -184,7 +197,7 @@ internal class DuoImeEngineSessionFactory(
     }
 
     fun syncUiState(uiState: KeyboardUiState) {
-        val current = DuoImeEngineStatusRegistry.status.value
+        val current = currentStatus
         val resolved = resolveStatusFromUiState(
             current = current,
             requestedBackend = requestedBackend,
@@ -193,12 +206,14 @@ internal class DuoImeEngineSessionFactory(
             issueTag = uiState.engineIssue?.tag
         )
         if (resolved != current) {
+            currentStatus = resolved
             statusSink(resolved)
         }
     }
 
     private fun publishIfLatest(gen: Long, status: ActiveEngineStatus) {
         if (generation.get() == gen) {
+            currentStatus = status
             statusSink(status)
         }
     }

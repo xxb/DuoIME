@@ -764,4 +764,94 @@ class KeyboardControllerTest {
         controller.close()
         advanceUntilIdle()
     }
+
+    @Test
+    fun reloadEngineRecoversFromSinkAndReplacementInitFailuresWithoutTerminatingActor() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val initial = FlakyFakeEngine(failNextKey = false)
+        var failNextSetComposing = true
+        val flakySink = object : InputSink {
+            override val capabilities: SinkCapabilities = SinkCapabilities.STANDARD_IME
+            val commits = mutableListOf<String>()
+
+            override fun commitText(text: CharSequence) {
+                commits.add(text.toString())
+            }
+
+            override fun setComposing(text: CharSequence?) {
+                if (failNextSetComposing) {
+                    failNextSetComposing = false
+                    throw IllegalStateException("Transient sink setComposing failure")
+                }
+            }
+
+            override fun deleteBackward(count: Int) = Unit
+
+            override fun sendKey(keyCode: Int, metaState: Int) = Unit
+
+            override fun performEditorAction(actionId: Int) = Unit
+        }
+        val controller = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { initial }
+        )
+        controller.attachSink(flakySink)
+        advanceUntilIdle()
+
+        // 1) Sink throws on setComposing(null) during reload -> reload still completes & actor stays alive
+        val second = FlakyFakeEngine(failNextKey = false)
+        controller.reloadEngine(engineFactory = { second }, fallbackEngineFactory = null)
+        advanceUntilIdle()
+        assertEquals(1, initial.closeCount)
+        assertEquals(0, second.closeCount)
+
+        // 2) Replacement engine throws during setOption in applyBootstrappedEngine -> broken replacement
+        //    is closed, previous engine (`second`) is retained, issue published, and actor stays alive
+        val brokenReplacement = object : InputEngine {
+            var closed = 0
+            override val state: StateFlow<EngineSnapshot> = MutableStateFlow(EngineSnapshot.EMPTY)
+
+            override fun onKey(event: EngineKeyEvent): KeyProcessResult = KeyProcessResult.PassThrough
+
+            override fun selectCandidate(indexOnPage: Int): KeyProcessResult = KeyProcessResult.PassThrough
+
+            override fun page(forward: Boolean): Boolean = false
+
+            override fun setOption(name: String, on: Boolean) {
+                throw IllegalStateException("Replacement setOption failure")
+            }
+
+            override fun selectSchema(id: String): Boolean = true
+
+            override fun reset() = Unit
+
+            override fun close() {
+                closed++
+            }
+        }
+        controller.reloadEngine(engineFactory = { brokenReplacement }, fallbackEngineFactory = null)
+        advanceUntilIdle()
+
+        assertEquals(1, brokenReplacement.closed)
+        assertEquals(0, second.closeCount)
+        assertEquals(EngineIssueKind.PERSISTENT, controller.uiState.value.engineIssue?.kind)
+        assertTrue(controller.uiState.value.engineIssue?.tag?.startsWith("Reload:") == true)
+        assertTrue(controller.uiState.value.isEngineReady)
+
+        // Actor is still alive and processes subsequent keys + reloads cleanly
+        controller.dispatchKeyAction(KeyAction.Text("ok"))
+        advanceUntilIdle()
+        assertEquals(listOf("ok"), flakySink.commits)
+
+        val third = FlakyFakeEngine(failNextKey = false)
+        controller.reloadEngine(engineFactory = { third }, fallbackEngineFactory = null)
+        advanceUntilIdle()
+        assertEquals(1, second.closeCount)
+        assertEquals(0, third.closeCount)
+
+        controller.close()
+        advanceUntilIdle()
+        assertEquals(1, third.closeCount)
+    }
 }

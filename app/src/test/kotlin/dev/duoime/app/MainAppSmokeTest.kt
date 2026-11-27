@@ -6,6 +6,7 @@ package dev.duoime.app
 
 import dev.duoime.app.ime.ActiveEngineRuntime
 import dev.duoime.app.ime.ActiveEngineStatus
+import dev.duoime.app.ime.DuoImeEngineStatusRegistry
 import dev.duoime.app.ime.TAG_FALLBACK_LITE
 import dev.duoime.app.ime.TAG_FALLBACK_PASSTHROUGH_PREFIX
 import dev.duoime.app.ime.resolveInitialSchemaId
@@ -16,6 +17,9 @@ import dev.duoime.core.engine.EngineSchemas
 import dev.duoime.core.model.ChineseScheme
 import dev.duoime.core.model.Language
 import dev.duoime.embed.DuoImeEmbed
+import dev.duoime.embed.EngineIssue
+import dev.duoime.embed.EngineIssueKind
+import dev.duoime.embed.KeyboardUiState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -84,5 +88,47 @@ class MainAppSmokeTest {
         )
         assertEquals(ActiveEngineRuntime.PASS_THROUGH, passThrough.activeRuntime)
         assertTrue(passThrough.isFallback)
+    }
+
+    @Test
+    fun statusSyncUsesInjectedSinkWithoutReadingGlobalRegistry() {
+        val prevGlobal = DuoImeEngineStatusRegistry.status.value
+        try {
+            val expectedFallback = ActiveEngineStatus(
+                requestedBackend = EngineBackend.RIME,
+                activeRuntime = ActiveEngineRuntime.LITE,
+                fallbackTag = TAG_FALLBACK_LITE,
+                rimeVersion = null
+            )
+            // Seed global registry with the target fallback state; an isolated factory must still emit!
+            DuoImeEngineStatusRegistry.update(expectedFallback)
+            val emitted = mutableListOf<ActiveEngineStatus>()
+            val factory = dev.duoime.app.ime.DuoImeEngineSessionFactory(
+                rimeEngineCreator = { error("not invoked in sync test") },
+                statusSink = { emitted.add(it) }
+            )
+            factory.prepare(DuoImeSettings(engineBackend = EngineBackend.RIME))
+            factory.syncUiState(
+                KeyboardUiState(
+                    isEngineReady = true,
+                    isUsingFallbackEngine = true,
+                    engineIssue = EngineIssue(EngineIssueKind.PERSISTENT, TAG_FALLBACK_LITE)
+                )
+            )
+            assertEquals(2, emitted.size)
+            assertEquals(ActiveEngineRuntime.STARTING, emitted[0].activeRuntime)
+            assertEquals(expectedFallback, emitted[1])
+            // Duplicate sync with identical state must not emit a third time
+            factory.syncUiState(
+                KeyboardUiState(
+                    isEngineReady = true,
+                    isUsingFallbackEngine = true,
+                    engineIssue = EngineIssue(EngineIssueKind.PERSISTENT, TAG_FALLBACK_LITE)
+                )
+            )
+            assertEquals(2, emitted.size)
+        } finally {
+            DuoImeEngineStatusRegistry.update(prevGlobal)
+        }
     }
 }

@@ -18,7 +18,6 @@ import dev.duoime.core.model.InputMode
 import dev.duoime.core.model.KeyAction
 import dev.duoime.core.model.KeyProcessResult
 import dev.duoime.core.model.KeyboardNavReducer
-import dev.duoime.core.model.KeyboardNavUpdate
 import dev.duoime.core.model.KeyboardPanel
 import dev.duoime.core.model.KeyboardPrefs
 import dev.duoime.core.model.LangKeyPlacement
@@ -97,7 +96,7 @@ class KeyboardController(
                     engineFactory = engineFactory,
                     fallbackEngineFactory = fallbackEngineFactory
                 )
-                var activeEngine = applyBootstrappedEngine(boot)
+                var activeEngine = applyInitialBootSafely(boot)
                 currentEngine = activeEngine
                 for (event in eventChannel) {
                     if (event is ControllerEvent.ReloadEngine) {
@@ -234,34 +233,52 @@ class KeyboardController(
         actorJob.cancel()
     }
 
+    @Suppress("TooGenericExceptionCaught")
+    private suspend fun applyInitialBootSafely(boot: EngineBootstrapResult): InputEngine = try {
+        applyBootstrappedEngine(boot)
+    } catch (cancelled: CancellationException) {
+        withContext(NonCancellable) { closeEngineSafely(boot.engine) }
+        throw cancelled
+    } catch (error: Throwable) {
+        withContext(NonCancellable) { closeEngineSafely(boot.engine) }
+        applyBootstrappedEngine(
+            passThroughFallbackResult(activeSchemaIds, activeChineseSchemeSchemaIds, error)
+        )
+    }
+
     private fun applyBootstrappedEngine(boot: EngineBootstrapResult): InputEngine {
+        val nextPrefs = if (boot.forcedPlainEnglish) prefs.copy(language = Language.ENGLISH) else prefs
+        val nextSession = if (boot.forcedPlainEnglish) session.copy(languageOverride = Language.ENGLISH) else session
+        val effective = effectiveConstraints()
+        val initialDerived = deriveKeyboardState(
+            prefs = nextPrefs,
+            session = nextSession,
+            constraints = effective,
+            modeSchemaIds = boot.schemaIds,
+            chineseSchemeSchemaIds = boot.chineseSchemeSchemaIds
+        )
+        configureBootstrappedEngine(boot, initialDerived, nextPrefs.variant, effective, editorContext)
+        val engine = boot.engine
+
         activeSchemaIds = boot.schemaIds
         activeChineseSchemeSchemaIds = boot.chineseSchemeSchemaIds
         engineIssue = boot.issue
         isUsingFallbackEngine = boot.usedFallback
-        if (boot.forcedPlainEnglish) {
-            prefs = prefs.copy(language = Language.ENGLISH)
-            session = session.copy(languageOverride = Language.ENGLISH)
-        }
-        val engine = boot.engine
-        val initialDerived = currentDerived()
-        if (initialDerived.activeSchemaId != engine.state.value.schemaId) {
-            selectEngineSchemaWithFallback(engine, initialDerived, activeSchemaIds)
-        }
+        prefs = nextPrefs
+        session = nextSession
         lastSelectedSchemaId = initialDerived.activeSchemaId
-        engine.setOption(EngineOptions.TRADITIONALIZATION, prefs.variant == ChineseVariant.TRADITIONAL)
-        applyEnginePrivacyOptions(engine, effectiveConstraints(), editorContext)
         candidateWindow.reset()
         publishState(engine)
         return engine
     }
 
+    @Suppress("TooGenericExceptionCaught")
     private suspend fun handleReloadEngine(
         previousEngine: InputEngine,
         event: ControllerEvent.ReloadEngine
     ): InputEngine {
         resetEngineSafely(previousEngine)
-        sinkDispatcher.syncComposingOnly(EngineSnapshot.EMPTY)
+        clearSinkComposingSafely(sinkDispatcher)
         candidateWindow.reset()
         val boot = bootstrapControllerEngine(
             configuredSchemas = event.modeSchemaIds,
@@ -269,13 +286,26 @@ class KeyboardController(
             engineFactory = event.engineFactory,
             fallbackEngineFactory = event.fallbackEngineFactory
         )
-        val nextEngine = applyBootstrappedEngine(boot)
-        if (nextEngine !== previousEngine) {
-            withContext(NonCancellable) {
-                closeEngineSafely(previousEngine)
+        return try {
+            val nextEngine = applyBootstrappedEngine(boot)
+            if (nextEngine !== previousEngine) {
+                withContext(NonCancellable) { closeEngineSafely(previousEngine) }
             }
+            nextEngine
+        } catch (cancelled: CancellationException) {
+            if (boot.engine !== previousEngine) {
+                withContext(NonCancellable) { closeEngineSafely(boot.engine) }
+            }
+            throw cancelled
+        } catch (error: Throwable) {
+            if (boot.engine !== previousEngine) {
+                withContext(NonCancellable) { closeEngineSafely(boot.engine) }
+            }
+            engineIssue = EngineIssue(EngineIssueKind.PERSISTENT, "Reload: ${errorClassTag(error)}")
+            resetEngineSafely(previousEngine)
+            publishState(previousEngine)
+            previousEngine
         }
-        return nextEngine
     }
 
     private fun sendNav(command: NavCommand) {
@@ -303,13 +333,7 @@ class KeyboardController(
             engineIssue = EngineIssue(EngineIssueKind.TRANSIENT, "Recovered: ${errorClassTag(error)}")
         }
         resetEngineSafely(engine)
-        try {
-            sinkDispatcher.syncComposingOnly(EngineSnapshot.EMPTY)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Throwable) {
-            // Best-effort composing cleanup during recovery.
-        }
+        clearSinkComposingSafely(sinkDispatcher)
         publishState(engine)
     }
 
@@ -438,62 +462,29 @@ class KeyboardController(
 
     private suspend fun handleNavCommand(engine: InputEngine, command: NavCommand) {
         when (command) {
-            is NavCommand.ToggleLanguage -> applyNavTransition(engine, recordMemory = true) { p, s, c ->
-                KeyboardNavReducer.toggleLanguage(p, s, c)
-            }
-            is NavCommand.SetLanguage -> applyNavTransition(engine, recordMemory = true) { p, s, c ->
-                KeyboardNavReducer.setLanguage(p, s, c, command.language)
-            }
-            is NavCommand.SelectChineseScheme -> applyNavTransition(engine, recordMemory = true) { p, s, c ->
-                KeyboardNavReducer.selectChineseScheme(p, s, c, command.scheme)
-            }
-            is NavCommand.CycleChineseScheme -> applyNavTransition(engine, recordMemory = true) { p, s, c ->
-                KeyboardNavReducer.cycleChineseScheme(p, s, c)
-            }
             is NavCommand.SetVariant -> applyVariantChange(engine, command.variant)
-            is NavCommand.OpenPanel -> applyNavTransition(engine, recordMemory = false) { p, s, c ->
-                KeyboardNavReducer.openPanel(p, s, c, command.panel, command.tab)
-            }
-            is NavCommand.ClosePanel -> applyNavTransition(engine, recordMemory = false) { p, s, c ->
-                KeyboardNavReducer.closePanel(p, s, c)
-            }
-            is NavCommand.TogglePanelLock -> applyNavTransition(engine, recordMemory = false) { p, s, c ->
-                KeyboardNavReducer.togglePanelLock(p, s, c)
-            }
-            is NavCommand.ToggleDrawer -> applyNavTransition(engine, recordMemory = false) { p, s, _ ->
-                KeyboardNavReducer.toggleDrawer(p, s)
-            }
-            is NavCommand.SelectSymbolTab -> applyNavTransition(engine, recordMemory = false) { p, s, _ ->
-                KeyboardNavReducer.selectSymbolTab(p, s, command.tab)
-            }
             is NavCommand.SetNumberRow -> {
                 val previousPrefs = prefs
                 prefs = prefs.copy(includeNumberRow = command.enabled)
                 publishState(engine)
                 notifyPrefsChangedIfMutated(previousPrefs)
             }
+            else -> {
+                val previousPrefs = prefs
+                val before = currentDerived()
+                val effective = effectiveConstraints()
+                val outcome = reduceNavTransitionCommand(command, prefs, session, effective) ?: return
+                prefs = outcome.update.prefs
+                session = outcome.update.session
+                val after = currentDerived()
+                syncSchemaWithComposingCleanup(engine, before, after)
+                if (outcome.recordMemory && LanguageMemoryStore.isEligibleForMemory(effective, editorContext)) {
+                    languageMemory.put(resolveMemoryKey(editorContext), after.effectiveLanguage)
+                }
+                publishState(engine)
+                notifyPrefsChangedIfMutated(previousPrefs)
+            }
         }
-    }
-
-    private suspend fun applyNavTransition(
-        engine: InputEngine,
-        recordMemory: Boolean,
-        transition: (KeyboardPrefs, SessionState, InputConstraints) -> KeyboardNavUpdate
-    ) {
-        val previousPrefs = prefs
-        val before = currentDerived()
-        val effective = effectiveConstraints()
-        val updated = transition(prefs, session, effective)
-        prefs = updated.prefs
-        session = updated.session
-        val after = currentDerived()
-
-        syncSchemaWithComposingCleanup(engine, before, after)
-        if (recordMemory && LanguageMemoryStore.isEligibleForMemory(effective, editorContext)) {
-            languageMemory.put(resolveMemoryKey(editorContext), after.effectiveLanguage)
-        }
-        publishState(engine)
-        notifyPrefsChangedIfMutated(previousPrefs)
     }
 
     private suspend fun syncSchemaWithComposingCleanup(
@@ -549,9 +540,7 @@ class KeyboardController(
                 sinkDispatcher.dispatchSpace(engine)
                 publishState(engine)
             }
-            is KeyAction.Shift -> applyNavTransition(engine, recordMemory = false) { p, s, _ ->
-                KeyboardNavReducer.toggleShift(p, s)
-            }
+            is KeyAction.Shift -> handleNavCommand(engine, NavCommand.ToggleShift)
             is KeyAction.SelectSyllable -> handleSelectSyllable(engine, action.index)
             is KeyAction.UnlockSyllablesFrom -> handleUnlockSyllablesFrom(engine, action.fromIndex)
             else -> handleNavOrHostKeyAction(engine, action)

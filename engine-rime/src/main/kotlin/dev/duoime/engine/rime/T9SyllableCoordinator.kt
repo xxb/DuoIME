@@ -86,15 +86,17 @@ internal class T9SyllableCoordinator {
         val normalized = syllable.trim().lowercase()
         if (normalized !in T9PinyinSyllableTable.validSyllables) return false
         val expectedDigits = T9PinyinSyllableTable.toT9Digits(normalized)
-        val remaining = remainingDigitPrefix()
+        val start = skipDelimiters(lockedCursorIndex())
+        val remaining = remainingDigitPrefixFrom(start)
         if (remaining.isEmpty()) return false
         if (!remaining.startsWith(expectedDigits) && !expectedDigits.startsWith(remaining)) {
             return false
         }
-        // If user tapped a longer completion option (e.g. "ni" while only "6" typed), complete digits.
+        // If user tapped a longer completion option (e.g. "ni" while only "6" typed before "'62"),
+        // insert missing digits at the end of the current unlocked segment before any delimiter.
         if (expectedDigits.length > remaining.length) {
             val missing = expectedDigits.substring(remaining.length)
-            rawDigits.append(missing)
+            rawDigits.insert(start + remaining.length, missing)
         }
         locked.add(normalized)
         trimInvalidLockedPrefix()
@@ -205,8 +207,9 @@ internal class T9SyllableCoordinator {
         return cursor.coerceAtMost(rawDigits.length)
     }
 
-    private fun remainingDigitPrefix(): String {
-        val start = skipDelimiters(lockedCursorIndex())
+    private fun remainingDigitPrefix(): String = remainingDigitPrefixFrom(skipDelimiters(lockedCursorIndex()))
+
+    private fun remainingDigitPrefixFrom(start: Int): String {
         if (start >= rawDigits.length) return ""
         val sb = StringBuilder()
         var idx = start

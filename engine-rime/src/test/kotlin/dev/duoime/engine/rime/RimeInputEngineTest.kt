@@ -437,4 +437,45 @@ class RimeInputEngineTest {
     fun missingNativeLibraryPropagatesFromRimeInputEngineInit() {
         createEngine(FakeRimeNativeBridge(failAcquire = true))
     }
+
+    @Test
+    fun t9CompletionDigitsInsertBeforeDelimiterPreservingFollowingSyllable() {
+        val bridge = FakeRimeNativeBridge()
+        val engine = createEngine(bridge, initialSchemaId = EngineSchemas.T9_PINYIN)
+
+        // Enter incomplete first syllable "6", delimiter "'", then second syllable "62" -> "6'62"
+        typeChars(engine, "6'62")
+        val options = engine.state.value.syllables
+        val niIdx = options.indexOf("ni")
+        assertTrue("Expected completion 'ni' for 6'62: $options", niIdx >= 0)
+
+        // Selecting "ni" must insert missing '4' before '\'' -> "ni'62", NOT "6'624"
+        assertTrue(engine.selectSyllable(niIdx))
+        assertEquals(listOf("ni"), engine.state.value.lockedSyllables)
+        assertEquals("ni'62", engine.state.value.preedit)
+
+        // Following syllable "62" remains intact and lockable as "ma" -> "ni'ma"
+        val maIdx = engine.state.value.syllables.indexOf("ma")
+        assertTrue("Expected 'ma' for trailing 62: ${engine.state.value.syllables}", maIdx >= 0)
+        assertTrue(engine.selectSyllable(maIdx))
+        assertEquals(listOf("ni", "ma"), engine.state.value.lockedSyllables)
+        assertEquals("ni'ma", engine.state.value.preedit)
+
+        engine.close()
+    }
+
+    @Test
+    fun unavailableInitialSchemaRejectsInitializationAndReleasesResources() {
+        val bridge = FakeRimeNativeBridge()
+        val error = runCatching {
+            createEngine(bridge, initialSchemaId = "unsupported_schema")
+        }.exceptionOrNull()
+        assertTrue(
+            "Expected IllegalStateException when initial schema selection fails, got: $error",
+            error is IllegalStateException
+        )
+        assertEquals(listOf(1L), bridge.destroyedSessions)
+        assertEquals(1, bridge.acquireCount)
+        assertEquals(1, bridge.releaseCount)
+    }
 }

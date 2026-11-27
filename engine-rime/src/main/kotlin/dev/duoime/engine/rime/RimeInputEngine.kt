@@ -69,7 +69,9 @@ public class RimeInputEngine internal constructor(
                 createdSession = bridge.createSession()
                 check(createdSession > 0L) { "librime createSession returned 0" }
                 sessionId = createdSession
-                applyLogicalSchemaLocked(logicalSchemaId)
+                check(applyLogicalSchemaLocked(logicalSchemaId)) {
+                    "Failed to select initial Rime schema: $logicalSchemaId"
+                }
                 publishSnapshotLocked()
                 bridge.getVersion()
             } catch (err: Throwable) {
