@@ -25,14 +25,25 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.PointerInputScope
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.duoime.core.layout.KeySpec
 import dev.duoime.core.layout.SymbolCatalog
 import dev.duoime.core.model.FeedbackKey
 import dev.duoime.core.model.FeedbackZone
@@ -41,6 +52,7 @@ import dev.duoime.core.model.KeyAction
 import dev.duoime.core.model.KeyboardPanel
 import dev.duoime.core.model.Language
 import dev.duoime.core.model.SymbolTabId
+import dev.duoime.ui.grid.KeyHoldController
 import dev.duoime.ui.theme.DuoColorTokens
 import dev.duoime.ui.theme.LocalDuoColors
 import dev.duoime.ui.theme.LocalDuoDimensions
@@ -60,12 +72,22 @@ data class DuoSymbolPanelState(
  * Pure-JVM action metadata for [DuoSymbolPanel] verified by zero-duplication invariant tests.
  */
 object DuoSymbolPanelMeta {
+    val BACKSPACE_KEY_SPEC: KeySpec = KeySpec(
+        id = "sym_backspace",
+        label = "⌫",
+        action = KeyAction.Backspace,
+        weight = 1.1f,
+        repeatable = true,
+        zone = FeedbackZone.BACKSPACE,
+        allowLongPress = false
+    )
+
     fun bottomBarActions(): List<KeyAction> = listOf(
         KeyAction.ClosePanel,
         KeyAction.OpenPanel(KeyboardPanel.NUMBER),
         KeyAction.TogglePanelLock,
         KeyAction.Space,
-        KeyAction.Backspace
+        BACKSPACE_KEY_SPEC.action
     )
 }
 
@@ -74,14 +96,15 @@ object DuoSymbolPanelMeta {
  * - Context-aware category tabs (`CLI` first on `TERMINAL`, Chinese first on `CHINESE`, ASCII first on `ENGLISH`)
  * - 6-column scrollable symbol grid: tap emits [KeyAction.CommitPanelSymbol] (`keepOpen = false`),
  *   long-press emits `keepOpen = true` for continuous symbol entry without closing the panel
- * - Bottom bar: `[返回]` `[123]` `[🔒]` `[空格]` `[⌫]`
+ * - Bottom bar: `[返回]` `[123]` `[🔒]` `[空格]` `[⌫]` (with press-hold auto-repeat on `⌫`)
  */
 @Composable
 fun DuoSymbolPanel(
     state: DuoSymbolPanelState,
     onAction: (KeyAction) -> Unit,
     modifier: Modifier = Modifier,
-    onKeyPressDown: (FeedbackKey) -> Unit = {}
+    onKeyPressDown: (FeedbackKey) -> Unit = {},
+    onKeyRepeat: (FeedbackKey) -> Unit = {}
 ) {
     val colors = LocalDuoColors.current
     val dimensions = LocalDuoDimensions.current
@@ -151,9 +174,9 @@ fun DuoSymbolPanel(
 
         SymbolBottomActionBar(
             panelLocked = state.panelLocked,
-            colors = colors,
             onAction = onAction,
-            onKeyPressDown = onKeyPressDown
+            onKeyPressDown = onKeyPressDown,
+            onKeyRepeat = onKeyRepeat
         )
     }
 }
@@ -216,10 +239,11 @@ private fun SymbolTile(symbol: String, colors: DuoColorTokens, onTap: () -> Unit
 @Composable
 private fun SymbolBottomActionBar(
     panelLocked: Boolean,
-    colors: DuoColorTokens,
     onAction: (KeyAction) -> Unit,
-    onKeyPressDown: (FeedbackKey) -> Unit
+    onKeyPressDown: (FeedbackKey) -> Unit,
+    onKeyRepeat: (FeedbackKey) -> Unit
 ) {
+    val colors = LocalDuoColors.current
     val dimensions = LocalDuoDimensions.current
     Row(
         modifier = Modifier
@@ -269,18 +293,165 @@ private fun SymbolBottomActionBar(
                 onAction(KeyAction.Space)
             }
         )
-        SymbolActionButton(
-            label = "⌫",
-            highlighted = false,
-            colors = colors,
-            modifier = Modifier.weight(1.1f),
-            onClick = {
-                onKeyPressDown(FeedbackKey(KeyAction.Backspace, "⌫", FeedbackZone.BACKSPACE))
-                onAction(KeyAction.Backspace)
-            }
+        RepeatableSymbolActionButton(
+            keySpec = DuoSymbolPanelMeta.BACKSPACE_KEY_SPEC,
+            onAction = onAction,
+            onKeyPressDown = onKeyPressDown,
+            onKeyRepeat = onKeyRepeat,
+            modifier = Modifier.weight(DuoSymbolPanelMeta.BACKSPACE_KEY_SPEC.weight)
         )
     }
 }
+
+private class RepeatableButtonDispatch(
+    val onActionState: State<(KeyAction) -> Unit>,
+    val onKeyPressDownState: State<(FeedbackKey) -> Unit>
+)
+
+@Composable
+private fun RepeatableSymbolActionButton(
+    keySpec: KeySpec,
+    onAction: (KeyAction) -> Unit,
+    onKeyPressDown: (FeedbackKey) -> Unit,
+    onKeyRepeat: (FeedbackKey) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val colors = LocalDuoColors.current
+    val dimensions = LocalDuoDimensions.current
+    val corner = RoundedCornerShape(dimensions.keyCornerRadius)
+    val coroutineScope = rememberCoroutineScope()
+    val currentOnAction = rememberUpdatedState(onAction)
+    val currentOnKeyPressDown = rememberUpdatedState(onKeyPressDown)
+    val currentOnKeyRepeat = rememberUpdatedState(onKeyRepeat)
+    val pressedState = remember { mutableStateOf(false) }
+    val dispatch = remember {
+        RepeatableButtonDispatch(
+            onActionState = currentOnAction,
+            onKeyPressDownState = currentOnKeyPressDown
+        )
+    }
+    val holdController = remember(coroutineScope) {
+        KeyHoldController(
+            scope = coroutineScope,
+            onRepeatAction = { action -> currentOnAction.value(action) },
+            onVisualChanged = {},
+            onRepeatFeedback = { key -> currentOnKeyRepeat.value(key) }
+        )
+    }
+
+    DisposableEffect(holdController) {
+        onDispose { holdController.cancelAll() }
+    }
+
+    val bg = if (pressedState.value) colors.actionKeyPressedBackground else colors.actionKeyBackground
+    Box(
+        modifier = modifier
+            .fillMaxHeight()
+            .clip(corner)
+            .background(bg)
+            .border(width = 1.dp, color = colors.keyBorder, shape = corner)
+            .pointerInput(holdController, keySpec) {
+                handleRepeatableButtonPointers(
+                    keySpec = keySpec,
+                    holdController = holdController,
+                    pressedState = pressedState,
+                    dispatch = dispatch
+                )
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        BasicText(
+            text = keySpec.label,
+            maxLines = 1,
+            style = TextStyle(
+                color = colors.keyText,
+                fontSize = dimensions.barButtonFontSp.sp,
+                fontWeight = FontWeight.Medium
+            )
+        )
+    }
+}
+
+private suspend fun PointerInputScope.handleRepeatableButtonPointers(
+    keySpec: KeySpec,
+    holdController: KeyHoldController,
+    pressedState: MutableState<Boolean>,
+    dispatch: RepeatableButtonDispatch
+) {
+    var activePointerId: Long? = null
+    try {
+        awaitPointerEventScope {
+            while (true) {
+                val event = awaitPointerEvent()
+                for (change in event.changes) {
+                    activePointerId = processRepeatablePointerChange(
+                        change = change,
+                        activePointerId = activePointerId,
+                        inside = isInsideBounds(change, size.width.toFloat(), size.height.toFloat()),
+                        keySpec = keySpec,
+                        holdController = holdController,
+                        pressedState = pressedState,
+                        dispatch = dispatch
+                    )
+                }
+            }
+        }
+    } finally {
+        activePointerId?.let { holdController.cancelPointer(it) }
+        pressedState.value = false
+    }
+}
+
+private fun isInsideBounds(change: PointerInputChange, width: Float, height: Float): Boolean =
+    change.position.x in 0f..width && change.position.y in 0f..height
+
+@Suppress("LongParameterList")
+private fun processRepeatablePointerChange(
+    change: PointerInputChange,
+    activePointerId: Long?,
+    inside: Boolean,
+    keySpec: KeySpec,
+    holdController: KeyHoldController,
+    pressedState: MutableState<Boolean>,
+    dispatch: RepeatableButtonDispatch
+): Long? {
+    val pid = change.id.value
+    if (change.isConsumed) {
+        return cancelIfActive(pid, activePointerId, holdController, pressedState)
+    }
+    if (change.pressed && !change.previousPressed) {
+        if (activePointerId != null || !inside) return activePointerId
+        pressedState.value = true
+        change.consume()
+        dispatch.onKeyPressDownState.value(FeedbackKey(keySpec.action, keySpec.label, keySpec.zone))
+        holdController.onKeyDown(pid, SYMBOL_REPEATABLE_KEY_INDEX, keySpec)
+        return pid
+    }
+    if (activePointerId != pid) return activePointerId
+    change.consume()
+    if (!change.pressed) {
+        pressedState.value = false
+        val releaseAction = if (inside) holdController.onKeyUp(pid, keySpec) else null
+        if (!inside) holdController.cancelPointer(pid)
+        if (releaseAction != null) dispatch.onActionState.value(releaseAction)
+        return null
+    }
+    return if (inside) activePointerId else cancelIfActive(pid, activePointerId, holdController, pressedState)
+}
+
+private fun cancelIfActive(
+    pid: Long,
+    activePointerId: Long?,
+    holdController: KeyHoldController,
+    pressedState: MutableState<Boolean>
+): Long? {
+    if (activePointerId != pid) return activePointerId
+    holdController.cancelPointer(pid)
+    pressedState.value = false
+    return null
+}
+
+private const val SYMBOL_REPEATABLE_KEY_INDEX: Int = 0
 
 @Composable
 private fun SymbolActionButton(

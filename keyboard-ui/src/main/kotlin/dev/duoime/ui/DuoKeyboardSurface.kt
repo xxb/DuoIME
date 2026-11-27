@@ -235,6 +235,7 @@ private fun SurfaceBody(
             ),
             onAction = callbacks.onKeyAction,
             onKeyPressDown = callbacks.onKeyPressDown,
+            onKeyRepeat = callbacks.onKeyRepeat,
             modifier = modifier
         )
         hasLeftSlot(state.layout) -> T9GridWithLeftRail(

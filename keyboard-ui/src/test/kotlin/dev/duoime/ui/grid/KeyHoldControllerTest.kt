@@ -5,7 +5,9 @@ package dev.duoime.ui.grid
 import dev.duoime.core.layout.BuiltInLayouts
 import dev.duoime.core.layout.KeyCodes
 import dev.duoime.core.model.FeedbackKey
+import dev.duoime.core.model.FeedbackZone
 import dev.duoime.core.model.KeyAction
+import dev.duoime.ui.panel.DuoSymbolPanelMeta
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -172,5 +174,53 @@ class KeyHoldControllerTest {
         advanceTimeBy(500L)
         runCurrent()
         assertNull(controller.onKeyUp(2L, disabledBack))
+    }
+
+    @Test
+    fun symbolPanelBackspaceKeySpecAutoRepeatsWithFeedbackAndCancelsCleanly() = runTest {
+        val repeatActions = mutableListOf<KeyAction>()
+        val repeatFeedback = mutableListOf<FeedbackKey>()
+        val controller = KeyHoldController(
+            scope = this,
+            onRepeatAction = { repeatActions.add(it) },
+            onVisualChanged = {},
+            onRepeatFeedback = { repeatFeedback.add(it) }
+        )
+        val symBackspace = DuoSymbolPanelMeta.BACKSPACE_KEY_SPEC
+        assertTrue(symBackspace.repeatable)
+        assertTrue(symBackspace.enabled)
+        assertEquals(KeyAction.Backspace, symBackspace.action)
+        assertEquals(FeedbackZone.BACKSPACE, symBackspace.zone)
+        assertEquals(KeyAction.Backspace, DuoSymbolPanelMeta.bottomBarActions().last())
+
+        // Short tap (< 400ms) emits a single Backspace on release with zero repeat ticks
+        controller.onKeyDown(pointerId = 1L, keyIndex = 0, key = symBackspace)
+        advanceTimeBy(180L)
+        runCurrent()
+        assertTrue(repeatActions.isEmpty())
+        assertTrue(repeatFeedback.isEmpty())
+        assertEquals(KeyAction.Backspace, controller.onKeyUp(pointerId = 1L, releasedKey = symBackspace))
+
+        // Sustained hold repeats Backspace + feedback every 55ms after 400ms and suppresses trailing release
+        controller.onKeyDown(pointerId = 2L, keyIndex = 0, key = symBackspace)
+        advanceTimeBy(400L + 55L * 3 + 10L)
+        runCurrent()
+        assertEquals(4, repeatActions.size)
+        assertEquals(4, repeatFeedback.size)
+        assertTrue(repeatActions.all { it == KeyAction.Backspace })
+        assertTrue(repeatFeedback.all { it == FeedbackKey(KeyAction.Backspace, "⌫", FeedbackZone.BACKSPACE) })
+        assertNull(controller.onKeyUp(pointerId = 2L, releasedKey = symBackspace))
+
+        // Slide-off / cancel immediately stops repeating with no leaked ticks
+        repeatActions.clear()
+        controller.onKeyDown(pointerId = 3L, keyIndex = 0, key = symBackspace)
+        advanceTimeBy(400L + 60L)
+        runCurrent()
+        val countBeforeCancel = repeatActions.size
+        assertTrue(countBeforeCancel >= 2)
+        controller.cancelPointer(pointerId = 3L)
+        advanceTimeBy(500L)
+        runCurrent()
+        assertEquals(countBeforeCancel, repeatActions.size)
     }
 }
