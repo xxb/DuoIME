@@ -198,9 +198,10 @@ fun DuoToolbar(
 
 @Composable
 private fun EngineIssueChip(tag: String, colors: DuoColorTokens, onDismiss: () -> Unit) {
+    val fontSizeSp = (LocalDuoDimensions.current.toolbarFontSp - 1f).coerceAtLeast(12f)
     val warningStyle = TextStyle(
         color = colors.warningText,
-        fontSize = 12.sp,
+        fontSize = fontSizeSp.sp,
         fontWeight = FontWeight.SemiBold
     )
     Row(
@@ -232,6 +233,7 @@ private fun EngineIssueChip(tag: String, colors: DuoColorTokens, onDismiss: () -
 
 @Composable
 private fun ToolbarChip(label: String, selected: Boolean, colors: DuoColorTokens, onClick: () -> Unit) {
+    val fontSizeSp = LocalDuoDimensions.current.toolbarFontSp
     val bg = if (selected) colors.chipSelectedBackground else colors.chipBackground
     val fg = if (selected) colors.chipSelectedText else colors.chipText
     Box(
@@ -249,7 +251,7 @@ private fun ToolbarChip(label: String, selected: Boolean, colors: DuoColorTokens
             maxLines = 1,
             style = TextStyle(
                 color = fg,
-                fontSize = 13.sp,
+                fontSize = fontSizeSp.sp,
                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
             )
         )

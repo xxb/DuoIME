@@ -109,7 +109,7 @@ fun CandidateBar(snapshot: EngineSnapshot, callbacks: CandidateBarCallbacks, mod
                 overflow = TextOverflow.Ellipsis,
                 style = TextStyle(
                     color = colors.preeditText,
-                    fontSize = 15.sp,
+                    fontSize = dimensions.preeditFontSp.sp,
                     fontWeight = FontWeight.SemiBold
                 ),
                 modifier = Modifier
@@ -134,6 +134,7 @@ fun CandidateBar(snapshot: EngineSnapshot, callbacks: CandidateBarCallbacks, mod
                 CandidateChip(
                     text = item.text,
                     highlighted = highlighted,
+                    fontSizeSp = dimensions.candidateFontSp,
                     colors = colors,
                     onClick = { callbacks.onSelectCandidate(item.indexOnPage) }
                 )
@@ -144,12 +145,14 @@ fun CandidateBar(snapshot: EngineSnapshot, callbacks: CandidateBarCallbacks, mod
             SmallBarButton(
                 label = "‹",
                 enabled = snapshot.hasPrevPage,
+                fontSizeSp = dimensions.barButtonFontSp,
                 colors = colors,
                 onClick = { callbacks.onPage(false) }
             )
             SmallBarButton(
                 label = "›",
                 enabled = snapshot.hasNextPage,
+                fontSizeSp = dimensions.barButtonFontSp,
                 colors = colors,
                 onClick = { callbacks.onPage(true) }
             )
@@ -158,6 +161,7 @@ fun CandidateBar(snapshot: EngineSnapshot, callbacks: CandidateBarCallbacks, mod
         SmallBarButton(
             label = if (snapshot.variant == ChineseVariant.TRADITIONAL) "繁" else "简",
             enabled = true,
+            fontSizeSp = dimensions.barButtonFontSp,
             colors = colors,
             onClick = callbacks.onToggleVariant
         )
@@ -190,6 +194,7 @@ fun SyllableChipRail(snapshot: EngineSnapshot, onSelectSyllable: (Int) -> Unit, 
                         SyllableChip(
                             text = "×",
                             highlighted = false,
+                            fontSizeSp = dimensions.syllableFontSp,
                             colors = colors,
                             onClick = { onSelectSyllable(-1) }
                         )
@@ -202,6 +207,7 @@ fun SyllableChipRail(snapshot: EngineSnapshot, onSelectSyllable: (Int) -> Unit, 
                     SyllableChip(
                         text = syl,
                         highlighted = idx == snapshot.selectedSyllableIndex,
+                        fontSizeSp = dimensions.syllableFontSp,
                         colors = colors,
                         onClick = { onSelectSyllable(idx) }
                     )
@@ -212,7 +218,13 @@ fun SyllableChipRail(snapshot: EngineSnapshot, onSelectSyllable: (Int) -> Unit, 
 }
 
 @Composable
-private fun CandidateChip(text: String, highlighted: Boolean, colors: DuoColorTokens, onClick: () -> Unit) {
+private fun CandidateChip(
+    text: String,
+    highlighted: Boolean,
+    fontSizeSp: Float,
+    colors: DuoColorTokens,
+    onClick: () -> Unit
+) {
     val bg = if (highlighted) colors.chipSelectedBackground else colors.chipBackground
     val fg = if (highlighted) colors.chipSelectedText else colors.chipText
     Box(
@@ -230,7 +242,7 @@ private fun CandidateChip(text: String, highlighted: Boolean, colors: DuoColorTo
             maxLines = 1,
             style = TextStyle(
                 color = fg,
-                fontSize = 19.sp,
+                fontSize = fontSizeSp.sp,
                 fontWeight = if (highlighted) FontWeight.SemiBold else FontWeight.Normal
             )
         )
@@ -238,7 +250,13 @@ private fun CandidateChip(text: String, highlighted: Boolean, colors: DuoColorTo
 }
 
 @Composable
-private fun SyllableChip(text: String, highlighted: Boolean, colors: DuoColorTokens, onClick: () -> Unit) {
+private fun SyllableChip(
+    text: String,
+    highlighted: Boolean,
+    fontSizeSp: Float,
+    colors: DuoColorTokens,
+    onClick: () -> Unit
+) {
     val bg = if (highlighted) colors.chipSelectedBackground else colors.chipBackground
     val fg = if (highlighted) colors.chipSelectedText else colors.chipText
     Box(
@@ -256,7 +274,7 @@ private fun SyllableChip(text: String, highlighted: Boolean, colors: DuoColorTok
             maxLines = 1,
             style = TextStyle(
                 color = fg,
-                fontSize = 16.sp,
+                fontSize = fontSizeSp.sp,
                 fontWeight = if (highlighted) FontWeight.SemiBold else FontWeight.Normal
             )
         )
@@ -264,7 +282,13 @@ private fun SyllableChip(text: String, highlighted: Boolean, colors: DuoColorTok
 }
 
 @Composable
-private fun SmallBarButton(label: String, enabled: Boolean, colors: DuoColorTokens, onClick: () -> Unit) {
+private fun SmallBarButton(
+    label: String,
+    enabled: Boolean,
+    fontSizeSp: Float,
+    colors: DuoColorTokens,
+    onClick: () -> Unit
+) {
     Box(
         modifier = Modifier
             .defaultMinSize(minWidth = CandidateBarLayout.SMALL_BUTTON_MIN_WIDTH_DP.dp)
@@ -280,7 +304,7 @@ private fun SmallBarButton(label: String, enabled: Boolean, colors: DuoColorToke
             maxLines = 1,
             style = TextStyle(
                 color = if (enabled) colors.chipText else colors.keySecondaryText,
-                fontSize = 17.sp,
+                fontSize = fontSizeSp.sp,
                 fontWeight = FontWeight.Medium
             )
         )

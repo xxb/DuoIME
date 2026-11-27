@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.util.DisplayMetrics
 import android.view.Display
 import android.view.KeyEvent
 import android.view.View
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
@@ -31,17 +33,20 @@ import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.duoime.app.MainActivity
@@ -50,6 +55,7 @@ import dev.duoime.app.dualscreen.DisplayClassifier
 import dev.duoime.app.dualscreen.DualScreenSessionController
 import dev.duoime.app.dualscreen.OverlayHost
 import dev.duoime.app.dualscreen.OverlaySurface
+import dev.duoime.app.dualscreen.PhysicalDisplayMetrics
 import dev.duoime.app.dualscreen.PlacementEvaluationSnapshot
 import dev.duoime.app.dualscreen.SystemImePinDetector
 import dev.duoime.app.settings.DuoImePreferences
@@ -229,16 +235,26 @@ class DuoImeService : InputMethodService() {
             return
         }
 
-        val density = LocalDensity.current
-        val screenHeightPx = with(density) {
-            LocalConfiguration.current.screenHeightDp.toFloat() * density.density
-        }.toInt()
-        val heightPx = DuoImePreferences.computeInlineKeyboardHeightPx(
-            windowHeightPx = screenHeightPx,
-            heightFraction = keyboardState.heightFraction,
-            density = density.density
+        val systemDensity = LocalDensity.current
+        val configuration = LocalConfiguration.current
+        val displayMetrics = LocalContext.current.resources.displayMetrics
+        val (displayWidthPx, displayHeightPx) = resolveInlineDisplayBoundsPx(
+            configuration = configuration,
+            systemDensity = systemDensity.density,
+            displayMetrics = displayMetrics
         )
-        val heightDp = with(density) { heightPx.toDp() }
+        val physicalDensity = PhysicalDisplayMetrics.resolvePhysicalDensity(
+            display = window?.window?.decorView?.display,
+            displayMetrics = displayMetrics,
+            currentWidthPx = displayWidthPx,
+            currentHeightPx = displayHeightPx
+        )
+        val heightPx = DuoImePreferences.computeInlineKeyboardHeightPx(
+            windowHeightPx = displayHeightPx,
+            heightFraction = keyboardState.heightFraction,
+            density = physicalDensity
+        )
+        val heightDp = with(systemDensity) { heightPx.toDp() }
         val bgColor = if (settings.darkTheme) Color(0xFF0A0C10) else Color(0xFFECEFF4)
 
         Column(
@@ -253,15 +269,41 @@ class DuoImeService : InputMethodService() {
                     onClick = { openSettingsActivity() }
                 )
             }
-            DuoImeKeyboard(
-                controller = controller,
-                sink = inlineSinkProxy,
-                darkTheme = settings.darkTheme,
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(heightDp)
-            )
+            ) {
+                CompositionLocalProvider(
+                    LocalDensity provides Density(density = physicalDensity, fontScale = 1f)
+                ) {
+                    DuoImeKeyboard(
+                        controller = controller,
+                        sink = inlineSinkProxy,
+                        darkTheme = settings.darkTheme,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
         }
+    }
+
+    private fun resolveInlineDisplayBoundsPx(
+        configuration: Configuration,
+        systemDensity: Float,
+        displayMetrics: DisplayMetrics
+    ): Pair<Int, Int> {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bounds = runCatching { window?.window?.windowManager?.maximumWindowMetrics?.bounds }.getOrNull()
+            if (bounds != null && bounds.width() > 0 && bounds.height() > 0) {
+                return bounds.width() to bounds.height()
+            }
+        }
+        val widthPx = displayMetrics.widthPixels.takeIf { it > 0 }
+            ?: (configuration.screenWidthDp.toFloat() * systemDensity).toInt()
+        val heightPx = displayMetrics.heightPixels.takeIf { it > 0 }
+            ?: (configuration.screenHeightDp.toFloat() * systemDensity).toInt()
+        return widthPx to heightPx
     }
 
     override fun onComputeInsets(outInsets: Insets) {

@@ -246,7 +246,7 @@ private fun updateRenderCache(
 
     val rowCount = layout.rows.size.coerceAtLeast(1)
     val approxRowHeightDp = (size.height.toFloat() / rowCount) / metrics.density
-    val primaryFontSp = (approxRowHeightDp * 0.30f).coerceIn(12f, 22f).sp
+    val primaryFontSp = (approxRowHeightDp * 0.32f).coerceIn(14f, 26f).sp
     val secondaryFontSp = (approxRowHeightDp * 0.16f).coerceIn(8f, 11f).sp
     val popupFontSp = (approxRowHeightDp * 0.40f).coerceIn(15f, 24f).sp
 

@@ -17,6 +17,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -24,6 +25,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.unit.Density
 import dev.duoime.app.ime.ImeComposeOwner
 import dev.duoime.core.engine.InputSink
 import dev.duoime.embed.DuoImeKeyboard
@@ -33,7 +35,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 
 private data class OverlayRenderConfig(
     val darkTheme: Boolean = true,
-    val bottomInsetPx: Int = 0
+    val bottomInsetPx: Int = 0,
+    val physicalDensity: Float = 2.0f
 )
 
 @SuppressLint("ViewConstructor")
@@ -154,9 +157,15 @@ class OverlayHost(
         val lp = layoutParams ?: return
 
         val metrics = computeMetricsForWindowManager(wm, heightFraction)
+        val physicalDensity = computePhysicalDensityForOverlay(
+            display = root.display ?: runCatching { root.context.display }.getOrNull(),
+            context = root.context,
+            wm = wm
+        )
         renderConfigFlow.value = OverlayRenderConfig(
             darkTheme = darkTheme,
-            bottomInsetPx = metrics.bottomInsetPx
+            bottomInsetPx = metrics.bottomInsetPx,
+            physicalDensity = physicalDensity
         )
         if (lp.height != metrics.windowHeightPx) {
             lp.height = metrics.windowHeightPx
@@ -169,7 +178,15 @@ class OverlayHost(
         val root = rootView ?: return
         val lp = layoutParams ?: return
         val metrics = computeMetricsForWindowManager(wm, showTracker.lastHeightFraction)
-        renderConfigFlow.value = renderConfigFlow.value.copy(bottomInsetPx = metrics.bottomInsetPx)
+        val physicalDensity = computePhysicalDensityForOverlay(
+            display = root.display ?: runCatching { root.context.display }.getOrNull(),
+            context = root.context,
+            wm = wm
+        )
+        renderConfigFlow.value = renderConfigFlow.value.copy(
+            bottomInsetPx = metrics.bottomInsetPx,
+            physicalDensity = physicalDensity
+        )
         lp.height = metrics.windowHeightPx
         runCatching { wm.updateViewLayout(root, lp) }
     }
@@ -200,9 +217,15 @@ class OverlayHost(
 
         val wm = windowContext.getSystemService(WindowManager::class.java) ?: return false
         val metrics = computeMetricsForWindowManager(wm, heightFraction)
+        val physicalDensity = computePhysicalDensityForOverlay(
+            display = runCatching { windowContext.display }.getOrNull() ?: targetDisplay,
+            context = windowContext,
+            wm = wm
+        )
         renderConfigFlow.value = OverlayRenderConfig(
             darkTheme = darkTheme,
-            bottomInsetPx = metrics.bottomInsetPx
+            bottomInsetPx = metrics.bottomInsetPx,
+            physicalDensity = physicalDensity
         )
 
         val owner = ImeComposeOwner().apply { onCreate() }
@@ -216,21 +239,24 @@ class OverlayHost(
             owner.attachToView(this)
             setContent {
                 val cfg by renderConfigFlow.collectAsState()
-                val density = LocalDensity.current
-                val bottomPadDp = with(density) { cfg.bottomInsetPx.toDp() }
-                val bgColor = if (cfg.darkTheme) Color(0xFF0A0C10) else Color(0xFFECEFF4)
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(bgColor)
-                        .padding(bottom = bottomPadDp)
+                CompositionLocalProvider(
+                    LocalDensity provides Density(density = cfg.physicalDensity, fontScale = 1f)
                 ) {
-                    DuoImeKeyboard(
-                        controller = controller,
-                        sink = inputSink,
-                        darkTheme = cfg.darkTheme,
-                        modifier = Modifier.fillMaxSize()
-                    )
+                    val bottomPadDp = with(LocalDensity.current) { cfg.bottomInsetPx.toDp() }
+                    val bgColor = if (cfg.darkTheme) Color(0xFF0A0C10) else Color(0xFFECEFF4)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(bgColor)
+                            .padding(bottom = bottomPadDp)
+                    ) {
+                        DuoImeKeyboard(
+                            controller = controller,
+                            sink = inputSink,
+                            darkTheme = cfg.darkTheme,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
                 }
             }
         }
@@ -269,6 +295,16 @@ class OverlayHost(
         layoutParams = lp
         composeOwner = owner
         return true
+    }
+
+    private fun computePhysicalDensityForOverlay(display: Display?, context: Context, wm: WindowManager): Float {
+        val bounds = wm.currentWindowMetrics.bounds
+        return PhysicalDisplayMetrics.resolvePhysicalDensity(
+            display = display,
+            displayMetrics = context.resources.displayMetrics,
+            currentWidthPx = bounds.width(),
+            currentHeightPx = bounds.height()
+        )
     }
 
     private fun computeMetricsForWindowManager(wm: WindowManager, heightFraction: Float): OverlayLayoutMetrics {
