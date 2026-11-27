@@ -258,7 +258,7 @@ def verify_library_aar(archive_path: str, label: str, forbid_native: bool) -> li
         for name in names:
             if banned_re.search(name):
                 sys.exit(f"ERROR: Banned entry in {label}: {name}")
-            if name.startswith("assets/") and not name.startswith("assets/duoime/"):
+            if name.startswith("assets/") and name != "assets/" and not name.startswith("assets/duoime/"):
                 sys.exit(f"ERROR: {label} asset outside assets/duoime/: {name}")
             if name.startswith("jni/") or name.endswith(".so"):
                 if forbid_native:

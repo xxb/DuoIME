@@ -300,4 +300,38 @@ class DuoImePreferencesTest {
             )
         )
     }
+
+    @Test
+    fun engineBackendDefaultsToRimePersistsAndSurvivesGeneralAndKeyboardPrefUpdates() {
+        val backing = InMemorySharedPreferences()
+        val prefs = DuoImePreferences(backing)
+        assertEquals(EngineBackend.RIME, prefs.load().engineBackend)
+
+        // Unknown raw value degrades safely to default RIME
+        backing.putRawString(DuoImePreferences.KEY_ENGINE_BACKEND, "UNKNOWN_ENGINE")
+        assertEquals(EngineBackend.RIME, prefs.load().engineBackend)
+
+        // Switching to LITE persists across reload and survives IME keyboard pref updates
+        val merged = prefs.saveGeneralSettingsPreservingKeyboardPrefs(
+            prefs.load().copy(engineBackend = EngineBackend.LITE)
+        )
+        assertEquals(EngineBackend.LITE, merged.engineBackend)
+        assertEquals(EngineBackend.LITE, DuoImePreferences(backing).load().engineBackend)
+
+        prefs.updateKeyboardPrefs(
+            KeyboardPrefs(
+                language = Language.CHINESE,
+                chineseScheme = ChineseScheme.XIAOHE_SHUANGPIN,
+                variant = ChineseVariant.TRADITIONAL,
+                includeNumberRow = false
+            )
+        )
+        val afterKeyboardUpdate = DuoImePreferences(backing).load()
+        assertEquals(EngineBackend.LITE, afterKeyboardUpdate.engineBackend)
+        assertEquals(ChineseScheme.XIAOHE_SHUANGPIN, afterKeyboardUpdate.chineseScheme)
+
+        // Switching back to RIME persists cleanly
+        prefs.save(afterKeyboardUpdate.copy(engineBackend = EngineBackend.RIME))
+        assertEquals(EngineBackend.RIME, DuoImePreferences(backing).load().engineBackend)
+    }
 }

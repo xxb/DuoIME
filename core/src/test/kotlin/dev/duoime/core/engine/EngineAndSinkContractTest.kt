@@ -124,6 +124,8 @@ class EngineAndSinkContractTest {
         assertFalse(passthrough.selectSchema(EngineSchemas.PINYIN_26))
         passthrough.setOption(EngineOptions.INCOGNITO, true)
         passthrough.reset()
+        passthrough.close()
+        engine.close()
         assertEquals(EngineSnapshot.EMPTY, passthrough.state.value)
     }
 }

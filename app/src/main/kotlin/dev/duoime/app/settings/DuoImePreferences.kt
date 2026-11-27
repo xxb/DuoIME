@@ -16,10 +16,30 @@ import dev.duoime.ui.theme.DuoThemePreset
 import kotlin.math.roundToInt
 
 /**
+ * Selectable IME input engine backend for `:app`.
+ *
+ * [RIME] is the default M2 backend backed by `:engine-rime` (`librime` + OpenCC), falling back
+ * automatically to `:engine-lite` when the native library is unavailable. [LITE] selects the
+ * lightweight pure-Kotlin `:engine-lite` backend directly.
+ */
+enum class EngineBackend {
+    RIME,
+    LITE;
+
+    companion object {
+        fun fromNameOrDefault(raw: String?, fallback: EngineBackend = RIME): EngineBackend {
+            val normalized = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return fallback
+            return entries.firstOrNull { it.name.equals(normalized, ignoreCase = true) } ?: fallback
+        }
+    }
+}
+
+/**
  * Persisted user preferences for DuoIME stored strictly in app-private storage (`allowBackup=false`).
  * Defaults keep acoustic key sounds OFF and haptic feedback ON.
  */
 data class DuoImeSettings(
+    val engineBackend: EngineBackend = EngineBackend.RIME,
     val themePreset: DuoThemePreset = DuoThemePreset.DARK,
     val includeNumberRow: Boolean = false,
     val preferredLanguage: Language = Language.CHINESE,
@@ -108,7 +128,9 @@ class DuoImePreferences internal constructor(
             rawThemePreset = prefs.getString(KEY_THEME_PRESET, null),
             legacyDarkTheme = prefs.getBoolean(KEY_DARK_THEME, true)
         )
+        val engineBackend = EngineBackend.fromNameOrDefault(prefs.getString(KEY_ENGINE_BACKEND, null))
         return DuoImeSettings(
+            engineBackend = engineBackend,
             themePreset = themePreset,
             includeNumberRow = keyboardPrefs.includeNumberRow,
             preferredLanguage = keyboardPrefs.language,
@@ -141,6 +163,7 @@ class DuoImePreferences internal constructor(
             .filter { it.isNotEmpty() }
             .toSet()
         prefs.edit()
+            .putString(KEY_ENGINE_BACKEND, settings.engineBackend.name)
             .putString(KEY_THEME_PRESET, settings.themePreset.name)
             .putBoolean(KEY_DARK_THEME, settings.darkTheme)
             .putBoolean(KEY_NUMBER_ROW, settings.includeNumberRow)
@@ -220,6 +243,7 @@ class DuoImePreferences internal constructor(
 
     companion object {
         private const val PREFS_NAME = "duoime_settings"
+        internal const val KEY_ENGINE_BACKEND = "engine_backend"
         internal const val KEY_THEME_PRESET = "theme_preset"
         internal const val KEY_DARK_THEME = "dark_theme"
         private const val KEY_NUMBER_ROW = "include_number_row"

@@ -46,7 +46,20 @@
     <string name="card_scratchpad_title">5. 输入测试框</string>
     <string name="scratchpad_label">点击此处测试双屏悬浮、一键换屏、26键、九键、英文</string>
 
-    <string name="card_prefs_title">6. 键盘偏好设置</string>
+    <string name="card_engine_title">6. 输入引擎</string>
+    <string name="engine_backend_rime">Rime</string>
+    <string name="engine_backend_lite">Lite</string>
+    <string name="engine_status_rime_versioned">Rime (librime %1$s)</string>
+    <string name="engine_status_lite_fallback">Lite（已自动回退）</string>
+    <string name="engine_status_passthrough">直通英文（回退）</string>
+    <string name="engine_status_starting">启动中…</string>
+    <string name="engine_status_configured_rime">Rime（打开键盘时启动）</string>
+    <string name="engine_status_configured_lite">Lite（打开键盘时启动）</string>
+    <string name="engine_active_summary">当前引擎状态：%1$s</string>
+    <string name="engine_fallback_warning">当前设备未能启动 Rime（可能缺少本地原生库或部署失败），DuoIME 已自动回退以保证正常打字。</string>
+    <string name="engine_description">Rime 完全离线运行，内置 26 键拼音、九宫格拼音和小鹤双拼方案，支持 OpenCC 简繁切换与无痕模式。自定义方案导入将在 M2-2 提供。</string>
+
+    <string name="card_prefs_title">7. 键盘偏好设置</string>
     <string name="pref_theme_label">键盘主题</string>
     <string name="theme_preset_dark">深色</string>
     <string name="theme_preset_light">浅色</string>
@@ -60,7 +73,7 @@
     <string name="height_preset_tall">高</string>
     <string name="pref_height_range_subtitle">同屏约 %1$d–%2$d%% · 对屏 %3$d–%4$d%%</string>
 
-    <string name="card_feedback_title">7. 按键音效与触感反馈</string>
+    <string name="card_feedback_title">8. 按键音效与触感反馈</string>
     <string name="pref_haptic_enabled">按键振动反馈</string>
     <string name="pref_haptic_strength_label">振动强度：%1$d / 5</string>
     <string name="pref_sound_enabled">按键音效</string>
@@ -84,7 +97,7 @@
     <string name="sound_style_drum_kit">原声架子鼓</string>
     <string name="sound_style_band_ensemble">乐队混搭</string>
 
-    <string name="card_overrides_title">8. 单应用强制同屏列表</string>
+    <string name="card_overrides_title">9. 单应用强制同屏列表</string>
     <string name="overrides_description">为指定包名强制使用同屏模式（例如禁止悬浮窗的银行/支付应用）。</string>
     <string name="overrides_package_hint">com.example.app</string>
     <string name="btn_add_package">添加</string>
@@ -92,5 +105,5 @@
 
     <string name="card_privacy_title">隐私与开源许可</string>
     <string name="privacy_summary">零网络权限、禁用云备份 (allowBackup=false)，密码输入框自动回退至同屏英文并关闭词频学习。</string>
-    <string name="license_summary">采用 BSD-3-Clause 开源协议，完整保留内置 :engine-lite 词库与移植组件的 MIT / Apache-2.0 声明。</string>
+    <string name="license_summary">采用 BSD-3-Clause 开源协议，完整保留内置 :engine-lite 与 :engine-rime 组件的 MIT / Apache-2.0 / BSL-1.0 / BSD-2-Clause 开源声明。</string>
 </resources>

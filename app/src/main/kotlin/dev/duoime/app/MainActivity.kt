@@ -34,6 +34,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,16 +49,18 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import dev.duoime.app.dualscreen.DisplayClassifier
 import dev.duoime.app.dualscreen.RawDisplayInfo
 import dev.duoime.app.dualscreen.SystemImePinDetector
+import dev.duoime.app.ime.DuoImeEngineStatusRegistry
 import dev.duoime.app.settings.DisplayCalibrationCard
 import dev.duoime.app.settings.DuoImePreferences
 import dev.duoime.app.settings.DuoImeSettings
+import dev.duoime.app.settings.EngineSettingsCard
 import dev.duoime.app.settings.FeedbackSettingsCard
 import dev.duoime.app.settings.HeightControlSection
 import dev.duoime.app.settings.OverlayPermissionCard
 import dev.duoime.app.settings.PerAppInlineOverridesCard
 import dev.duoime.app.settings.SettingSwitchRow
 import dev.duoime.app.settings.SystemPinImeCard
-import dev.duoime.embed.DuoImeEmbed
+import dev.duoime.app.settings.formatEngineStatusLabel
 import dev.duoime.ui.theme.DuoThemePreset
 
 /**
@@ -134,6 +137,7 @@ private fun queryOnboardingSnapshot(context: Context): DeviceOnboardingSnapshot 
 private fun DuoImeSettingsScreen(settings: DuoImeSettings, onSettingsChanged: (DuoImeSettings) -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val engineStatus by DuoImeEngineStatusRegistry.status.collectAsState()
     var snapshot by remember { mutableStateOf(queryOnboardingSnapshot(context)) }
     var scratchText by remember { mutableStateOf("") }
 
@@ -156,7 +160,10 @@ private fun DuoImeSettingsScreen(settings: DuoImeSettings, onSettingsChanged: (D
     ) {
         Text(text = stringResource(R.string.app_name), style = MaterialTheme.typography.headlineMedium)
         Text(
-            text = stringResource(R.string.app_subtitle, DuoImeEmbed.defaultEngineId),
+            text = stringResource(
+                R.string.app_subtitle,
+                formatEngineStatusLabel(settings.engineBackend, engineStatus)
+            ),
             style = MaterialTheme.typography.bodyMedium
         )
 
@@ -199,6 +206,14 @@ private fun DuoImeSettingsScreen(settings: DuoImeSettings, onSettingsChanged: (D
         TypingTestCard(
             text = scratchText,
             onTextChanged = { scratchText = it }
+        )
+
+        EngineSettingsCard(
+            settings = settings,
+            engineStatus = engineStatus,
+            onBackendSelected = { backend ->
+                onSettingsChanged(settings.copy(engineBackend = backend))
+            }
         )
 
         PreferencesCard(

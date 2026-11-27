@@ -51,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.duoime.app.BuildConfig
 import dev.duoime.app.MainActivity
 import dev.duoime.app.R
 import dev.duoime.app.dualscreen.DisplayClassifier
@@ -79,11 +80,16 @@ import dev.duoime.embed.KeyboardHostCallbacks
 import dev.duoime.ui.feedback.KeyFeedbackController
 import dev.duoime.ui.feedback.KeyFeedbackOptions
 import dev.duoime.ui.theme.DuoThemePreset
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 
 /**
  * Distinct identity wrapper so inline and overlay [DuoImeKeyboard] hosts never clobber each
@@ -99,6 +105,10 @@ class DuoImeService : InputMethodService() {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val engineExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "duoime-engine-actor").apply { isDaemon = true }
+    }
+    private val engineDispatcher = engineExecutor.asCoroutineDispatcher()
     private val composeOwner = ImeComposeOwner()
     private val settingsFlow = MutableStateFlow(DuoImeSettings())
     private val decisionFlow = MutableStateFlow<PlacementDecision>(
@@ -107,6 +117,7 @@ class DuoImeService : InputMethodService() {
     private val hasEligiblePeerDisplayFlow = MutableStateFlow(false)
 
     private lateinit var preferences: DuoImePreferences
+    private lateinit var engineSessionFactory: DuoImeEngineSessionFactory
     private lateinit var controller: KeyboardController
     private lateinit var sessionController: DualScreenSessionController
     private lateinit var feedbackController: KeyFeedbackController
@@ -146,16 +157,22 @@ class DuoImeService : InputMethodService() {
         settingsFlow.value = initialSettings
         cachedFeedbackOptions = initialSettings.toFeedbackOptions()
         feedbackController = KeyFeedbackController(this)
+        engineSessionFactory = DuoImeEngineSessionFactory(
+            appContext = applicationContext,
+            distributionVersion = BuildConfig.VERSION_NAME
+        )
+        val initialEnginePlan = engineSessionFactory.prepare(initialSettings)
 
         controller = KeyboardController(
             scope = serviceScope,
             config = KeyboardControllerConfig(
-                engineDispatcher = Dispatchers.Default,
+                engineDispatcher = engineDispatcher,
                 sinkDispatcher = Dispatchers.Main.immediate,
                 initialHeightFraction = initialSettings.heightFraction,
                 initialOverlayMode = false,
                 initialPrefs = initialSettings.toKeyboardPrefs()
             ),
+            engineFactory = initialEnginePlan.primaryFactory,
             hostCallbacks = KeyboardHostCallbacks(
                 onSwapScreenRequested = { handleSwapScreenRequested() },
                 onDismissRequested = { handleDismissRequested() },
@@ -164,8 +181,14 @@ class DuoImeService : InputMethodService() {
                 onPrefsChanged = { updatedPrefs -> handleKeyboardPrefsChanged(updatedPrefs) },
                 onFeedbackKey = { key -> feedbackController.onKeyPress(key, cachedFeedbackOptions) },
                 onRepeatFeedbackKey = { key -> feedbackController.onKeyRepeat(key, cachedFeedbackOptions) }
-            )
+            ),
+            fallbackEngineFactory = initialEnginePlan.fallbackFactory
         )
+        serviceScope.launch {
+            controller.uiState.collect { uiState ->
+                engineSessionFactory.syncUiState(uiState)
+            }
+        }
 
         displayManager = (getSystemService(DISPLAY_SERVICE) as? DisplayManager)?.also { dm ->
             dm.registerDisplayListener(displayListener, mainHandler)
@@ -445,7 +468,11 @@ class DuoImeService : InputMethodService() {
         runCatching { prefsObserverHandle?.close() }
         prefsObserverHandle = null
         controller.close()
+        serviceScope.coroutineContext[Job]?.invokeOnCompletion {
+            engineExecutor.shutdown()
+        }
         serviceScope.cancel()
+        DuoImeEngineStatusRegistry.reset()
         composeOwner.onDestroy()
         super.onDestroy()
     }
@@ -629,6 +656,9 @@ class DuoImeService : InputMethodService() {
         if (latestPrefs != previous.toKeyboardPrefs()) {
             controller.updatePrefs(latestPrefs)
         }
+        if (latest.engineBackend != previous.engineBackend) {
+            reloadEngineBackend(latest)
+        }
     }
 
     private fun applyLiveSettings(updated: DuoImeSettings) {
@@ -644,6 +674,9 @@ class DuoImeService : InputMethodService() {
         if (updated.alwaysIncognito != previous.alwaysIncognito) {
             applyEditorInfo(lastEditorInfo, restarting = true)
         }
+        if (updated.engineBackend != previous.engineBackend) {
+            reloadEngineBackend(updated)
+        }
         if (!sessionController.isInputViewActive) return
 
         when (resolveLiveSettingsAction(previous, updated)) {
@@ -653,6 +686,14 @@ class DuoImeService : InputMethodService() {
                 sessionController.onRelevantEnvironmentChanged()
             LiveSettingsPlacementAction.NONE -> Unit
         }
+    }
+
+    private fun reloadEngineBackend(settings: DuoImeSettings) {
+        val plan = engineSessionFactory.prepare(settings)
+        controller.reloadEngine(
+            engineFactory = plan.primaryFactory,
+            fallbackEngineFactory = plan.fallbackFactory
+        )
     }
 
     private fun applyEditorInfo(info: EditorInfo?, restarting: Boolean = false) {

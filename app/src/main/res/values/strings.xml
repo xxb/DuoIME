@@ -46,7 +46,20 @@
     <string name="card_scratchpad_title">5. Typing Scratchpad</string>
     <string name="scratchpad_label">Tap here to test dual-screen overlay, swap, 26-key, T9, EN</string>
 
-    <string name="card_prefs_title">6. Keyboard Preferences</string>
+    <string name="card_engine_title">6. Input Engine</string>
+    <string name="engine_backend_rime">Rime</string>
+    <string name="engine_backend_lite">Lite</string>
+    <string name="engine_status_rime_versioned">Rime (librime %1$s)</string>
+    <string name="engine_status_lite_fallback">Lite (automatic fallback)</string>
+    <string name="engine_status_passthrough">English pass-through (fallback)</string>
+    <string name="engine_status_starting">Starting…</string>
+    <string name="engine_status_configured_rime">Rime (starts when keyboard opens)</string>
+    <string name="engine_status_configured_lite">Lite (starts when keyboard opens)</string>
+    <string name="engine_active_summary">Active engine: %1$s</string>
+    <string name="engine_fallback_warning">Rime could not start on this device (native library missing or workspace deploy failed), so DuoIME fell back automatically to keep typing uninterrupted.</string>
+    <string name="engine_description">Rime runs locally with built-in 26-key Pinyin, T9 Pinyin, and Xiaohe Shuangpin schemas, OpenCC S/T conversion, and incognito mode. Custom Rime schema import arrives in M2-2.</string>
+
+    <string name="card_prefs_title">7. Keyboard Preferences</string>
     <string name="pref_theme_label">Keyboard Theme</string>
     <string name="theme_preset_dark">Dark</string>
     <string name="theme_preset_light">Light</string>
@@ -60,7 +73,7 @@
     <string name="height_preset_tall">L</string>
     <string name="pref_height_range_subtitle">Same screen ≈%1$d–%2$d%% · Opposite %3$d–%4$d%%</string>
 
-    <string name="card_feedback_title">7. Sound &amp; Haptic Feedback</string>
+    <string name="card_feedback_title">8. Sound &amp; Haptic Feedback</string>
     <string name="pref_haptic_enabled">Key Haptic Feedback</string>
     <string name="pref_haptic_strength_label">Haptic Strength: %1$d / 5</string>
     <string name="pref_sound_enabled">Key Sound Effects</string>
@@ -84,7 +97,7 @@
     <string name="sound_style_drum_kit">Acoustic Drum Kit</string>
     <string name="sound_style_band_ensemble">Band Ensemble</string>
 
-    <string name="card_overrides_title">8. Per-App Inline Overrides</string>
+    <string name="card_overrides_title">9. Per-App Inline Overrides</string>
     <string name="overrides_description">Force Inline mode for specific package names (e.g. banking apps that block overlays).</string>
     <string name="overrides_package_hint">com.example.app</string>
     <string name="btn_add_package">Add</string>
@@ -92,5 +105,5 @@
 
     <string name="card_privacy_title">Privacy &amp; Open Source</string>
     <string name="privacy_summary">Zero INTERNET permission, allowBackup=false, and password fields automatically fall back to Inline English mode with user learning disabled.</string>
-    <string name="license_summary">Licensed under BSD-3-Clause with MIT and Apache-2.0 notices preserved for bundled :engine-lite dictionaries and ported components.</string>
+    <string name="license_summary">Licensed under BSD-3-Clause with permissive MIT, Apache-2.0, BSL-1.0, and BSD-2-Clause notices preserved for bundled :engine-lite and :engine-rime components.</string>
 </resources>

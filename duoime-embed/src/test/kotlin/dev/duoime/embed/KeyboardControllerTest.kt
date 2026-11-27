@@ -3,9 +3,12 @@
 package dev.duoime.embed
 
 import dev.duoime.core.engine.EngineKeyEvent
+import dev.duoime.core.engine.EngineOptions
 import dev.duoime.core.engine.InputEngine
 import dev.duoime.core.engine.InputSink
 import dev.duoime.core.layout.KeyCodes
+import dev.duoime.core.model.ChineseScheme
+import dev.duoime.core.model.ChineseVariant
 import dev.duoime.core.model.EditorContext
 import dev.duoime.core.model.EngineSnapshot
 import dev.duoime.core.model.FeedbackKey
@@ -14,6 +17,7 @@ import dev.duoime.core.model.InputMode
 import dev.duoime.core.model.KeyAction
 import dev.duoime.core.model.KeyProcessResult
 import dev.duoime.core.model.KeyboardPanel
+import dev.duoime.core.model.KeyboardPrefs
 import dev.duoime.core.model.SinkCapabilities
 import dev.duoime.core.protocol.ExtensionActionType
 import dev.duoime.core.protocol.ExtensionToolbarButton
@@ -66,11 +70,16 @@ class KeyboardControllerTest {
         }
     }
 
-    private class FlakyFakeEngine(private var failNextKey: Boolean = true) : InputEngine {
-        private val _state = MutableStateFlow(EngineSnapshot.EMPTY)
+    private class FlakyFakeEngine(
+        private var failNextKey: Boolean = true,
+        initialSchemaId: String = "pinyin_26"
+    ) : InputEngine {
+        private val _state = MutableStateFlow(EngineSnapshot(schemaId = initialSchemaId))
         override val state: StateFlow<EngineSnapshot> = _state
         var resetCount: Int = 0
+        var closeCount: Int = 0
         val selectedSchemas = mutableListOf<String>()
+        val appliedOptions = mutableMapOf<String, Boolean>()
 
         override fun onKey(event: EngineKeyEvent): KeyProcessResult {
             if (failNextKey) {
@@ -85,16 +94,23 @@ class KeyboardControllerTest {
 
         override fun page(forward: Boolean): Boolean = false
 
-        override fun setOption(name: String, on: Boolean) = Unit
+        override fun setOption(name: String, on: Boolean) {
+            appliedOptions[name] = on
+        }
 
         override fun selectSchema(id: String): Boolean {
             selectedSchemas.add(id)
+            _state.value = _state.value.copy(schemaId = id)
             return true
         }
 
         override fun reset() {
             resetCount++
-            _state.value = EngineSnapshot.EMPTY
+            _state.value = _state.value.copy(preedit = "", composingText = "", isComposing = false)
+        }
+
+        override fun close() {
+            closeCount++
         }
     }
 
@@ -411,8 +427,10 @@ class KeyboardControllerTest {
             recoveryController.uiState.value.engineIssue
         )
         assertTrue("Actor survived and processed next key", "commit:b" in flakySink.events)
-        assertEquals(listOf("rime_t9"), flakyEngine.selectedSchemas)
+        assertEquals(listOf("rime_ice", "rime_t9"), flakyEngine.selectedSchemas)
         recoveryController.close()
+        advanceUntilIdle()
+        assertEquals(1, flakyEngine.closeCount)
     }
 
     @Test
@@ -687,5 +705,63 @@ class KeyboardControllerTest {
         assertEquals(listOf(letterKey), pressKeys)
         assertEquals(listOf(backspaceKey), repeatKeys)
         controller.close()
+    }
+
+    @Test
+    fun reloadEngineClosesPreviousReappliesStateAndSupportsCustomChineseSchemeSchemas() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val first = FlakyFakeEngine(failNextKey = false, initialSchemaId = "uninitialized")
+        val second = FlakyFakeEngine(failNextKey = false, initialSchemaId = "uninitialized")
+        val customFlypySchemas = mapOf(ChineseScheme.XIAOHE_SHUANGPIN to "custom_flypy")
+
+        val controller = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(
+                engineDispatcher = dispatcher,
+                sinkDispatcher = dispatcher,
+                chineseSchemeSchemaIds = customFlypySchemas,
+                initialPrefs = KeyboardPrefs(
+                    chineseScheme = ChineseScheme.XIAOHE_SHUANGPIN,
+                    variant = ChineseVariant.TRADITIONAL
+                )
+            ),
+            engineFactory = { first },
+            fallbackEngineFactory = { second }
+        )
+        advanceUntilIdle()
+
+        assertEquals(listOf("custom_flypy"), first.selectedSchemas)
+        assertEquals(true, first.appliedOptions[EngineOptions.TRADITIONALIZATION])
+        assertFalse(controller.uiState.value.isUsingFallbackEngine)
+
+        // Reload to second engine: first closes cleanly, second gets schema + variant + privacy options
+        controller.updateEditorContext(EditorContext(packageName = "dev.example.notes", incognito = true))
+        advanceUntilIdle()
+        controller.reloadEngine(
+            engineFactory = { second },
+            fallbackEngineFactory = { LiteInputEngine.createDefault() },
+            chineseSchemeSchemaIds = customFlypySchemas
+        )
+        advanceUntilIdle()
+
+        assertEquals(1, first.closeCount)
+        assertEquals(0, second.closeCount)
+        assertEquals(listOf("custom_flypy"), second.selectedSchemas)
+        assertEquals(true, second.appliedOptions[EngineOptions.TRADITIONALIZATION])
+        assertEquals(true, second.appliedOptions[EngineOptions.INCOGNITO])
+        assertFalse(controller.uiState.value.isUsingFallbackEngine)
+
+        // Reload with failing primary falls back cleanly and marks isUsingFallbackEngine=true
+        controller.reloadEngine(
+            engineFactory = { error("Rime native unavailable") },
+            fallbackEngineFactory = { LiteInputEngine.createDefault() }
+        )
+        advanceUntilIdle()
+        assertEquals(1, second.closeCount)
+        assertTrue(controller.uiState.value.isUsingFallbackEngine)
+        assertEquals(EngineIssueKind.PERSISTENT, controller.uiState.value.engineIssue?.kind)
+
+        controller.close()
+        advanceUntilIdle()
     }
 }

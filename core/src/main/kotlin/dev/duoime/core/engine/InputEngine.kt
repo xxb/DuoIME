@@ -61,7 +61,7 @@ data class EngineKeyEvent(
  * Controllers MUST apply [KeyProcessResult.CommitText] first and then apply
  * `InputSink.setComposing` from the updated [state] snapshot, strictly in that order.
  */
-interface InputEngine {
+interface InputEngine : AutoCloseable {
     val state: StateFlow<EngineSnapshot>
 
     fun onKey(event: EngineKeyEvent): KeyProcessResult
@@ -89,6 +89,8 @@ interface InputEngine {
     fun selectSchema(id: String): Boolean
 
     fun reset()
+
+    override fun close() = Unit
 }
 
 /**

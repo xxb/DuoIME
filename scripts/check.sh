@@ -47,6 +47,14 @@ GRADLE_ARGS=(-PappVersionName=0.0.0-ci -PappVersionCode=1)
 if [[ -n "$SDK_DIR" && "$SDK_DIR" == /nix/store/* && -x "$SDK_DIR/build-tools/34.0.0/aapt2" ]]; then
     GRADLE_ARGS+=("-Pandroid.aapt2FromMavenOverride=$SDK_DIR/build-tools/34.0.0/aapt2")
 fi
+if [[ -n "${DUOIME_RIME_PREBUILT_DIR:-}" ]]; then
+    GRADLE_ARGS+=("-Pduoime.rimePrebuiltDir=${DUOIME_RIME_PREBUILT_DIR}")
+fi
+RIME_VERIFY_ARGS=()
+if [[ "${REQUIRE_RIME_NATIVE:-0}" == "1" ]]; then
+    GRADLE_ARGS+=("-PrequireRimeNative=true")
+    RIME_VERIFY_ARGS+=(--require-rime-native)
+fi
 
 HAS_JAVA=0
 if command -v java >/dev/null 2>&1; then
@@ -115,15 +123,16 @@ if [[ "$MODE" == "--test-signing" ]]; then
     ./gradlew \
         :app:assembleRelease \
         :duoime-embed:assembleRelease \
+        :engine-rime:assembleRelease \
         -PrequireReleaseSigning=true \
         "${GRADLE_ARGS[@]}"
-    bash scripts/verify_artifacts.sh --require-release-signed
+    bash scripts/verify_artifacts.sh --require-release-signed "${RIME_VERIFY_ARGS[@]}"
     exit 0
 fi
 
 if (( HAS_JAVA == 1 && HAS_ANDROID_SDK == 1 )); then
     RELEASE_SIGNING_ARGS=()
-    VERIFY_ARGS=()
+    VERIFY_ARGS=("${RIME_VERIFY_ARGS[@]}")
     if [[ -n "${SIGNING_STORE_FILE:-}" ]]; then
         RELEASE_SIGNING_ARGS+=(-PrequireReleaseSigning=true)
         VERIFY_ARGS+=(--require-release-signed)
@@ -147,6 +156,7 @@ if (( HAS_JAVA == 1 && HAS_ANDROID_SDK == 1 )); then
         :app:assembleDebug \
         :app:assembleRelease \
         :duoime-embed:assembleRelease \
+        :engine-rime:assembleRelease \
         "${RELEASE_SIGNING_ARGS[@]}" \
         "${GRADLE_ARGS[@]}"
     bash scripts/verify_artifacts.sh "${VERIFY_ARGS[@]}"

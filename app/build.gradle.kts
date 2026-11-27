@@ -150,6 +150,9 @@ android {
         versionCode = resolvedAppVersion.versionCode
         versionName = resolvedAppVersion.versionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     signingConfigs {
@@ -201,6 +204,9 @@ android {
     }
 
     packaging {
+        jniLibs {
+            useLegacyPackaging = false
+        }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
             excludes += "META-INF/versions/**/OSGI-INF/MANIFEST.MF"
@@ -215,6 +221,7 @@ composeCompiler {
 
 dependencies {
     implementation(project(":duoime-embed"))
+    implementation(project(":engine-rime"))
     implementation(project(":keyboard-ui"))
 
     implementation(libs.androidx.core.ktx)

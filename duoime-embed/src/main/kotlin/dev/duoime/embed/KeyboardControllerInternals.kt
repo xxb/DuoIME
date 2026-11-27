@@ -95,18 +95,29 @@ internal sealed interface ControllerEvent {
     data object DismissEngineError : ControllerEvent
 
     data object Reset : ControllerEvent
+
+    data class ReloadEngine(
+        val engineFactory: suspend () -> InputEngine,
+        val fallbackEngineFactory: (suspend () -> InputEngine)?,
+        val modeSchemaIds: Map<InputMode, String>,
+        val chineseSchemeSchemaIds: Map<ChineseScheme, String>
+    ) : ControllerEvent
 }
 
 internal data class EngineBootstrapResult(
     val engine: InputEngine,
     val schemaIds: Map<InputMode, String>,
+    val chineseSchemeSchemaIds: Map<ChineseScheme, String>,
     val issue: EngineIssue?,
-    val forcedPlainEnglish: Boolean
+    val forcedPlainEnglish: Boolean,
+    val usedFallback: Boolean
 )
 
 @Suppress("TooGenericExceptionCaught")
 internal suspend fun bootstrapControllerEngine(
     configuredSchemas: Map<InputMode, String>,
+    configuredChineseSchemeSchemas: Map<ChineseScheme, String> =
+        KeyboardControllerConfig.DEFAULT_CHINESE_SCHEME_SCHEMA_IDS,
     engineFactory: suspend () -> InputEngine,
     fallbackEngineFactory: (suspend () -> InputEngine)?
 ): EngineBootstrapResult {
@@ -114,8 +125,10 @@ internal suspend fun bootstrapControllerEngine(
         return EngineBootstrapResult(
             engine = engineFactory(),
             schemaIds = configuredSchemas,
+            chineseSchemeSchemaIds = configuredChineseSchemeSchemas,
             issue = null,
-            forcedPlainEnglish = false
+            forcedPlainEnglish = false,
+            usedFallback = false
         )
     } catch (cancelled: CancellationException) {
         throw cancelled
@@ -130,8 +143,10 @@ internal suspend fun bootstrapControllerEngine(
             return EngineBootstrapResult(
                 engine = fallbackEngine,
                 schemaIds = EngineSchemas.DEFAULT_MODE_MAP,
+                chineseSchemeSchemaIds = KeyboardControllerConfig.DEFAULT_CHINESE_SCHEME_SCHEMA_IDS,
                 issue = EngineIssue(EngineIssueKind.PERSISTENT, "Fallback: $primaryTag"),
-                forcedPlainEnglish = false
+                forcedPlainEnglish = false,
+                usedFallback = true
             )
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -139,11 +154,13 @@ internal suspend fun bootstrapControllerEngine(
             return EngineBootstrapResult(
                 engine = PassThroughEngine(),
                 schemaIds = configuredSchemas,
+                chineseSchemeSchemaIds = configuredChineseSchemeSchemas,
                 issue = EngineIssue(
                     EngineIssueKind.PERSISTENT,
                     "Plain: $primaryTag/${errorClassTag(fallbackError)}"
                 ),
-                forcedPlainEnglish = true
+                forcedPlainEnglish = true,
+                usedFallback = true
             )
         }
     }
@@ -151,12 +168,68 @@ internal suspend fun bootstrapControllerEngine(
     return EngineBootstrapResult(
         engine = PassThroughEngine(),
         schemaIds = configuredSchemas,
+        chineseSchemeSchemaIds = configuredChineseSchemeSchemas,
         issue = EngineIssue(EngineIssueKind.PERSISTENT, "Plain: $primaryTag"),
-        forcedPlainEnglish = true
+        forcedPlainEnglish = true,
+        usedFallback = true
     )
 }
 
 internal fun errorClassTag(error: Throwable): String = error::class.simpleName ?: "Throwable"
+
+@Suppress("TooGenericExceptionCaught")
+internal fun resetEngineSafely(engine: InputEngine?) {
+    if (engine == null) return
+    try {
+        engine.reset()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Throwable) {
+        // Best-effort reset before swapping engines.
+    }
+}
+
+@Suppress("TooGenericExceptionCaught")
+internal fun closeEngineSafely(engine: InputEngine?) {
+    if (engine == null) return
+    try {
+        engine.close()
+    } catch (_: Throwable) {
+        // Never let teardown exceptions crash the IME service.
+    }
+}
+
+internal fun applyEnginePrivacyOptions(
+    engine: InputEngine,
+    activeConstraints: InputConstraints,
+    context: EditorContext
+) {
+    val noLearning = activeConstraints.noLearning || context.incognito || context.isPassword
+    engine.setOption(dev.duoime.core.engine.EngineOptions.INCOGNITO, noLearning)
+}
+
+internal fun legacySwitchModeToNavCommand(targetMode: InputMode): NavCommand = when (targetMode) {
+    InputMode.ENGLISH -> NavCommand.SetLanguage(Language.ENGLISH)
+    InputMode.PINYIN_26 -> NavCommand.SelectChineseScheme(ChineseScheme.PINYIN_26)
+    InputMode.PINYIN_T9 -> NavCommand.SelectChineseScheme(ChineseScheme.PINYIN_T9)
+}
+
+internal fun nextHeightPresetFraction(current: Float, presets: List<Float>): Float {
+    val currentIdx = presets.indexOfFirst { kotlin.math.abs(it - current) < 0.02f }
+    return presets[(currentIdx + 1) % presets.size]
+}
+
+internal fun isEngineInputEvent(event: ControllerEvent): Boolean = when (event) {
+    is ControllerEvent.Action,
+    is ControllerEvent.SelectCandidate,
+    is ControllerEvent.SelectWindowCandidate,
+    is ControllerEvent.LoadMoreCandidates,
+    is ControllerEvent.SelectSyllable,
+    is ControllerEvent.UnlockSyllablesFrom,
+    is ControllerEvent.Page,
+    is ControllerEvent.ExtensionButton -> true
+    else -> false
+}
 
 internal fun selectEngineSchemaWithFallback(
     engine: InputEngine,

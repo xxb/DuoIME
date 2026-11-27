@@ -6,6 +6,7 @@ import androidx.compose.runtime.Immutable
 import dev.duoime.core.engine.EngineSchemas
 import dev.duoime.core.layout.BuiltInLayouts
 import dev.duoime.core.layout.LayoutSpec
+import dev.duoime.core.model.ChineseScheme
 import dev.duoime.core.model.DerivedKeyboardState
 import dev.duoime.core.model.EditorContext
 import dev.duoime.core.model.EngineSnapshot
@@ -48,6 +49,7 @@ data class EngineIssue(
 data class KeyboardUiState(
     val isEngineReady: Boolean = false,
     val engineIssue: EngineIssue? = null,
+    val isUsingFallbackEngine: Boolean = false,
     val snapshot: EngineSnapshot = EngineSnapshot.EMPTY,
     val activeLayout: LayoutSpec = BuiltInLayouts.qwerty(),
     val shifted: Boolean = false,
@@ -77,9 +79,16 @@ data class KeyboardControllerConfig(
     val initialHeightFraction: Float = DisplayPlacementPolicy.DEFAULT_HEIGHT_FRACTION,
     val initialOverlayMode: Boolean = false,
     val modeSchemaIds: Map<InputMode, String> = EngineSchemas.DEFAULT_MODE_MAP,
+    val chineseSchemeSchemaIds: Map<ChineseScheme, String> = DEFAULT_CHINESE_SCHEME_SCHEMA_IDS,
     val initialPrefs: KeyboardPrefs = KeyboardPrefs(),
     val languageMemoryKey: String? = null
-)
+) {
+    companion object {
+        val DEFAULT_CHINESE_SCHEME_SCHEMA_IDS: Map<ChineseScheme, String> = mapOf(
+            ChineseScheme.XIAOHE_SHUANGPIN to EngineSchemas.DOUBLE_PINYIN_FLYPY
+        )
+    }
+}
 
 /**
  * Host-level callbacks invoked by [KeyboardController] for system/window-level actions.

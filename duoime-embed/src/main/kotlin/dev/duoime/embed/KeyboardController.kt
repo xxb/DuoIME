@@ -5,7 +5,6 @@ package dev.duoime.embed
 import androidx.compose.runtime.Stable
 import dev.duoime.core.engine.EngineKeyEvent
 import dev.duoime.core.engine.EngineOptions
-import dev.duoime.core.engine.EngineSchemas
 import dev.duoime.core.engine.InputEngine
 import dev.duoime.core.engine.InputSink
 import dev.duoime.core.model.ChineseScheme
@@ -37,6 +36,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -67,7 +67,9 @@ class KeyboardController(
     private val actorJob: Job
 
     private var activeSchemaIds: Map<InputMode, String> = config.modeSchemaIds
+    private var activeChineseSchemeSchemaIds: Map<ChineseScheme, String> = config.chineseSchemeSchemaIds
     private var engineIssue: EngineIssue? = null
+    private var isUsingFallbackEngine: Boolean = false
     private var prefs: KeyboardPrefs = config.initialPrefs
     private var session: SessionState = SessionState()
     private var constraints: InputConstraints = InputConstraints()
@@ -87,25 +89,28 @@ class KeyboardController(
 
     init {
         actorJob = scope.launch(config.engineDispatcher) {
-            val boot = bootstrapControllerEngine(activeSchemaIds, engineFactory, fallbackEngineFactory)
-            activeSchemaIds = boot.schemaIds
-            engineIssue = boot.issue
-            if (boot.forcedPlainEnglish) {
-                prefs = prefs.copy(language = Language.ENGLISH)
-                session = session.copy(languageOverride = Language.ENGLISH)
-            }
-            val engine = boot.engine
-            val initialDerived = currentDerived()
-            lastSelectedSchemaId = initialDerived.activeSchemaId
-            val defaultPrimarySchema = activeSchemaIds[InputMode.PINYIN_26] ?: EngineSchemas.PINYIN_26
-            if (initialDerived.activeSchemaId != defaultPrimarySchema) {
-                selectEngineSchemaWithFallback(engine, initialDerived, activeSchemaIds)
-            }
-            engine.setOption(EngineOptions.TRADITIONALIZATION, prefs.variant == ChineseVariant.TRADITIONAL)
-            applyPrivacyOptions(engine, constraints, editorContext)
-            publishState(engine)
-            for (event in eventChannel) {
-                processEventSafely(engine, event)
+            var currentEngine: InputEngine? = null
+            try {
+                val boot = bootstrapControllerEngine(
+                    configuredSchemas = activeSchemaIds,
+                    configuredChineseSchemeSchemas = activeChineseSchemeSchemaIds,
+                    engineFactory = engineFactory,
+                    fallbackEngineFactory = fallbackEngineFactory
+                )
+                var activeEngine = applyBootstrappedEngine(boot)
+                currentEngine = activeEngine
+                for (event in eventChannel) {
+                    if (event is ControllerEvent.ReloadEngine) {
+                        activeEngine = handleReloadEngine(activeEngine, event)
+                        currentEngine = activeEngine
+                    } else {
+                        processEventSafely(activeEngine, event)
+                    }
+                }
+            } finally {
+                withContext(NonCancellable) {
+                    closeEngineSafely(currentEngine)
+                }
             }
         }
     }
@@ -208,9 +213,69 @@ class KeyboardController(
         eventChannel.trySend(ControllerEvent.Reset)
     }
 
+    fun reloadEngine(
+        engineFactory: suspend () -> InputEngine,
+        fallbackEngineFactory: (suspend () -> InputEngine)? = this.fallbackEngineFactory,
+        modeSchemaIds: Map<InputMode, String> = config.modeSchemaIds,
+        chineseSchemeSchemaIds: Map<ChineseScheme, String> = config.chineseSchemeSchemaIds
+    ) {
+        eventChannel.trySend(
+            ControllerEvent.ReloadEngine(
+                engineFactory = engineFactory,
+                fallbackEngineFactory = fallbackEngineFactory,
+                modeSchemaIds = modeSchemaIds,
+                chineseSchemeSchemaIds = chineseSchemeSchemaIds
+            )
+        )
+    }
+
     fun close() {
         eventChannel.close()
         actorJob.cancel()
+    }
+
+    private fun applyBootstrappedEngine(boot: EngineBootstrapResult): InputEngine {
+        activeSchemaIds = boot.schemaIds
+        activeChineseSchemeSchemaIds = boot.chineseSchemeSchemaIds
+        engineIssue = boot.issue
+        isUsingFallbackEngine = boot.usedFallback
+        if (boot.forcedPlainEnglish) {
+            prefs = prefs.copy(language = Language.ENGLISH)
+            session = session.copy(languageOverride = Language.ENGLISH)
+        }
+        val engine = boot.engine
+        val initialDerived = currentDerived()
+        if (initialDerived.activeSchemaId != engine.state.value.schemaId) {
+            selectEngineSchemaWithFallback(engine, initialDerived, activeSchemaIds)
+        }
+        lastSelectedSchemaId = initialDerived.activeSchemaId
+        engine.setOption(EngineOptions.TRADITIONALIZATION, prefs.variant == ChineseVariant.TRADITIONAL)
+        applyEnginePrivacyOptions(engine, effectiveConstraints(), editorContext)
+        candidateWindow.reset()
+        publishState(engine)
+        return engine
+    }
+
+    private suspend fun handleReloadEngine(
+        previousEngine: InputEngine,
+        event: ControllerEvent.ReloadEngine
+    ): InputEngine {
+        resetEngineSafely(previousEngine)
+        sinkDispatcher.syncComposingOnly(EngineSnapshot.EMPTY)
+        candidateWindow.reset()
+        val boot = bootstrapControllerEngine(
+            configuredSchemas = event.modeSchemaIds,
+            configuredChineseSchemeSchemas = event.chineseSchemeSchemaIds,
+            engineFactory = event.engineFactory,
+            fallbackEngineFactory = event.fallbackEngineFactory
+        )
+        val nextEngine = applyBootstrappedEngine(boot)
+        if (nextEngine !== previousEngine) {
+            withContext(NonCancellable) {
+                closeEngineSafely(previousEngine)
+            }
+        }
+        return nextEngine
     }
 
     private fun sendNav(command: NavCommand) {
@@ -237,13 +302,7 @@ class KeyboardController(
         if (engineIssue?.kind != EngineIssueKind.PERSISTENT) {
             engineIssue = EngineIssue(EngineIssueKind.TRANSIENT, "Recovered: ${errorClassTag(error)}")
         }
-        try {
-            engine.reset()
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Throwable) {
-            // Engine reset failed during recovery; keep actor alive and clear sink composing state.
-        }
+        resetEngineSafely(engine)
         try {
             sinkDispatcher.syncComposingOnly(EngineSnapshot.EMPTY)
         } catch (cancelled: CancellationException) {
@@ -252,18 +311,6 @@ class KeyboardController(
             // Best-effort composing cleanup during recovery.
         }
         publishState(engine)
-    }
-
-    private fun isEngineInputEvent(event: ControllerEvent): Boolean = when (event) {
-        is ControllerEvent.Action,
-        is ControllerEvent.SelectCandidate,
-        is ControllerEvent.SelectWindowCandidate,
-        is ControllerEvent.LoadMoreCandidates,
-        is ControllerEvent.SelectSyllable,
-        is ControllerEvent.UnlockSyllablesFrom,
-        is ControllerEvent.Page,
-        is ControllerEvent.ExtensionButton -> true
-        else -> false
     }
 
     private suspend fun processEvent(engine: InputEngine, event: ControllerEvent) {
@@ -366,7 +413,7 @@ class KeyboardController(
         session = updated.session
         val after = currentDerived()
 
-        applyPrivacyOptions(engine, effective, editorContext)
+        applyEnginePrivacyOptions(engine, effective, editorContext)
         if (!restarting) {
             engine.reset()
             syncEngineSchemaIfChanged(engine, after)
@@ -542,11 +589,7 @@ class KeyboardController(
     }
 
     private suspend fun handleLegacySwitchMode(engine: InputEngine, targetMode: InputMode) {
-        when (targetMode) {
-            InputMode.ENGLISH -> handleNavCommand(engine, NavCommand.SetLanguage(Language.ENGLISH))
-            InputMode.PINYIN_26 -> handleNavCommand(engine, NavCommand.SelectChineseScheme(ChineseScheme.PINYIN_26))
-            InputMode.PINYIN_T9 -> handleNavCommand(engine, NavCommand.SelectChineseScheme(ChineseScheme.PINYIN_T9))
-        }
+        handleNavCommand(engine, legacySwitchModeToNavCommand(targetMode))
     }
 
     private suspend fun handleHostKeyAction(engine: InputEngine, action: KeyAction) {
@@ -605,8 +648,7 @@ class KeyboardController(
     }
 
     private suspend fun cycleHeightPreset(engine: InputEngine) {
-        val currentIdx = HEIGHT_PRESETS.indexOfFirst { kotlin.math.abs(it - heightFraction) < 0.02f }
-        heightFraction = HEIGHT_PRESETS[(currentIdx + 1) % HEIGHT_PRESETS.size]
+        heightFraction = nextHeightPresetFraction(heightFraction, HEIGHT_PRESETS)
         publishState(engine)
         withContext(config.sinkDispatcher) {
             hostCallbacks.onHeightFractionChanged(heightFraction)
@@ -617,11 +659,6 @@ class KeyboardController(
         if (derived.activeSchemaId == lastSelectedSchemaId) return
         selectEngineSchemaWithFallback(engine, derived, activeSchemaIds)
         lastSelectedSchemaId = derived.activeSchemaId
-    }
-
-    private fun applyPrivacyOptions(engine: InputEngine, activeConstraints: InputConstraints, context: EditorContext) {
-        val noLearning = activeConstraints.noLearning || context.incognito || context.isPassword
-        engine.setOption(EngineOptions.INCOGNITO, noLearning)
     }
 
     private suspend inline fun withSink(crossinline block: (InputSink) -> Unit) {
@@ -637,8 +674,13 @@ class KeyboardController(
     private fun effectiveConstraints(base: InputConstraints = constraints): InputConstraints =
         applyHostPolicyDefaults(base, editorContext, hostLangKeyPlacement, hostInitialSymbolTab, hostToolbarMode)
 
-    private fun currentDerived(): DerivedKeyboardState =
-        deriveKeyboardState(prefs, session, effectiveConstraints(), activeSchemaIds)
+    private fun currentDerived(): DerivedKeyboardState = deriveKeyboardState(
+        prefs = prefs,
+        session = session,
+        constraints = effectiveConstraints(),
+        modeSchemaIds = activeSchemaIds,
+        chineseSchemeSchemaIds = activeChineseSchemeSchemaIds
+    )
 
     private fun publishState(engine: InputEngine) {
         val snap = engine.state.value
@@ -648,10 +690,17 @@ class KeyboardController(
 
     private fun buildUiState(isEngineReady: Boolean, snapshot: EngineSnapshot): KeyboardUiState {
         val effective = effectiveConstraints()
-        val derived = deriveKeyboardState(prefs, session, effective, activeSchemaIds)
+        val derived = deriveKeyboardState(
+            prefs = prefs,
+            session = session,
+            constraints = effective,
+            modeSchemaIds = activeSchemaIds,
+            chineseSchemeSchemaIds = activeChineseSchemeSchemaIds
+        )
         return KeyboardUiState(
             isEngineReady = isEngineReady,
             engineIssue = engineIssue,
+            isUsingFallbackEngine = isUsingFallbackEngine,
             snapshot = snapshot,
             activeLayout = resolveKeyboardLayout(derived, prefs, isComposing = snapshot.isComposing),
             shifted = derived.shifted,

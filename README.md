@@ -19,7 +19,7 @@ An open-source, dual-screen-first Android input method editor (IME) built with *
 | `:engine-lite` | Pure JVM | Lightweight pure-Kotlin input engine (M1 brain & permanent fallback) |
 | `:keyboard-ui` | Android Library (Compose) | Theme tokens, single-pointer `KeyGrid`, `CandidateBar`, toolbar, feedback & sketch packages |
 | `:duoime-embed` | Android Library (AAR) | Pure-Kotlin Jetpack Compose embed API wrapping `:keyboard-ui` + `:engine-lite` (zero native `.so`, zero Material 3) |
-| `:engine-rime` *(planned M2-1B)* | Android Library (optional) | Clean-room BSD-3 JNI consumer over self-built `librime` + `librime-lua` + OpenCC (kept outside `:duoime-embed`; native build pipeline, clean-room schemas & M2 gates land first in M2-1A) |
+| `:engine-rime` | Android Library (optional) | Clean-room BSD-3 JNI consumer over self-built `librime` + `librime-lua` + OpenCC (kept outside `:duoime-embed`; automatic fallback to `:engine-lite` when native `.so` is absent) |
 | `:app` | Android Application | System `InputMethodService`, inline & opposite-display overlay hosts, settings, onboarding |
 
 ## Roadmap
@@ -49,13 +49,16 @@ bash scripts/check.sh
 bash scripts/test_pii_check.sh
 ```
 
-### Native Rime Build (M2-1A Pipeline)
+### Native Rime Build & Prebuilt Integration (M2-1)
 
-GitHub Actions (`.github/workflows/build-rime-native.yml`) is the **default reproducible builder** for DuoIME's 16 KB page-aligned `libduoime_rime.so` (Option A 100% permissive: `librime` + `librime-lua` + `Lua 5.4` + header-only `Boost` + `yaml-cpp` + `leveldb` + `marisa-trie` under BSD-2-Clause + `OpenCC`). Native `.so` binaries are never committed to git. This standalone native-build, schema, and gate pipeline lands first in M2-1A so checksummed prebuilt archives can be published and pinned before M2-1B adds the `:engine-rime` Kotlin module and wires `--require-rime-native` into CI.
+GitHub Actions (`.github/workflows/build-rime-native.yml`) is the **default reproducible builder** for DuoIME's 16 KB page-aligned `libduoime_rime.so` (Option A 100% permissive: `librime` + `librime-lua` + `Lua 5.4` + header-only `Boost` + `yaml-cpp` + `leveldb` + `marisa-trie` under BSD-2-Clause + `OpenCC`). Native `.so` binaries are never committed to git. Releases are pinned by tag and SHA-256 in [`native/rime/prebuilt.env`](native/rime/prebuilt.env), fetched outside the repository by `scripts/fetch_rime_prebuilt.sh`, packaged into `:engine-rime` and `:app` (`arm64-v8a`, uncompressed 16 KB aligned), and gated in CI via `--require-rime-native`.
 
 ```bash
-# Fetch a published SHA-256-verified prebuilt bundle outside the repository
-bash scripts/fetch_rime_prebuilt.sh --tag <release-tag> --sha256 <hex>
+# Fetch the pinned SHA-256-verified prebuilt bundle outside the repository
+bash scripts/fetch_rime_prebuilt.sh
+
+# Run full local verification with bundled native Rime enforced
+REQUIRE_RIME_NATIVE=1 bash scripts/check.sh
 
 # Generate permissive starter Rime dictionary & OpenCC text config into an external directory
 python3 scripts/generate_rime_starter_assets.py --output-dir /tmp/duoime-rime-starter

@@ -27,6 +27,7 @@ dependencyResolutionManagement {
 rootProject.name = "DuoIME"
 include(":core")
 include(":engine-lite")
+include(":engine-rime")
 include(":keyboard-ui")
 include(":duoime-embed")
 include(":app")
