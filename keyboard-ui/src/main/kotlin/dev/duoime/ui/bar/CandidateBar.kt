@@ -217,10 +217,10 @@ private fun ScrollableCandidateRow(
             itemsIndexed(
                 items = items,
                 key = { _, item -> "w:${item.globalIndex}:${item.pageIndex}:${item.indexOnPage}" }
-            ) { idx, item ->
+            ) { _, item ->
                 CandidateChip(
                     text = item.text,
-                    highlighted = idx == 0,
+                    highlighted = item.highlighted,
                     fontSizeSp = dimensions.candidateFontSp,
                     colors = colors,
                     onClick = { callbacks.onSelectWindowCandidate(item.globalIndex) }

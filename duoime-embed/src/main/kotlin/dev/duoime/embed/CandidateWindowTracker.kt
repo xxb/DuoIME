@@ -35,6 +35,8 @@ internal class CandidateWindowTracker(
     private val pages = TreeMap<Int, List<CandidateItem>>()
     private var lastKey: CompositionKey? = null
     private var exhausted: Boolean = false
+    private var highlightedPageIndex: Int = 0
+    private var highlightedIndexOnPage: Int = 0
 
     var items: List<WindowCandidateItem> = emptyList()
         private set
@@ -48,10 +50,14 @@ internal class CandidateWindowTracker(
             return
         }
         val key = compositionKey(snapshot)
+        val nextHighlightPage = snapshot.pageIndex
+        val nextHighlightIndex = snapshot.highlightedIndex
         if (forceReset || key != lastKey || pages.isEmpty()) {
             pages.clear()
             lastKey = key
             exhausted = false
+            highlightedPageIndex = nextHighlightPage
+            highlightedIndexOnPage = nextHighlightIndex
             if (snapshot.candidates.isNotEmpty()) {
                 pages[snapshot.pageIndex] = snapshot.candidates
             }
@@ -59,12 +65,18 @@ internal class CandidateWindowTracker(
             rebuildItems()
             return
         }
+        val highlightChanged = highlightedPageIndex != nextHighlightPage ||
+            highlightedIndexOnPage != nextHighlightIndex
+        highlightedPageIndex = nextHighlightPage
+        highlightedIndexOnPage = nextHighlightIndex
         if (snapshot.candidates.isNotEmpty()) {
             pages[snapshot.pageIndex] = snapshot.candidates
             val highestPage = pages.lastKey()
             if (snapshot.pageIndex >= highestPage) {
                 hasMore = !exhausted && snapshot.hasNextPage && pages.size < maxPages
             }
+            rebuildItems()
+        } else if (highlightChanged) {
             rebuildItems()
         }
     }
@@ -77,7 +89,7 @@ internal class CandidateWindowTracker(
             exhausted = true
             hasMore = false
             stepEngineToPage(engine, restorePage)
-            return false
+            return refreshHighlightFrom(engine.state.value, forceRebuild = false)
         }
         val paged = engine.page(forward = true)
         val nextSnap = engine.state.value
@@ -85,7 +97,6 @@ internal class CandidateWindowTracker(
             pages[nextSnap.pageIndex] = nextSnap.candidates
             hasMore = nextSnap.hasNextPage && pages.size < maxPages
             if (!hasMore) exhausted = true
-            rebuildItems()
             true
         } else {
             exhausted = true
@@ -94,7 +105,8 @@ internal class CandidateWindowTracker(
         }
         // Keep the backing engine on its prior page (e.g. page 0) so Space always commits primary.
         stepEngineToPage(engine, restorePage)
-        return added
+        val highlightChanged = refreshHighlightFrom(engine.state.value, forceRebuild = added)
+        return added || highlightChanged
     }
 
     fun selectWindowCandidate(engine: InputEngine, globalIndex: Int): KeyProcessResult {
@@ -111,8 +123,21 @@ internal class CandidateWindowTracker(
         pages.clear()
         lastKey = null
         exhausted = false
+        highlightedPageIndex = 0
+        highlightedIndexOnPage = 0
         items = emptyList()
         hasMore = false
+    }
+
+    private fun refreshHighlightFrom(snapshot: EngineSnapshot, forceRebuild: Boolean): Boolean {
+        val changed = highlightedPageIndex != snapshot.pageIndex ||
+            highlightedIndexOnPage != snapshot.highlightedIndex
+        highlightedPageIndex = snapshot.pageIndex
+        highlightedIndexOnPage = snapshot.highlightedIndex
+        if (forceRebuild || changed) {
+            rebuildItems()
+        }
+        return changed
     }
 
     private fun stepEngineToPage(engine: InputEngine, targetPage: Int): Boolean {
@@ -135,7 +160,8 @@ internal class CandidateWindowTracker(
                         pageIndex = pageIdx,
                         indexOnPage = cand.indexOnPage,
                         text = cand.text,
-                        comment = cand.comment
+                        comment = cand.comment,
+                        highlighted = pageIdx == highlightedPageIndex && cand.indexOnPage == highlightedIndexOnPage
                     )
                 )
             }

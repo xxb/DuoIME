@@ -83,6 +83,42 @@ data class DuoKeyboardSurfaceState(
 )
 
 /**
+ * Pure-JVM mapping from [DuoKeyboardSurfaceState] to [DuoToolbarState], shared by
+ * [DuoKeyboardSurface] and invariant tests to prevent drift between UI and test state wiring.
+ */
+fun DuoKeyboardSurfaceState.toToolbarState(): DuoToolbarState = DuoToolbarState(
+    activeChineseScheme = activeChineseScheme,
+    effectiveLanguage = effectiveLanguage,
+    variant = snapshot.variant,
+    heightFraction = heightFraction,
+    isOverlayMode = isOverlayMode,
+    drawerOpen = drawerOpen,
+    canToggleLanguage = canToggleLanguage,
+    canSwapScreen = canSwapScreen,
+    canSwitchIme = canSwitchIme,
+    showDismiss = showDismiss,
+    includeNumberRow = includeNumberRow,
+    pins = toolbarPins,
+    extensionButtons = extensionButtons,
+    engineIssueTag = engineIssueTag
+)
+
+/**
+ * Pure-JVM mapping from [DuoKeyboardSurfaceState] to [DuoQuickDrawerState], shared by
+ * [DuoKeyboardSurface] and invariant tests to prevent drift between UI and test state wiring.
+ */
+fun DuoKeyboardSurfaceState.toQuickDrawerState(): DuoQuickDrawerState = DuoQuickDrawerState(
+    activeChineseScheme = activeChineseScheme,
+    variant = snapshot.variant,
+    includeNumberRow = includeNumberRow,
+    heightFraction = heightFraction,
+    isOverlayMode = isOverlayMode,
+    canToggleLanguage = canToggleLanguage,
+    canSwapScreen = canSwapScreen,
+    canSwitchIme = canSwitchIme
+)
+
+/**
  * Immutable callbacks bundle passed into [DuoKeyboardSurface].
  */
 @Immutable
@@ -113,22 +149,7 @@ fun DuoKeyboardSurface(state: DuoKeyboardSurfaceState, callbacks: DuoKeyboardCal
     val colors = LocalDuoColors.current
     val baseDimensions = LocalDuoDimensions.current
     val keyRowCount = state.layout.rows.size.coerceAtLeast(1)
-    val toolbarState = DuoToolbarState(
-        activeChineseScheme = state.activeChineseScheme,
-        effectiveLanguage = state.effectiveLanguage,
-        variant = state.snapshot.variant,
-        heightFraction = state.heightFraction,
-        isOverlayMode = state.isOverlayMode,
-        drawerOpen = state.drawerOpen,
-        canToggleLanguage = state.canToggleLanguage,
-        canSwapScreen = state.canSwapScreen,
-        canSwitchIme = state.canSwitchIme,
-        showDismiss = state.showDismiss,
-        includeNumberRow = state.includeNumberRow,
-        pins = state.toolbarPins,
-        extensionButtons = state.extensionButtons,
-        engineIssueTag = state.engineIssueTag
-    )
+    val toolbarState = state.toToolbarState()
     val candidateCallbacks = remember(callbacks) {
         CandidateBarCallbacks(
             onSelectCandidate = callbacks.onSelectCandidate,
@@ -212,16 +233,7 @@ private fun SurfaceBody(
     val dimensions = LocalDuoDimensions.current
     when {
         state.drawerOpen -> DuoQuickDrawer(
-            state = DuoQuickDrawerState(
-                activeChineseScheme = state.activeChineseScheme,
-                variant = state.snapshot.variant,
-                includeNumberRow = state.includeNumberRow,
-                heightFraction = state.heightFraction,
-                isOverlayMode = state.isOverlayMode,
-                canToggleLanguage = state.canToggleLanguage,
-                canSwapScreen = state.canSwapScreen,
-                canSwitchIme = state.canSwitchIme
-            ),
+            state = state.toQuickDrawerState(),
             onAction = callbacks.onKeyAction,
             onKeyPressDown = callbacks.onKeyPressDown,
             modifier = modifier

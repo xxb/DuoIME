@@ -462,6 +462,7 @@ class KeyboardController(
             is KeyAction.Shift -> applyNavTransition(engine, recordMemory = false) { p, s, _ ->
                 KeyboardNavReducer.toggleShift(p, s)
             }
+            is KeyAction.SelectSyllable -> handleSelectSyllable(engine, action.index)
             else -> handleNavOrHostKeyAction(engine, action)
         }
     }

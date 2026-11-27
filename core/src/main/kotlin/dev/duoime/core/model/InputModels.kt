@@ -48,7 +48,8 @@ data class WindowCandidateItem(
     val pageIndex: Int,
     val indexOnPage: Int,
     val text: String,
-    val comment: String? = null
+    val comment: String? = null,
+    val highlighted: Boolean = false
 )
 
 /**

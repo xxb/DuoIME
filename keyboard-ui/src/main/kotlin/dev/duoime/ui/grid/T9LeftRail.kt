@@ -150,7 +150,7 @@ private fun ComposingSyllableRail(
                         selected = false,
                         colors = colors,
                         onClick = {
-                            onKeyPressDown(FeedbackKey(KeyAction.ClearPreedit, "×", FeedbackZone.CANDIDATE))
+                            onKeyPressDown(clearSyllableFeedbackKey())
                             onSelectSyllable(-1)
                         }
                     )
@@ -165,7 +165,7 @@ private fun ComposingSyllableRail(
                     selected = idx == state.selectedSyllableIndex,
                     colors = colors,
                     onClick = {
-                        onKeyPressDown(FeedbackKey(KeyAction.Text(syl), syl, FeedbackZone.CANDIDATE))
+                        onKeyPressDown(syllableFeedbackKey(idx, syl))
                         onSelectSyllable(idx)
                     }
                 )
@@ -202,3 +202,9 @@ private fun VerticalSyllableChip(label: String, selected: Boolean, colors: DuoCo
 }
 
 private val IDLE_PUNCTUATION: List<String> = listOf("，", "。", "？")
+
+internal fun clearSyllableFeedbackKey(): FeedbackKey =
+    FeedbackKey(KeyAction.SelectSyllable(-1), "×", FeedbackZone.CANDIDATE)
+
+internal fun syllableFeedbackKey(index: Int, syllable: String): FeedbackKey =
+    FeedbackKey(KeyAction.SelectSyllable(index), syllable, FeedbackZone.CANDIDATE)

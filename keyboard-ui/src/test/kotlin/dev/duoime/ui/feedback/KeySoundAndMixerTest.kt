@@ -605,6 +605,40 @@ class KeySoundAndMixerTest {
         assertEquals(KeySoundStyle.MECHANICAL, defaults.soundStyle)
     }
 
+    @Test
+    fun `T9 left rail syllable clear routes as candidate SelectSyllable not ClearPreedit nav modifier`() {
+        val clearKey = dev.duoime.ui.grid.clearSyllableFeedbackKey()
+        val syllableKey = dev.duoime.ui.grid.syllableFeedbackKey(0, "dan")
+        val clearPreeditKey = FeedbackKey(KeyAction.ClearPreedit, "重输", FeedbackZone.ACTION)
+        val selectSyllableAsAction = FeedbackKey(KeyAction.SelectSyllable(-1), "×", FeedbackZone.ACTION)
+
+        assertEquals(KeyAction.SelectSyllable(-1), clearKey.action)
+        assertEquals(FeedbackZone.CANDIDATE, clearKey.zone)
+        assertEquals(KeyAction.SelectSyllable(0), syllableKey.action)
+        assertEquals(FeedbackZone.CANDIDATE, syllableKey.zone)
+
+        val clearTrigger = KeySoundSynthesizer.resolveSoundTrigger(clearKey, KeySoundStyle.GRAND_PIANO)
+        val syllableTrigger = KeySoundSynthesizer.resolveSoundTrigger(syllableKey, KeySoundStyle.GRAND_PIANO)
+        val clearPreeditTrigger = KeySoundSynthesizer.resolveSoundTrigger(clearPreeditKey, KeySoundStyle.GRAND_PIANO)
+        val actionZoneSelectTrigger = KeySoundSynthesizer.resolveSoundTrigger(
+            selectSyllableAsAction,
+            KeySoundStyle.GRAND_PIANO
+        )
+
+        // Candidate-zone SelectSyllable(-1) and syllable chips route with candidate rate (1.04f), not nav modifier (1.06f)
+        assertEquals(KeyInstrumentZone.FUNCTION, clearTrigger.zone)
+        assertEquals(KeySoundSlot.MODIFIER_LIGHT, clearTrigger.slot)
+        assertEquals(1.04f, clearTrigger.rate, 0.0001f)
+        assertEquals(1.04f, syllableTrigger.rate, 0.0001f)
+        assertEquals(1.06f, clearPreeditTrigger.rate, 0.0001f)
+        assertEquals(
+            "SelectSyllable must stay outside isNavigationModifierAction",
+            1.0f,
+            actionZoneSelectTrigger.rate,
+            0.0001f
+        )
+    }
+
     private fun checkPitchGroup(
         keys: List<FeedbackKey>,
         style: KeySoundStyle,

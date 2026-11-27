@@ -36,6 +36,8 @@ sealed interface KeyAction {
 
     data object ClearPreedit : KeyAction
 
+    data class SelectSyllable(val index: Int) : KeyAction
+
     data object ToggleDrawer : KeyAction
 
     data object ToggleNumberRow : KeyAction

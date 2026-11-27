@@ -235,4 +235,164 @@ class CandidateWindowTrackerTest {
         )
         controller.close()
     }
+
+    @Test
+    fun windowCandidateHighlightTracksNonZeroPage0Page1AndRestoredEngineStateAfterLoadMore() = runTest {
+        val pagedEngine = object : InputEngine {
+            private val pages = listOf(
+                listOf(
+                    CandidateItem(text = "一", indexOnPage = 0),
+                    CandidateItem(text = "以", indexOnPage = 1),
+                    CandidateItem(text = "已", indexOnPage = 2)
+                ),
+                listOf(
+                    CandidateItem(text = "意", indexOnPage = 0),
+                    CandidateItem(text = "义", indexOnPage = 1)
+                ),
+                listOf(
+                    CandidateItem(text = "亿", indexOnPage = 0)
+                )
+            )
+            private var currentPage = 0
+            private var currentHighlight = 1
+            private val _state = MutableStateFlow(snapshotFor(currentPage, currentHighlight))
+            override val state: StateFlow<EngineSnapshot> = _state
+
+            private fun snapshotFor(page: Int, highlight: Int): EngineSnapshot = EngineSnapshot(
+                preedit = "yi",
+                composingText = "yi",
+                candidates = pages[page],
+                highlightedIndex = highlight,
+                pageIndex = page,
+                hasPrevPage = page > 0,
+                hasNextPage = page < pages.lastIndex,
+                isComposing = true
+            )
+
+            fun moveHighlight(indexOnPage: Int) {
+                currentHighlight = indexOnPage
+                _state.value = snapshotFor(currentPage, currentHighlight)
+            }
+
+            override fun onKey(event: EngineKeyEvent): KeyProcessResult {
+                moveHighlight((currentHighlight + 1) % pages[currentPage].size)
+                return KeyProcessResult.Consumed
+            }
+
+            override fun selectCandidate(indexOnPage: Int): KeyProcessResult = KeyProcessResult.PassThrough
+
+            override fun page(forward: Boolean): Boolean {
+                val target = if (forward) currentPage + 1 else currentPage - 1
+                if (target !in pages.indices) return false
+                currentPage = target
+                currentHighlight = 0
+                _state.value = snapshotFor(currentPage, currentHighlight)
+                return true
+            }
+
+            override fun setOption(name: String, on: Boolean) = Unit
+
+            override fun selectSchema(id: String): Boolean = true
+
+            override fun reset() {
+                _state.value = EngineSnapshot.EMPTY
+            }
+        }
+
+        // 1) Direct tracker: non-zero highlight on page 0 -> updates on same page -> moves onto page 1
+        val tracker = CandidateWindowTracker()
+        tracker.syncWithSnapshot(pagedEngine.state.value)
+        assertEquals(listOf(false, true, false), tracker.items.map { it.highlighted })
+
+        pagedEngine.moveHighlight(2)
+        tracker.syncWithSnapshot(pagedEngine.state.value)
+        assertEquals(listOf(false, false, true), tracker.items.map { it.highlighted })
+
+        // loadMore loads page 1 and restores page 0 (pagedEngine.page(false) sets highlight=0 on page 0) ->
+        // window items must match engine.state.value (pageIndex=0, highlightedIndex=0)!
+        assertTrue(tracker.loadMore(pagedEngine))
+        assertEquals(0, pagedEngine.state.value.pageIndex)
+        assertEquals(0, pagedEngine.state.value.highlightedIndex)
+        assertEquals(
+            listOf(true, false, false, false, false),
+            tracker.items.map { it.highlighted }
+        )
+
+        // Move engine to page 1 with non-zero highlight -> highlight shifts cleanly onto page 1 item
+        assertTrue(pagedEngine.page(forward = true))
+        pagedEngine.moveHighlight(1)
+        tracker.syncWithSnapshot(pagedEngine.state.value)
+        assertEquals(
+            listOf(false, false, false, false, true),
+            tracker.items.map { it.highlighted }
+        )
+
+        // loadMore from page 1 appends page 2 and restores page 1 -> highlight aligns with restored engine state
+        assertTrue(tracker.loadMore(pagedEngine))
+        assertEquals(1, pagedEngine.state.value.pageIndex)
+        val expectedHighlightIdx = tracker.items.indexOfFirst {
+            it.pageIndex == pagedEngine.state.value.pageIndex &&
+                it.indexOnPage == pagedEngine.state.value.highlightedIndex
+        }
+        assertTrue(expectedHighlightIdx >= 0)
+        assertEquals(listOf(expectedHighlightIdx), tracker.items.indices.filter { tracker.items[it].highlighted })
+
+        // 2) Controller end-to-end: highlight sync across onKey/page/loadMore + KeyAction.SelectSyllable dispatch
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val controller = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { LiteInputEngine.createDefault() }
+        )
+        advanceUntilIdle()
+        controller.dispatchKeyAction(KeyAction.SelectChineseScheme(ChineseScheme.PINYIN_T9))
+        typeChars(controller, "326426")
+        advanceUntilIdle()
+        val danIdx = controller.uiState.value.snapshot.syllables.indexOf("dan")
+        assertTrue(danIdx >= 0)
+        controller.dispatchKeyAction(KeyAction.SelectSyllable(danIdx))
+        advanceUntilIdle()
+        assertTrue(controller.uiState.value.snapshot.preedit.startsWith("dan'"))
+        assertTrue("蛋糕" in controller.uiState.value.snapshot.candidates.map { it.text })
+        controller.dispatchKeyAction(KeyAction.SelectSyllable(-1))
+        advanceUntilIdle()
+        assertTrue("fang" in controller.uiState.value.snapshot.syllables)
+        controller.close()
+
+        val highlightController = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { pagedEngine }
+        )
+        advanceUntilIdle()
+        assertTrue(highlightController.uiState.value.windowCandidates.any { it.highlighted })
+        highlightController.pageCandidates(forward = false)
+        advanceUntilIdle()
+        assertEquals(0, highlightController.uiState.value.snapshot.pageIndex)
+        assertEquals(
+            listOf(0),
+            highlightController.uiState.value.windowCandidates.indices.filter {
+                highlightController.uiState.value.windowCandidates[it].highlighted
+            }
+        )
+        // Dispatching an engine key advances highlight on page 0 -> controller publishes updated highlight
+        highlightController.dispatchKeyAction(KeyAction.Engine(KeyCodes.keysymForChar('a')))
+        advanceUntilIdle()
+        assertEquals(
+            listOf(1),
+            highlightController.uiState.value.windowCandidates.indices.filter {
+                highlightController.uiState.value.windowCandidates[it].highlighted
+            }
+        )
+        // loadMoreCandidates restores page 0 with highlight=0 -> controller publishes exact restored highlight
+        highlightController.loadMoreCandidates()
+        advanceUntilIdle()
+        assertEquals(
+            listOf(0),
+            highlightController.uiState.value.windowCandidates.indices.filter {
+                highlightController.uiState.value.windowCandidates[it].highlighted
+            }
+        )
+        highlightController.close()
+    }
 }
