@@ -13,12 +13,17 @@ import dev.duoime.core.model.EngineSnapshot
 import dev.duoime.core.model.FeedbackKey
 import dev.duoime.core.model.FeedbackZone
 import dev.duoime.core.model.KeyAction
+import dev.duoime.core.model.LangKeyPlacement
 import dev.duoime.core.model.ToolbarMode
 import dev.duoime.core.model.WindowCandidateItem
 import dev.duoime.ui.bar.CandidateBarLayout
+import dev.duoime.ui.bar.CandidateBarMeta
 import dev.duoime.ui.bar.resolveScrollTargetIndex
 import dev.duoime.ui.grid.KeyGridGeometry
+import dev.duoime.ui.grid.T9LeftRailState
+import dev.duoime.ui.grid.buildT9SyllableRailItems
 import dev.duoime.ui.grid.clearSyllableFeedbackKey
+import dev.duoime.ui.grid.dispatchT9RailItemClick
 import dev.duoime.ui.grid.formatT9SyllableLabel
 import dev.duoime.ui.grid.resolveT9SyllableClick
 import dev.duoime.ui.grid.resolveT9SyllableItemHeightDp
@@ -306,5 +311,60 @@ class DuoKeyboardUiSmokeTest {
         assertEquals(listOf(clearSyllableFeedbackKey()), feedback)
         assertEquals(listOf(FeedbackKey(KeyAction.SelectSyllable(-1), "×", FeedbackZone.CANDIDATE)), feedback)
         assertEquals(listOf(-1), selections)
+
+        // Two-list progressive locking (e.g. 6262 -> locked=["ma"], next options=["ma", "na"]):
+        // locked chip renders first as "ma ×" and unlocks via onUnlockSyllablesFrom(0), while second
+        // "ma" renders unselected so tapping selects index 0 cleanly without clearing!
+        val redupState = T9LeftRailState(
+            isComposing = true,
+            syllables = listOf("ma", "na"),
+            selectedSyllableIndex = -1,
+            lockedSyllables = listOf("ma")
+        )
+        val railItems = buildT9SyllableRailItems(redupState)
+        assertEquals(3, railItems.size)
+        assertEquals(listOf("ma ×", "ma", "na"), railItems.map { it.label })
+        assertTrue(railItems[0].selected && railItems[0].isLockedEntry)
+        assertTrue(!railItems[1].selected && !railItems[1].isLockedEntry)
+        assertTrue(railItems.map { it.key }.distinct().size == 3)
+
+        val unlocked = mutableListOf<Int>()
+        feedback.clear()
+        selections.clear()
+        dispatchT9RailItemClick(
+            item = railItems[0],
+            onKeyPressDown = { feedback += it },
+            onSelectSyllable = { selections += it },
+            onUnlockSyllablesFrom = { unlocked += it }
+        )
+        assertEquals(listOf(0), unlocked)
+        assertTrue(selections.isEmpty())
+        assertEquals(listOf(clearSyllableFeedbackKey()), feedback)
+
+        feedback.clear()
+        dispatchT9RailItemClick(
+            item = railItems[1],
+            onKeyPressDown = { feedback += it },
+            onSelectSyllable = { selections += it },
+            onUnlockSyllablesFrom = { unlocked += it }
+        )
+        assertEquals(listOf(0), selections)
+        assertEquals(listOf(syllableFeedbackKey(0, "ma")), feedback)
+
+        // CandidateBarState carries langChipState iff LangKeyPlacement.TOOLBAR && !drawerOpen
+        val composingSurface = DuoKeyboardSurfaceState(
+            snapshot = EngineSnapshot(isComposing = true, preedit = "ma"),
+            layout = BuiltInLayouts.t9(isComposing = true, langKeyPlacement = LangKeyPlacement.TOOLBAR),
+            isReady = true,
+            heightFraction = 0.75f,
+            isOverlayMode = false,
+            langKeyPlacement = LangKeyPlacement.TOOLBAR
+        )
+        val toolbarCandidateState = composingSurface.toCandidateBarState()
+        assertTrue(toolbarCandidateState.langChipState != null)
+        assertTrue(KeyAction.ToggleLanguage in CandidateBarMeta.visibleActions(toolbarCandidateState))
+        val gridCandidateState = composingSurface.copy(langKeyPlacement = LangKeyPlacement.GRID).toCandidateBarState()
+        assertEquals(null, gridCandidateState.langChipState)
+        assertTrue(CandidateBarMeta.visibleActions(gridCandidateState).isEmpty())
     }
 }

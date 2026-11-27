@@ -637,6 +637,22 @@ class KeySoundAndMixerTest {
             actionZoneSelectTrigger.rate,
             0.0001f
         )
+
+        val unlockCandidateTrigger = KeySoundSynthesizer.resolveSoundTrigger(
+            FeedbackKey(KeyAction.UnlockSyllablesFrom(0), "×", FeedbackZone.CANDIDATE),
+            KeySoundStyle.GRAND_PIANO
+        )
+        val unlockActionTrigger = KeySoundSynthesizer.resolveSoundTrigger(
+            FeedbackKey(KeyAction.UnlockSyllablesFrom(0), "×", FeedbackZone.ACTION),
+            KeySoundStyle.GRAND_PIANO
+        )
+        assertEquals(1.04f, unlockCandidateTrigger.rate, 0.0001f)
+        assertEquals(
+            "UnlockSyllablesFrom must stay outside isNavigationModifierAction",
+            1.0f,
+            unlockActionTrigger.rate,
+            0.0001f
+        )
     }
 
     private fun checkPitchGroup(

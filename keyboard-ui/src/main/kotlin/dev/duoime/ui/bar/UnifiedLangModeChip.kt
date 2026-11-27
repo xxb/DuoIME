@@ -4,6 +4,7 @@ package dev.duoime.ui.bar
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.padding
@@ -12,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.State
@@ -27,6 +29,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsPropertyReceiver
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -37,6 +50,7 @@ import dev.duoime.core.model.FeedbackKey
 import dev.duoime.core.model.FeedbackZone
 import dev.duoime.core.model.KeyAction
 import dev.duoime.core.model.Language
+import dev.duoime.ui.R
 import dev.duoime.ui.theme.DuoColorTokens
 import dev.duoime.ui.theme.DuoThemePreset
 import dev.duoime.ui.theme.LocalDuoDimensions
@@ -228,6 +242,87 @@ internal class UnifiedLangGestureController(
     }
 }
 
+@Immutable
+internal data class UnifiedLangAccessibilitySpec(
+    val contentDescription: String,
+    val stateDescription: String,
+    val toggleLanguageLabel: String,
+    val switchSchemeLabel: String,
+    val switchVariantLabel: String
+)
+
+internal fun SemanticsPropertyReceiver.applyUnifiedLangSemantics(
+    state: DuoToolbarState,
+    spec: UnifiedLangAccessibilitySpec,
+    onAction: (KeyAction) -> Unit
+) {
+    role = Role.Button
+    contentDescription = spec.contentDescription
+    stateDescription = spec.stateDescription
+    if (state.canToggleLanguage) {
+        onClick(label = spec.toggleLanguageLabel) {
+            onAction(KeyAction.ToggleLanguage)
+            true
+        }
+        customActions = listOf(
+            CustomAccessibilityAction(label = spec.switchSchemeLabel) {
+                onAction(KeyAction.SelectChineseScheme(nextQuickChineseScheme(state.activeChineseScheme)))
+                true
+            },
+            CustomAccessibilityAction(label = spec.switchVariantLabel) {
+                onAction(KeyAction.SwitchVariant)
+                true
+            }
+        )
+    } else {
+        disabled()
+    }
+}
+
+@Composable
+private fun rememberUnifiedLangAccessibilitySpec(state: DuoToolbarState): UnifiedLangAccessibilitySpec {
+    val langLabel = stringResource(
+        if (state.effectiveLanguage == Language.CHINESE) {
+            R.string.duo_lang_chip_lang_zh
+        } else {
+            R.string.duo_lang_chip_lang_en
+        }
+    )
+    val schemeLabel = stringResource(
+        when (state.activeChineseScheme) {
+            ChineseScheme.PINYIN_26 -> R.string.duo_lang_chip_scheme_26
+            ChineseScheme.PINYIN_T9 -> R.string.duo_lang_chip_scheme_t9
+            ChineseScheme.XIAOHE_SHUANGPIN -> R.string.duo_lang_chip_scheme_xiaohe
+        }
+    )
+    val variantLabel = stringResource(
+        if (state.variant == ChineseVariant.TRADITIONAL) {
+            R.string.duo_lang_chip_variant_traditional
+        } else {
+            R.string.duo_lang_chip_variant_simplified
+        }
+    )
+    val description = stringResource(R.string.duo_lang_chip_description, langLabel, schemeLabel, variantLabel)
+    val toggleLabel = stringResource(R.string.duo_lang_chip_action_toggle_language)
+    val switchSchemeLabel = stringResource(
+        if (nextQuickChineseScheme(state.activeChineseScheme) == ChineseScheme.PINYIN_T9) {
+            R.string.duo_lang_chip_action_switch_to_t9
+        } else {
+            R.string.duo_lang_chip_action_switch_to_26
+        }
+    )
+    val switchVariantLabel = stringResource(R.string.duo_lang_chip_action_switch_variant)
+    return remember(description, toggleLabel, switchSchemeLabel, switchVariantLabel) {
+        UnifiedLangAccessibilitySpec(
+            contentDescription = description,
+            stateDescription = description,
+            toggleLanguageLabel = toggleLabel,
+            switchSchemeLabel = switchSchemeLabel,
+            switchVariantLabel = switchVariantLabel
+        )
+    }
+}
+
 private data class UnifiedChipPalette(
     val background: Color,
     val foreground: Color,
@@ -303,6 +398,7 @@ internal fun UnifiedLangModeChip(
     }
 
     val palette = resolveUnifiedChipPalette(state, pressedState.value, isEink, colors)
+    val accessibilitySpec = rememberUnifiedLangAccessibilitySpec(state)
     val shape = RoundedCornerShape(8.dp)
     val labelWeight = if (state.effectiveLanguage == Language.CHINESE && state.canToggleLanguage) {
         FontWeight.SemiBold
@@ -317,6 +413,14 @@ internal fun UnifiedLangModeChip(
             .clip(shape)
             .background(palette.background)
             .border(width = 1.dp, color = colors.keyBorder, shape = shape)
+            .focusable(enabled = state.canToggleLanguage)
+            .semantics(mergeDescendants = true) {
+                applyUnifiedLangSemantics(
+                    state = currentState.value,
+                    spec = accessibilitySpec,
+                    onAction = { action -> currentOnAction.value(action) }
+                )
+            }
             .pointerInput(gestureController, flickThresholdPx) {
                 try {
                     awaitPointerEventScope {

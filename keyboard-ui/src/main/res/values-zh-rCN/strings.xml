@@ -3,4 +3,16 @@
     <string name="duo_height_preset_compact">矮</string>
     <string name="duo_height_preset_standard">中</string>
     <string name="duo_height_preset_tall">高</string>
+    <string name="duo_lang_chip_lang_zh">中文</string>
+    <string name="duo_lang_chip_lang_en">英文</string>
+    <string name="duo_lang_chip_scheme_26">26键</string>
+    <string name="duo_lang_chip_scheme_t9">九宫格</string>
+    <string name="duo_lang_chip_scheme_xiaohe">小鹤双拼</string>
+    <string name="duo_lang_chip_variant_simplified">简体</string>
+    <string name="duo_lang_chip_variant_traditional">繁体</string>
+    <string name="duo_lang_chip_description">%1$s，%2$s，%3$s</string>
+    <string name="duo_lang_chip_action_toggle_language">切换中英文</string>
+    <string name="duo_lang_chip_action_switch_to_t9">切换九宫格</string>
+    <string name="duo_lang_chip_action_switch_to_26">切换26键</string>
+    <string name="duo_lang_chip_action_switch_variant">切换简繁体</string>
 </resources>

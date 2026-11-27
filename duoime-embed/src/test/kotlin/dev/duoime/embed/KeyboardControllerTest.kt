@@ -267,6 +267,56 @@ class KeyboardControllerTest {
     }
 
     @Test
+    fun t9ProgressiveLockingHandlesReduplicatedSyllablesAndPartialUnlock() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val sink = RecordingInputSink()
+        val controller = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { LiteInputEngine.createDefault() }
+        )
+        controller.attachSink(sink)
+        advanceUntilIdle()
+
+        controller.dispatchKeyAction(KeyAction.SwitchMode(InputMode.PINYIN_T9))
+        typeEngineChars(controller, "6262")
+        advanceUntilIdle()
+
+        // Step 1: lock first "ma" -> lockedSyllables = ["ma"], remaining "62" still offers "ma" with selectedIndex=-1
+        val firstMaIdx = controller.uiState.value.snapshot.syllables.indexOf("ma")
+        assertTrue("Expected 'ma' in initial 6262 syllables", firstMaIdx >= 0)
+        controller.selectSyllable(firstMaIdx)
+        advanceUntilIdle()
+        val afterFirstLock = controller.uiState.value.snapshot
+        assertEquals(listOf("ma"), afterFirstLock.lockedSyllables)
+        assertEquals(-1, afterFirstLock.selectedSyllableIndex)
+        val secondMaIdx = afterFirstLock.syllables.indexOf("ma")
+        assertTrue("Expected second 'ma' option for remaining 62", secondMaIdx >= 0)
+
+        // Step 2: lock second "ma" -> lockedSyllables = ["ma", "ma"] and produces "妈妈"
+        controller.selectSyllable(secondMaIdx)
+        advanceUntilIdle()
+        val afterSecondLock = controller.uiState.value.snapshot
+        assertEquals(listOf("ma", "ma"), afterSecondLock.lockedSyllables)
+        assertTrue(
+            "Expected '妈妈' after locking ['ma', 'ma'], got ${afterSecondLock.candidates.map { it.text }}",
+            "妈妈" in afterSecondLock.candidates.map { it.text }
+        )
+
+        // Step 3: partial unlock from index 1 keeps first "ma" locked and re-exposes second options
+        controller.unlockSyllablesFrom(1)
+        advanceUntilIdle()
+        assertEquals(listOf("ma"), controller.uiState.value.snapshot.lockedSyllables)
+        assertTrue("ma" in controller.uiState.value.snapshot.syllables)
+
+        // Step 4: unlock from index 0 via KeyAction.UnlockSyllablesFrom clears all syllable locks
+        controller.dispatchKeyAction(KeyAction.UnlockSyllablesFrom(0))
+        advanceUntilIdle()
+        assertTrue(controller.uiState.value.snapshot.lockedSyllables.isEmpty())
+        controller.close()
+    }
+
+    @Test
     fun passwordEditorForcesEnglishModeSuppressesComposingAndRestoresModeOnExit() = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val sink = RecordingInputSink(SinkCapabilities.STANDARD_IME)

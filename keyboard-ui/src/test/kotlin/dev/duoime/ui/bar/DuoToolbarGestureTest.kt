@@ -6,7 +6,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsConfiguration
+import androidx.compose.ui.semantics.SemanticsProperties
 import dev.duoime.core.model.ChineseScheme
+import dev.duoime.core.model.ChineseVariant
 import dev.duoime.core.model.FeedbackKey
 import dev.duoime.core.model.FeedbackZone
 import dev.duoime.core.model.KeyAction
@@ -290,4 +295,55 @@ class DuoToolbarGestureTest {
             runCurrent()
             assertTrue(actions.isEmpty())
         }
+
+    @Test
+    fun accessibilitySemanticsExposeButtonRoleClickCustomActionsAndDisabledState() {
+        val actions = mutableListOf<KeyAction>()
+        val enabledState = DuoToolbarState(
+            activeChineseScheme = ChineseScheme.PINYIN_26,
+            effectiveLanguage = Language.CHINESE,
+            variant = ChineseVariant.TRADITIONAL,
+            canToggleLanguage = true
+        )
+        val spec = UnifiedLangAccessibilitySpec(
+            contentDescription = "Chinese, 26-key, Traditional",
+            stateDescription = "Chinese, 26-key, Traditional",
+            toggleLanguageLabel = "Switch language",
+            switchSchemeLabel = "Switch to T9 keypad",
+            switchVariantLabel = "Toggle Simplified or Traditional Chinese"
+        )
+        val enabledConfig = SemanticsConfiguration()
+        enabledConfig.applyUnifiedLangSemantics(enabledState, spec) { actions += it }
+
+        assertEquals(Role.Button, enabledConfig[SemanticsProperties.Role])
+        assertEquals(listOf(spec.contentDescription), enabledConfig[SemanticsProperties.ContentDescription])
+        assertEquals(spec.stateDescription, enabledConfig[SemanticsProperties.StateDescription])
+        assertFalse(SemanticsProperties.Disabled in enabledConfig)
+
+        val onClick = enabledConfig[SemanticsActions.OnClick]
+        assertEquals(spec.toggleLanguageLabel, onClick.label)
+        assertTrue(onClick.action?.invoke() == true)
+        assertEquals(listOf<KeyAction>(KeyAction.ToggleLanguage), actions)
+
+        val customActions = enabledConfig[SemanticsActions.CustomActions]
+        assertEquals(2, customActions.size)
+        assertEquals(spec.switchSchemeLabel, customActions[0].label)
+        assertEquals(spec.switchVariantLabel, customActions[1].label)
+        actions.clear()
+        assertTrue(customActions[0].action())
+        assertTrue(customActions[1].action())
+        assertEquals(
+            listOf<KeyAction>(KeyAction.SelectChineseScheme(ChineseScheme.PINYIN_T9), KeyAction.SwitchVariant),
+            actions
+        )
+
+        // Disabled state exposes SemanticsProperties.Disabled and omits clickable/custom actions
+        val disabledState = enabledState.copy(canToggleLanguage = false)
+        val disabledConfig = SemanticsConfiguration()
+        disabledConfig.applyUnifiedLangSemantics(disabledState, spec) { actions += it }
+        assertEquals(Role.Button, disabledConfig[SemanticsProperties.Role])
+        assertTrue(SemanticsProperties.Disabled in disabledConfig)
+        assertFalse(SemanticsActions.OnClick in disabledConfig)
+        assertFalse(SemanticsActions.CustomActions in disabledConfig)
+    }
 }

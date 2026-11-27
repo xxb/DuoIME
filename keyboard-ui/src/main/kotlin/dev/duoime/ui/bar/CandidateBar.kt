@@ -36,6 +36,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.duoime.core.model.CandidatePaging
 import dev.duoime.core.model.EngineSnapshot
+import dev.duoime.core.model.FeedbackKey
+import dev.duoime.core.model.KeyAction
 import dev.duoime.core.model.WindowCandidateItem
 import dev.duoime.ui.theme.DuoColorTokens
 import dev.duoime.ui.theme.DuoThemePreset
@@ -91,14 +93,33 @@ internal fun resolveScrollTargetIndex(items: List<WindowCandidateItem>, pageInde
 
 /**
  * Immutable render state for [CandidateBar].
+ *
+ * When [langChipState] is non-null (`LangKeyPlacement.TOOLBAR` while composing), [CandidateBar]
+ * keeps the stationary `88.dp` [UnifiedLangModeChip] mounted at the left edge so language/scheme
+ * switching stays reachable mid-composition without duplicating bottom-row grid keys.
  */
 @Immutable
 data class CandidateBarState(
     val snapshot: EngineSnapshot,
     val windowCandidates: List<WindowCandidateItem> = emptyList(),
     val hasMoreWindowCandidates: Boolean = false,
-    val pagingMode: CandidatePaging = CandidatePaging.SCROLL
+    val pagingMode: CandidatePaging = CandidatePaging.SCROLL,
+    val langChipState: DuoToolbarState? = null
 )
+
+/**
+ * Pure-JVM action metadata for [CandidateBar] verified by zero-duplication invariant tests.
+ */
+object CandidateBarMeta {
+    fun visibleActions(state: CandidateBarState): List<KeyAction> {
+        val chip = state.langChipState ?: return emptyList()
+        return listOf(
+            KeyAction.ToggleLanguage,
+            KeyAction.SelectChineseScheme(nextQuickChineseScheme(chip.activeChineseScheme)),
+            KeyAction.SwitchVariant
+        )
+    }
+}
 
 /**
  * Immutable callbacks for [CandidateBar].
@@ -108,7 +129,9 @@ data class CandidateBarCallbacks(
     val onSelectCandidate: (Int) -> Unit,
     val onSelectWindowCandidate: (Int) -> Unit,
     val onLoadMoreCandidates: () -> Unit,
-    val onPage: (Boolean) -> Unit
+    val onPage: (Boolean) -> Unit,
+    val onAction: (KeyAction) -> Unit = {},
+    val onKeyPressDown: (FeedbackKey) -> Unit = {}
 )
 
 /**
@@ -136,6 +159,15 @@ fun CandidateBar(state: CandidateBarState, callbacks: CandidateBarCallbacks, mod
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(CandidateBarLayout.ROW_SPACING_DP.dp)
     ) {
+        state.langChipState?.let { chipState ->
+            UnifiedLangModeChip(
+                state = chipState,
+                colors = colors,
+                onAction = callbacks.onAction,
+                onKeyPressDown = callbacks.onKeyPressDown
+            )
+        }
+
         if (snapshot.preedit.isNotEmpty()) {
             BasicText(
                 text = snapshot.preedit,
@@ -204,6 +236,7 @@ private fun ScrollableCandidateRow(
     LaunchedEffect(
         state.snapshot.preedit,
         state.snapshot.selectedSyllableIndex,
+        state.snapshot.lockedSyllables,
         state.snapshot.variant,
         state.snapshot.mode
     ) {

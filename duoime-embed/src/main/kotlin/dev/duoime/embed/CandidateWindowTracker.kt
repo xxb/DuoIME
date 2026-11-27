@@ -29,7 +29,8 @@ internal class CandidateWindowTracker(
         val schemaId: String,
         val preedit: String,
         val selectedSyllableIndex: Int,
-        val syllables: List<String>
+        val syllables: List<String>,
+        val lockedSyllables: List<String>
     )
 
     private val pages = TreeMap<Int, List<CandidateItem>>()
@@ -175,7 +176,8 @@ internal class CandidateWindowTracker(
         schemaId = snapshot.schemaId,
         preedit = snapshot.preedit,
         selectedSyllableIndex = snapshot.selectedSyllableIndex,
-        syllables = snapshot.syllables
+        syllables = snapshot.syllables,
+        lockedSyllables = snapshot.lockedSyllables
     )
 
     companion object {

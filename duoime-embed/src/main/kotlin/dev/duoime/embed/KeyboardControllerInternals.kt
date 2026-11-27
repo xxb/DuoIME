@@ -68,6 +68,8 @@ internal sealed interface ControllerEvent {
 
     data class SelectSyllable(val index: Int) : ControllerEvent
 
+    data class UnlockSyllablesFrom(val fromIndex: Int) : ControllerEvent
+
     data class Page(val forward: Boolean) : ControllerEvent
 
     data class ExtensionButton(val button: ExtensionToolbarButton) : ControllerEvent

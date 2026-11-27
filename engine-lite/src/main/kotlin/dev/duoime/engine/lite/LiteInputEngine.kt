@@ -82,6 +82,8 @@ class LiteInputEngine(
         return selectT9Syllable(syllable)
     }
 
+    override fun unlockSyllablesFrom(index: Int): Boolean = unlockT9SyllablesFrom(index)
+
     override fun page(forward: Boolean): Boolean {
         val changed = if (forward) localEngine.nextCandidatePage() else localEngine.prevCandidatePage()
         if (changed) {
@@ -202,9 +204,6 @@ class LiteInputEngine(
         } else {
             (snap.highlightedIndex - snap.pageStartIndex).coerceIn(0, pageCands.lastIndex)
         }
-        val selectedSyllableIdx = snap.activeSyllableFilter
-            ?.let { snap.t9SyllableOptions.indexOf(it) }
-            ?: -1
 
         return EngineSnapshot(
             mode = mode,
@@ -218,8 +217,9 @@ class LiteInputEngine(
             hasPrevPage = snap.hasPrevPage,
             hasNextPage = snap.hasNextPage,
             syllables = snap.t9SyllableOptions,
-            selectedSyllableIndex = selectedSyllableIdx,
-            isComposing = snap.hasPreEdit
+            selectedSyllableIndex = -1,
+            isComposing = snap.hasPreEdit,
+            lockedSyllables = snap.lockedT9Syllables
         )
     }
 

@@ -246,6 +246,11 @@ internal fun buildKeyboardCallbacks(
             controller.selectSyllable(index)
         }
     },
+    onUnlockSyllablesFrom = { fromIndex ->
+        if (!preDispatchState.value.syncIfComposing()) {
+            controller.unlockSyllablesFrom(fromIndex)
+        }
+    },
     onPage = { forward ->
         if (!preDispatchState.value.syncIfComposing()) {
             controller.pageCandidates(forward)
@@ -264,7 +269,7 @@ internal fun buildKeyboardCallbacks(
     },
     onKeyPressDown = { feedbackKey ->
         val suppressFeedback =
-            feedbackKey.action is KeyAction.SelectSyllable && preDispatchState.value.syncIfComposing()
+            isSyllableAction(feedbackKey.action) && preDispatchState.value.syncIfComposing()
         if (!suppressFeedback) {
             controller.onKeyPressDown(feedbackKey)
         }
@@ -283,6 +288,9 @@ internal fun buildKeyboardCallbacks(
     }
 )
 
+private fun isSyllableAction(action: KeyAction): Boolean =
+    action is KeyAction.SelectSyllable || action is KeyAction.UnlockSyllablesFrom
+
 private fun dispatchKeyActionWithSync(
     controller: KeyboardController,
     hostChrome: HostChrome,
@@ -295,7 +303,7 @@ private fun dispatchKeyActionWithSync(
         KeyAction.Dismiss -> hostChrome.onDismiss?.invoke()
         else -> {
             val reset = preDispatch.syncIfComposing()
-            if (action !is KeyAction.SelectSyllable) {
+            if (!isSyllableAction(action)) {
                 preDispatch.onNewInputAction()
                 controller.dispatchKeyAction(action)
             } else if (!reset) {

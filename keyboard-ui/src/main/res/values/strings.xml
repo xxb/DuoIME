@@ -3,4 +3,16 @@
     <string name="duo_height_preset_compact">S</string>
     <string name="duo_height_preset_standard">M</string>
     <string name="duo_height_preset_tall">L</string>
+    <string name="duo_lang_chip_lang_zh">Chinese</string>
+    <string name="duo_lang_chip_lang_en">English</string>
+    <string name="duo_lang_chip_scheme_26">26-key</string>
+    <string name="duo_lang_chip_scheme_t9">T9</string>
+    <string name="duo_lang_chip_scheme_xiaohe">Xiaohe double pinyin</string>
+    <string name="duo_lang_chip_variant_simplified">Simplified</string>
+    <string name="duo_lang_chip_variant_traditional">Traditional</string>
+    <string name="duo_lang_chip_description">%1$s, %2$s, %3$s</string>
+    <string name="duo_lang_chip_action_toggle_language">Switch language</string>
+    <string name="duo_lang_chip_action_switch_to_t9">Switch to T9 keypad</string>
+    <string name="duo_lang_chip_action_switch_to_26">Switch to 26-key keyboard</string>
+    <string name="duo_lang_chip_action_switch_variant">Toggle Simplified or Traditional Chinese</string>
 </resources>

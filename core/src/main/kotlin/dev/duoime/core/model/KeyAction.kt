@@ -38,6 +38,8 @@ sealed interface KeyAction {
 
     data class SelectSyllable(val index: Int) : KeyAction
 
+    data class UnlockSyllablesFrom(val fromIndex: Int) : KeyAction
+
     data object ToggleDrawer : KeyAction
 
     data object ToggleNumberRow : KeyAction

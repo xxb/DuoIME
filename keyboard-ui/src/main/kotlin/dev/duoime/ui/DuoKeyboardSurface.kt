@@ -134,6 +134,22 @@ fun DuoKeyboardSurfaceState.toToolbarState(): DuoToolbarState = DuoToolbarState(
 )
 
 /**
+ * Pure-JVM mapping from [DuoKeyboardSurfaceState] to [CandidateBarState], shared by
+ * [DuoKeyboardSurface] and invariant tests to prevent drift between UI and test state wiring.
+ */
+fun DuoKeyboardSurfaceState.toCandidateBarState(): CandidateBarState = CandidateBarState(
+    snapshot = snapshot,
+    windowCandidates = windowCandidates,
+    hasMoreWindowCandidates = hasMoreWindowCandidates,
+    pagingMode = candidatePaging,
+    langChipState = if (langKeyPlacement == LangKeyPlacement.TOOLBAR && !drawerOpen) {
+        toToolbarState()
+    } else {
+        null
+    }
+)
+
+/**
  * Pure-JVM mapping from [DuoKeyboardSurfaceState] to [DuoQuickDrawerState], shared by
  * [DuoKeyboardSurface] and invariant tests to prevent drift between UI and test state wiring.
  */
@@ -162,7 +178,8 @@ data class DuoKeyboardCallbacks(
     val onKeyRepeat: (FeedbackKey) -> Unit = {},
     val onDismissEngineError: () -> Unit = {},
     val onSelectWindowCandidate: (Int) -> Unit = onSelectCandidate,
-    val onLoadMoreCandidates: () -> Unit = {}
+    val onLoadMoreCandidates: () -> Unit = {},
+    val onUnlockSyllablesFrom: (Int) -> Unit = { onSelectSyllable(-1) }
 )
 
 /**
@@ -185,7 +202,9 @@ fun DuoKeyboardSurface(state: DuoKeyboardSurfaceState, callbacks: DuoKeyboardCal
             onSelectCandidate = callbacks.onSelectCandidate,
             onSelectWindowCandidate = callbacks.onSelectWindowCandidate,
             onLoadMoreCandidates = callbacks.onLoadMoreCandidates,
-            onPage = callbacks.onPage
+            onPage = callbacks.onPage,
+            onAction = callbacks.onKeyAction,
+            onKeyPressDown = callbacks.onKeyPressDown
         )
     }
 
@@ -221,12 +240,7 @@ fun DuoKeyboardSurface(state: DuoKeyboardSurfaceState, callbacks: DuoKeyboardCal
                     ) {
                         when (headerMode) {
                             HeaderSlotMode.CANDIDATES -> CandidateBar(
-                                state = CandidateBarState(
-                                    snapshot = snap,
-                                    windowCandidates = state.windowCandidates,
-                                    hasMoreWindowCandidates = state.hasMoreWindowCandidates,
-                                    pagingMode = state.candidatePaging
-                                ),
+                                state = state.toCandidateBarState(),
                                 callbacks = candidateCallbacks
                             )
                             HeaderSlotMode.TOOLBAR -> DuoToolbar(
@@ -322,7 +336,8 @@ private fun T9GridWithLeftRail(
     val railState = T9LeftRailState(
         isComposing = state.snapshot.isComposing,
         syllables = state.snapshot.syllables,
-        selectedSyllableIndex = state.snapshot.selectedSyllableIndex
+        selectedSyllableIndex = state.snapshot.selectedSyllableIndex,
+        lockedSyllables = state.snapshot.lockedSyllables
     )
 
     Layout(
@@ -341,6 +356,7 @@ private fun T9GridWithLeftRail(
                 onKeyAction = callbacks.onKeyAction,
                 onSelectSyllable = callbacks.onSelectSyllable,
                 onKeyPressDown = callbacks.onKeyPressDown,
+                onUnlockSyllablesFrom = callbacks.onUnlockSyllablesFrom,
                 modifier = Modifier.fillMaxSize()
             )
         }

@@ -170,6 +170,10 @@ class KeyboardController(
         eventChannel.trySend(ControllerEvent.SelectSyllable(index))
     }
 
+    fun unlockSyllablesFrom(fromIndex: Int) {
+        eventChannel.trySend(ControllerEvent.UnlockSyllablesFrom(fromIndex))
+    }
+
     fun pageCandidates(forward: Boolean) {
         eventChannel.trySend(ControllerEvent.Page(forward))
     }
@@ -256,6 +260,7 @@ class KeyboardController(
         is ControllerEvent.SelectWindowCandidate,
         is ControllerEvent.LoadMoreCandidates,
         is ControllerEvent.SelectSyllable,
+        is ControllerEvent.UnlockSyllablesFrom,
         is ControllerEvent.Page,
         is ControllerEvent.ExtensionButton -> true
         else -> false
@@ -274,6 +279,7 @@ class KeyboardController(
                 }
             }
             is ControllerEvent.SelectSyllable -> handleSelectSyllable(engine, event.index)
+            is ControllerEvent.UnlockSyllablesFrom -> handleUnlockSyllablesFrom(engine, event.fromIndex)
             is ControllerEvent.Page -> if (engine.page(event.forward)) publishState(engine)
             is ControllerEvent.ExtensionButton -> handleExtensionButton(engine, event.button)
             else -> processLifecycleEvent(engine, event)
@@ -306,6 +312,13 @@ class KeyboardController(
 
     private suspend fun handleSelectSyllable(engine: InputEngine, index: Int) {
         if (engine.selectSyllable(index)) {
+            sinkDispatcher.syncComposingOnly(engine.state.value)
+            publishState(engine)
+        }
+    }
+
+    private suspend fun handleUnlockSyllablesFrom(engine: InputEngine, fromIndex: Int) {
+        if (engine.unlockSyllablesFrom(fromIndex)) {
             sinkDispatcher.syncComposingOnly(engine.state.value)
             publishState(engine)
         }
@@ -493,6 +506,7 @@ class KeyboardController(
                 KeyboardNavReducer.toggleShift(p, s)
             }
             is KeyAction.SelectSyllable -> handleSelectSyllable(engine, action.index)
+            is KeyAction.UnlockSyllablesFrom -> handleUnlockSyllablesFrom(engine, action.fromIndex)
             else -> handleNavOrHostKeyAction(engine, action)
         }
     }

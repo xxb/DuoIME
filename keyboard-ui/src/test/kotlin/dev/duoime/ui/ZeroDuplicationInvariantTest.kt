@@ -22,6 +22,7 @@ import dev.duoime.core.model.ToolbarMode
 import dev.duoime.core.model.deriveKeyboardState
 import dev.duoime.core.model.resolveEffectiveLangKeyPlacement
 import dev.duoime.core.model.toInputConstraints
+import dev.duoime.ui.bar.CandidateBarMeta
 import dev.duoime.ui.bar.DEFAULT_TOOLBAR_PINS
 import dev.duoime.ui.bar.DuoToolbarMeta
 import dev.duoime.ui.panel.DuoQuickDrawerMeta
@@ -233,8 +234,12 @@ class ZeroDuplicationInvariantTest {
                 headerMode == HeaderSlotMode.TOOLBAR
             )
         }
-        if (headerMode == HeaderSlotMode.TOOLBAR) {
-            recordActionsList(DuoToolbarMeta.visibleActions(surfaceState.toToolbarState()), ::record)
+        when (headerMode) {
+            HeaderSlotMode.TOOLBAR ->
+                recordActionsList(DuoToolbarMeta.visibleActions(surfaceState.toToolbarState()), ::record)
+            HeaderSlotMode.CANDIDATES ->
+                recordActionsList(CandidateBarMeta.visibleActions(surfaceState.toCandidateBarState()), ::record)
+            HeaderSlotMode.NONE -> Unit
         }
 
         // Body mirrors SurfaceBody: DuoQuickDrawer vs DuoSymbolPanel / KeyGrid
@@ -247,6 +252,16 @@ class ZeroDuplicationInvariantTest {
         for (bucket in NavBucket.entries) {
             val count = counts[bucket.ordinal]
             assertTrue("Duplicate $bucket ($count occurrences) in $label", count <= 1)
+        }
+        if (surfaceState.langKeyPlacement == LangKeyPlacement.TOOLBAR &&
+            surfaceState.toolbarMode == ToolbarMode.FULL &&
+            !surfaceState.drawerOpen
+        ) {
+            assertEquals(
+                "TOOLBAR + FULL must keep ToggleLanguage reachable in both idle & composing ($label)",
+                1,
+                counts[NavBucket.TOGGLE_LANGUAGE.ordinal]
+            )
         }
         if (!surfaceState.canSwapScreen) {
             assertEquals(

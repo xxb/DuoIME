@@ -75,6 +75,13 @@ interface InputEngine {
      */
     fun selectSyllable(index: Int): Boolean = false
 
+    /**
+     * Unlocks locked T9 syllables starting from 0-based [index] (`0` clears all locked syllables,
+     * `1` keeps the first locked syllable and unlocks subsequent ones). Returns `true` if engine
+     * state changed.
+     */
+    fun unlockSyllablesFrom(index: Int): Boolean = if (index <= 0) selectSyllable(-1) else false
+
     fun page(forward: Boolean): Boolean
 
     fun setOption(name: String, on: Boolean)

@@ -16,7 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
@@ -48,8 +48,55 @@ import dev.duoime.ui.theme.LocalDuoThemePreset
 data class T9LeftRailState(
     val isComposing: Boolean,
     val syllables: List<String>,
-    val selectedSyllableIndex: Int
+    val selectedSyllableIndex: Int,
+    val lockedSyllables: List<String> = emptyList()
 )
+
+@Immutable
+internal data class T9SyllableRailItem(
+    val key: String,
+    val syllable: String,
+    val label: String,
+    val selected: Boolean,
+    val isLockedEntry: Boolean,
+    val targetIndex: Int
+)
+
+/**
+ * Pure-JVM two-list projection for [T9LeftRail]:
+ * - [T9LeftRailState.lockedSyllables] render first as `"$syl ×"` (`selected = true`, tapping
+ *   unlocks from that locked index via `onUnlockSyllablesFrom`).
+ * - [T9LeftRailState.syllables] (next unlocked options) render afterwards (`selected = false`
+ *   when [T9LeftRailState.lockedSyllables] is non-empty, supporting progressive locking of
+ *   reduplicated syllables such as `6262` -> `["ma", "ma"]` -> `"妈妈"`).
+ */
+internal fun buildT9SyllableRailItems(state: T9LeftRailState): List<T9SyllableRailItem> = buildList {
+    state.lockedSyllables.forEachIndexed { idx, syl ->
+        add(
+            T9SyllableRailItem(
+                key = "locked:$idx:$syl",
+                syllable = syl,
+                label = formatT9SyllableLabel(syl, selected = true),
+                selected = true,
+                isLockedEntry = true,
+                targetIndex = idx
+            )
+        )
+    }
+    state.syllables.forEachIndexed { idx, syl ->
+        val legacySelected = state.lockedSyllables.isEmpty() && idx == state.selectedSyllableIndex
+        add(
+            T9SyllableRailItem(
+                key = "opt:$idx:$syl",
+                syllable = syl,
+                label = formatT9SyllableLabel(syl, selected = legacySelected),
+                selected = legacySelected,
+                isLockedEntry = false,
+                targetIndex = idx
+            )
+        )
+    }
+}
 
 /**
  * Pure-JVM sizing for vertical T9 syllable buttons inside `t9_left_slot`:
@@ -92,19 +139,48 @@ internal fun resolveT9SyllableClick(
     }
 }
 
+internal fun dispatchT9RailItemClick(
+    item: T9SyllableRailItem,
+    onKeyPressDown: (FeedbackKey) -> Unit,
+    onSelectSyllable: (Int) -> Unit,
+    onUnlockSyllablesFrom: (Int) -> Unit
+) {
+    if (item.isLockedEntry) {
+        onKeyPressDown(clearSyllableFeedbackKey())
+        onUnlockSyllablesFrom(item.targetIndex)
+    } else {
+        resolveT9SyllableClick(
+            index = item.targetIndex,
+            syllable = item.syllable,
+            selected = item.selected,
+            onKeyPressDown = onKeyPressDown,
+            onSelectSyllable = onSelectSyllable
+        )
+    }
+}
+
+@Immutable
+private data class T9RailDispatch(
+    val onSelectSyllable: (Int) -> Unit,
+    val onUnlockSyllablesFrom: (Int) -> Unit,
+    val onKeyPressDown: (FeedbackKey) -> Unit
+)
+
 /**
  * Pure Compose Foundation vertical rail positioned inside T9's `t9_left_slot`:
  * - Idle: 3 equal vertical punctuation buttons (`，`, `。`, `？`).
  * - Composing: full-height thumb-friendly vertical syllable keys matching adjacent T9 row geometry,
- *   with inline `"$syl ×"` selected toggle-to-clear styling.
+ *   rendering locked syllables (`"$syl ×"`) before next candidate options.
  */
+@Suppress("LongParameterList")
 @Composable
 fun T9LeftRail(
     state: T9LeftRailState,
     onKeyAction: (KeyAction) -> Unit,
     onSelectSyllable: (Int) -> Unit,
     modifier: Modifier = Modifier,
-    onKeyPressDown: (FeedbackKey) -> Unit = {}
+    onKeyPressDown: (FeedbackKey) -> Unit = {},
+    onUnlockSyllablesFrom: (Int) -> Unit = { onSelectSyllable(-1) }
 ) {
     val colors = LocalDuoColors.current
     val dimensions = LocalDuoDimensions.current
@@ -150,11 +226,17 @@ fun T9LeftRail(
             }
         }
     } else {
+        val dispatch = remember(onSelectSyllable, onUnlockSyllablesFrom, onKeyPressDown) {
+            T9RailDispatch(
+                onSelectSyllable = onSelectSyllable,
+                onUnlockSyllablesFrom = onUnlockSyllablesFrom,
+                onKeyPressDown = onKeyPressDown
+            )
+        }
         ComposingSyllableRail(
             state = state,
             colors = colors,
-            onSelectSyllable = onSelectSyllable,
-            onKeyPressDown = onKeyPressDown,
+            dispatch = dispatch,
             modifier = modifier
         )
     }
@@ -164,12 +246,14 @@ fun T9LeftRail(
 private fun ComposingSyllableRail(
     state: T9LeftRailState,
     colors: DuoColorTokens,
-    onSelectSyllable: (Int) -> Unit,
-    onKeyPressDown: (FeedbackKey) -> Unit,
+    dispatch: T9RailDispatch,
     modifier: Modifier = Modifier
 ) {
     val dimensions = LocalDuoDimensions.current
     val gapDp = dimensions.keyVerticalGap
+    val items = remember(state.lockedSyllables, state.syllables, state.selectedSyllableIndex) {
+        buildT9SyllableRailItems(state)
+    }
     BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
@@ -177,30 +261,28 @@ private fun ComposingSyllableRail(
     ) {
         val itemHeight = resolveT9SyllableItemHeightDp(
             railHeightDp = maxHeight.value,
-            itemCount = state.syllables.size,
+            itemCount = items.size,
             minScrollItemHeightDp = dimensions.candidateBarHeight.value,
             gapDp = gapDp.value
         ).dp
 
-        if (state.syllables.size <= 3) {
+        if (items.size <= 3) {
             Column(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(gapDp)
             ) {
-                state.syllables.forEachIndexed { idx, syl ->
-                    val isSelected = idx == state.selectedSyllableIndex
+                items.forEach { item ->
                     VerticalSyllableChip(
-                        label = formatT9SyllableLabel(syl, isSelected),
-                        selected = isSelected,
+                        label = item.label,
+                        selected = item.selected,
                         height = itemHeight,
                         colors = colors,
                         onClick = {
-                            resolveT9SyllableClick(
-                                index = idx,
-                                syllable = syl,
-                                selected = isSelected,
-                                onKeyPressDown = onKeyPressDown,
-                                onSelectSyllable = onSelectSyllable
+                            dispatchT9RailItemClick(
+                                item = item,
+                                onKeyPressDown = dispatch.onKeyPressDown,
+                                onSelectSyllable = dispatch.onSelectSyllable,
+                                onUnlockSyllablesFrom = dispatch.onUnlockSyllablesFrom
                             )
                         }
                     )
@@ -211,23 +293,21 @@ private fun ComposingSyllableRail(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(gapDp)
             ) {
-                itemsIndexed(
-                    items = state.syllables,
-                    key = { idx, syl -> "$idx:$syl" }
-                ) { idx, syl ->
-                    val isSelected = idx == state.selectedSyllableIndex
+                items(
+                    items = items,
+                    key = { it.key }
+                ) { item ->
                     VerticalSyllableChip(
-                        label = formatT9SyllableLabel(syl, isSelected),
-                        selected = isSelected,
+                        label = item.label,
+                        selected = item.selected,
                         height = itemHeight,
                         colors = colors,
                         onClick = {
-                            resolveT9SyllableClick(
-                                index = idx,
-                                syllable = syl,
-                                selected = isSelected,
-                                onKeyPressDown = onKeyPressDown,
-                                onSelectSyllable = onSelectSyllable
+                            dispatchT9RailItemClick(
+                                item = item,
+                                onKeyPressDown = dispatch.onKeyPressDown,
+                                onSelectSyllable = dispatch.onSelectSyllable,
+                                onUnlockSyllablesFrom = dispatch.onUnlockSyllablesFrom
                             )
                         }
                     )

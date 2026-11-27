@@ -72,7 +72,8 @@ data class EngineSnapshot(
     val hasNextPage: Boolean = false,
     val syllables: List<String> = emptyList(),
     val selectedSyllableIndex: Int = -1,
-    val isComposing: Boolean = false
+    val isComposing: Boolean = false,
+    val lockedSyllables: List<String> = emptyList()
 ) {
     companion object {
         val EMPTY: EngineSnapshot = EngineSnapshot()
