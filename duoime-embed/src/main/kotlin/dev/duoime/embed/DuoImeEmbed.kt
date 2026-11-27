@@ -5,6 +5,7 @@ package dev.duoime.embed
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -69,11 +70,13 @@ fun DuoImeKeyboard(
             onDispose { state.controller.detachSink(sink) }
         }
     }
+    val preDispatch = remember(state) { { state.syncSessionSelectionIfComposing() } }
     DuoImeKeyboardContent(
         controller = state.controller,
         chromePolicy = chromePolicy,
         hostChrome = hostChrome,
-        modifier = modifier
+        modifier = modifier,
+        preDispatch = preDispatch
     )
 }
 
@@ -129,7 +132,8 @@ private fun DuoImeKeyboardContent(
     controller: KeyboardController,
     chromePolicy: ChromePolicy,
     hostChrome: HostChrome,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    preDispatch: () -> Boolean = { false }
 ) {
     LaunchedEffect(controller, chromePolicy.langKeyPlacement, chromePolicy.initialSymbolTab) {
         controller.updateHostPolicy(
@@ -140,32 +144,12 @@ private fun DuoImeKeyboardContent(
 
     val state by controller.uiState.collectAsState()
     val currentHostChrome = rememberUpdatedState(hostChrome)
+    val currentPreDispatch = rememberUpdatedState(preDispatch)
     val callbacks = remember(controller) {
-        DuoKeyboardCallbacks(
-            onKeyAction = { action ->
-                when (action) {
-                    KeyAction.SwapScreen -> currentHostChrome.value.onSwapScreen?.invoke()
-                    KeyAction.SwitchIme -> currentHostChrome.value.onSwitchIme?.invoke()
-                    KeyAction.Dismiss -> currentHostChrome.value.onDismiss?.invoke()
-                    else -> controller.dispatchKeyAction(action)
-                }
-            },
-            onSelectCandidate = controller::selectCandidate,
-            onSelectSyllable = controller::selectSyllable,
-            onPage = controller::pageCandidates,
-            onExtensionButton = { button ->
-                val handler = currentHostChrome.value.onExtensionButton
-                if (handler != null) {
-                    handler(button)
-                } else {
-                    controller.dispatchExtensionButton(button)
-                }
-            },
-            onKeyPressDown = controller::onKeyPressDown,
-            onKeyRepeat = controller::onKeyRepeat,
-            onDismissEngineError = controller::dismissEngineError,
-            onSelectWindowCandidate = controller::selectWindowCandidate,
-            onLoadMoreCandidates = controller::loadMoreCandidates
+        buildKeyboardCallbacks(
+            controller = controller,
+            hostChromeState = currentHostChrome,
+            preDispatchState = currentPreDispatch
         )
     }
 
@@ -205,6 +189,63 @@ private fun DuoImeKeyboardContent(
         )
     }
 }
+
+private fun buildKeyboardCallbacks(
+    controller: KeyboardController,
+    hostChromeState: State<HostChrome>,
+    preDispatchState: State<() -> Boolean>
+): DuoKeyboardCallbacks = DuoKeyboardCallbacks(
+    onKeyAction = { action ->
+        when (action) {
+            KeyAction.SwapScreen -> hostChromeState.value.onSwapScreen?.invoke()
+            KeyAction.SwitchIme -> hostChromeState.value.onSwitchIme?.invoke()
+            KeyAction.Dismiss -> hostChromeState.value.onDismiss?.invoke()
+            else -> {
+                val reset = preDispatchState.value()
+                if (!reset || action !is KeyAction.SelectSyllable) {
+                    controller.dispatchKeyAction(action)
+                }
+            }
+        }
+    },
+    onSelectCandidate = { index ->
+        if (!preDispatchState.value()) {
+            controller.selectCandidate(index)
+        }
+    },
+    onSelectSyllable = { index ->
+        if (!preDispatchState.value()) {
+            controller.selectSyllable(index)
+        }
+    },
+    onPage = { forward ->
+        if (!preDispatchState.value()) {
+            controller.pageCandidates(forward)
+        }
+    },
+    onExtensionButton = { button ->
+        val handler = hostChromeState.value.onExtensionButton
+        if (handler != null) {
+            handler(button)
+        } else {
+            preDispatchState.value()
+            controller.dispatchExtensionButton(button)
+        }
+    },
+    onKeyPressDown = controller::onKeyPressDown,
+    onKeyRepeat = controller::onKeyRepeat,
+    onDismissEngineError = controller::dismissEngineError,
+    onSelectWindowCandidate = { globalIndex ->
+        if (!preDispatchState.value()) {
+            controller.selectWindowCandidate(globalIndex)
+        }
+    },
+    onLoadMoreCandidates = {
+        if (!preDispatchState.value()) {
+            controller.loadMoreCandidates()
+        }
+    }
+)
 
 /**
  * Lightweight status banner host kept for bootstrap launcher screens until M1-5 onboarding lands.

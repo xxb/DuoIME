@@ -47,6 +47,21 @@ class DuoImeState(val controller: KeyboardController) {
         }
     }
 
+    /**
+     * Checks the bound [EmbedInputConnectionSink] for external cursor/selection changes while
+     * composing and resets [controller] immediately on divergence.
+     */
+    internal fun syncSessionSelectionIfComposing(): Boolean {
+        val sink = activeSinkRef.get() as? EmbedInputConnectionSink ?: return false
+        val isComposing = controller.uiState.value.snapshot.isComposing || sink.hasActiveComposing
+        if (!isComposing) return false
+        if (sink.syncExternalSelection(isComposing = true)) {
+            controller.reset()
+            return true
+        }
+        return false
+    }
+
     fun close() {
         activeSinkRef.set(null)
         _isInputSessionActive.value = false
