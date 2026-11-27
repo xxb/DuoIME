@@ -113,6 +113,7 @@ data class CandidateBarState(
 object CandidateBarMeta {
     fun visibleActions(state: CandidateBarState): List<KeyAction> {
         val chip = state.langChipState ?: return emptyList()
+        if (!chip.canToggleLanguage) return emptyList()
         return listOf(
             KeyAction.ToggleLanguage,
             KeyAction.SelectChineseScheme(nextQuickChineseScheme(chip.activeChineseScheme)),

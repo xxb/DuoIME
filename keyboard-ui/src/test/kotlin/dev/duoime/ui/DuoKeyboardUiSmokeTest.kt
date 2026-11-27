@@ -13,7 +13,9 @@ import dev.duoime.core.model.EngineSnapshot
 import dev.duoime.core.model.FeedbackKey
 import dev.duoime.core.model.FeedbackZone
 import dev.duoime.core.model.KeyAction
+import dev.duoime.core.model.KeyboardPanel
 import dev.duoime.core.model.LangKeyPlacement
+import dev.duoime.core.model.Language
 import dev.duoime.core.model.ToolbarMode
 import dev.duoime.core.model.WindowCandidateItem
 import dev.duoime.ui.bar.CandidateBarLayout
@@ -37,6 +39,7 @@ import dev.duoime.ui.theme.DuoThemePreset
 import dev.duoime.ui.theme.resolveAdaptiveDimensions
 import kotlin.math.abs
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -218,35 +221,100 @@ class DuoKeyboardUiSmokeTest {
         assertEquals(4, resolveHeaderReferenceRowCount(includeNumberRow = false))
         assertEquals(5, resolveHeaderReferenceRowCount(includeNumberRow = true))
 
-        val qwerty5 = BuiltInLayouts.qwerty(includeNumberRow = true)
-        val t9 = BuiltInLayouts.t9()
+        val qwertyCn5 = BuiltInLayouts.qwerty(includeNumberRow = true, englishMode = false)
+        val qwertyEn5 = BuiltInLayouts.qwerty(includeNumberRow = true, englishMode = true)
+        val t9Idle = BuiltInLayouts.t9(isComposing = false)
+        val t9Comp = BuiltInLayouts.t9(isComposing = true)
         val numpad = BuiltInLayouts.numberPad()
-        assertEquals(5, qwerty5.rows.size)
-        assertEquals(4, t9.rows.size)
+        val symbols = BuiltInLayouts.symbolsV0()
+        assertEquals(5, qwertyCn5.rows.size)
+        assertEquals(4, t9Idle.rows.size)
         assertEquals(4, numpad.rows.size)
 
+        // Prove raw row-count-dependent adaptive dimensions WOULD diverge (5 rows vs 4 rows)
+        for (availableHeightDp in listOf(360f, 432f)) {
+            val rawFive = resolveAdaptiveDimensions(availableHeightDp, keyRowCount = 5, hasSyllableRail = false)
+            val rawFour = resolveAdaptiveDimensions(availableHeightDp, keyRowCount = 4, hasSyllableRail = false)
+            assertNotEquals(
+                "Raw 5-row vs 4-row adaptive header must differ at ${availableHeightDp}dp to catch regressions",
+                rawFive.toolbarHeight,
+                rawFour.toolbarHeight
+            )
+        }
+
+        // Through DuoKeyboardSurfaceState.resolveSurfaceDimensions, all views stay 0px rock-steady
         for (includeNumberRow in listOf(false, true)) {
-            val refRows = resolveHeaderReferenceRowCount(includeNumberRow)
+            val qwertyCn = BuiltInLayouts.qwerty(includeNumberRow = includeNumberRow, englishMode = false)
+            val qwertyEn = BuiltInLayouts.qwerty(includeNumberRow = includeNumberRow, englishMode = true)
+            val states = listOf(
+                DuoKeyboardSurfaceState(
+                    snapshot = EngineSnapshot.EMPTY,
+                    layout = qwertyCn,
+                    isReady = true,
+                    heightFraction = 0.75f,
+                    isOverlayMode = false,
+                    includeNumberRow = includeNumberRow
+                ),
+                DuoKeyboardSurfaceState(
+                    snapshot = EngineSnapshot.EMPTY,
+                    layout = qwertyEn,
+                    isReady = true,
+                    heightFraction = 0.75f,
+                    isOverlayMode = false,
+                    effectiveLanguage = Language.ENGLISH,
+                    includeNumberRow = includeNumberRow
+                ),
+                DuoKeyboardSurfaceState(
+                    snapshot = EngineSnapshot.EMPTY,
+                    layout = t9Idle,
+                    isReady = true,
+                    heightFraction = 0.75f,
+                    isOverlayMode = false,
+                    includeNumberRow = includeNumberRow
+                ),
+                DuoKeyboardSurfaceState(
+                    snapshot = EngineSnapshot(isComposing = true, preedit = "ni"),
+                    layout = t9Comp,
+                    isReady = true,
+                    heightFraction = 0.75f,
+                    isOverlayMode = false,
+                    includeNumberRow = includeNumberRow
+                ),
+                DuoKeyboardSurfaceState(
+                    snapshot = EngineSnapshot.EMPTY,
+                    layout = numpad,
+                    isReady = true,
+                    heightFraction = 0.75f,
+                    isOverlayMode = false,
+                    activePanel = KeyboardPanel.NUMBER,
+                    includeNumberRow = includeNumberRow
+                ),
+                DuoKeyboardSurfaceState(
+                    snapshot = EngineSnapshot.EMPTY,
+                    layout = symbols,
+                    isReady = true,
+                    heightFraction = 0.75f,
+                    isOverlayMode = false,
+                    activePanel = KeyboardPanel.SYMBOL,
+                    includeNumberRow = includeNumberRow
+                ),
+                DuoKeyboardSurfaceState(
+                    snapshot = EngineSnapshot.EMPTY,
+                    layout = qwertyCn5,
+                    isReady = true,
+                    heightFraction = 0.75f,
+                    isOverlayMode = false,
+                    drawerOpen = true,
+                    includeNumberRow = includeNumberRow
+                )
+            )
             for (availableHeightDp in listOf(260f, 360f, 432f, 448f)) {
-                val qwertyDims = resolveAdaptiveDimensions(
-                    availableHeightDp = availableHeightDp,
-                    keyRowCount = refRows,
-                    hasSyllableRail = false
-                )
-                val t9Dims = resolveAdaptiveDimensions(
-                    availableHeightDp = availableHeightDp,
-                    keyRowCount = refRows,
-                    hasSyllableRail = false
-                )
-                val numpadDims = resolveAdaptiveDimensions(
-                    availableHeightDp = availableHeightDp,
-                    keyRowCount = refRows,
-                    hasSyllableRail = false
-                )
-                assertEquals(qwertyDims.toolbarHeight, t9Dims.toolbarHeight)
-                assertEquals(qwertyDims.candidateBarHeight, t9Dims.candidateBarHeight)
-                assertEquals(qwertyDims.toolbarHeight, numpadDims.toolbarHeight)
-                assertEquals(qwertyDims.candidateBarHeight, numpadDims.candidateBarHeight)
+                val baseline = states.first().resolveSurfaceDimensions(availableHeightDp)
+                for (surfaceState in states.drop(1)) {
+                    val dims = surfaceState.resolveSurfaceDimensions(availableHeightDp)
+                    assertEquals(baseline.toolbarHeight, dims.toolbarHeight)
+                    assertEquals(baseline.candidateBarHeight, dims.candidateBarHeight)
+                }
             }
         }
     }

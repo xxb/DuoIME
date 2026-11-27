@@ -156,7 +156,7 @@ internal class UnifiedLangGestureController(
             return
         }
         if (change.pressed && !change.previousPressed) {
-            handleDown(change, pid, widthPx, heightPx, currentState)
+            handleDown(change, pid, widthPx, heightPx)
             return
         }
         if (activePointerId != pid) return
@@ -176,13 +176,7 @@ internal class UnifiedLangGestureController(
         pressedState.value = false
     }
 
-    private fun handleDown(
-        change: PointerInputChange,
-        pid: Long,
-        widthPx: Float,
-        heightPx: Float,
-        state: DuoToolbarState
-    ) {
+    private fun handleDown(change: PointerInputChange, pid: Long, widthPx: Float, heightPx: Float) {
         if (activePointerId != null || !isInsideUnifiedLangChip(change.position, widthPx, heightPx)) {
             return
         }
@@ -191,15 +185,13 @@ internal class UnifiedLangGestureController(
         holdTriggered = false
         pressedState.value = true
         change.consume()
-        val label = formatUnifiedLangLabel(state.effectiveLanguage, state.activeChineseScheme)
-        onKeyPressDownState.value(FeedbackKey(KeyAction.ToggleLanguage, label, FeedbackZone.TOOLBAR))
         holdJob?.cancel()
         holdJob = scope.launch {
             delay(holdDelayMs)
             if (isActive && activePointerId == pid && !holdTriggered && stateRef.value.canToggleLanguage) {
                 holdTriggered = true
                 val targetScheme = nextQuickChineseScheme(stateRef.value.activeChineseScheme)
-                onActionState.value(KeyAction.SelectChineseScheme(targetScheme))
+                emitAction(KeyAction.SelectChineseScheme(targetScheme))
             }
         }
     }
@@ -231,14 +223,21 @@ internal class UnifiedLangGestureController(
         val dy = change.position.y - start.y
         val inside = isInsideUnifiedLangChip(change.position, widthPx, heightPx)
         when (resolveUnifiedLangGesture(dx, dy, flickThresholdPx, inside)) {
-            UnifiedLangGesture.TAP_TOGGLE_LANG -> onActionState.value(KeyAction.ToggleLanguage)
+            UnifiedLangGesture.TAP_TOGGLE_LANG -> emitAction(KeyAction.ToggleLanguage)
             UnifiedLangGesture.FLICK_UP_OR_HOLD_SCHEME -> {
                 val target = nextQuickChineseScheme(stateRef.value.activeChineseScheme)
-                onActionState.value(KeyAction.SelectChineseScheme(target))
+                emitAction(KeyAction.SelectChineseScheme(target))
             }
-            UnifiedLangGesture.FLICK_DOWN_VARIANT -> onActionState.value(KeyAction.SwitchVariant)
+            UnifiedLangGesture.FLICK_DOWN_VARIANT -> emitAction(KeyAction.SwitchVariant)
             null -> Unit
         }
+    }
+
+    private fun emitAction(action: KeyAction) {
+        val state = stateRef.value
+        val label = formatUnifiedLangLabel(state.effectiveLanguage, state.activeChineseScheme)
+        onKeyPressDownState.value(FeedbackKey(action, label, FeedbackZone.TOOLBAR))
+        onActionState.value(action)
     }
 }
 

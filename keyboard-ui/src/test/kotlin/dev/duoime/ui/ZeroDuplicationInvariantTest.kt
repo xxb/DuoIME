@@ -253,14 +253,33 @@ class ZeroDuplicationInvariantTest {
             val count = counts[bucket.ordinal]
             assertTrue("Duplicate $bucket ($count occurrences) in $label", count <= 1)
         }
-        if (surfaceState.langKeyPlacement == LangKeyPlacement.TOOLBAR &&
-            surfaceState.toolbarMode == ToolbarMode.FULL &&
-            !surfaceState.drawerOpen
-        ) {
+        val toggleExpected = surfaceState.canToggleLanguage &&
+            surfaceState.langKeyPlacement != LangKeyPlacement.HOST &&
+            (
+                surfaceState.drawerOpen ||
+                    surfaceState.activePanel == KeyboardPanel.PRIMARY ||
+                    (
+                        surfaceState.langKeyPlacement == LangKeyPlacement.TOOLBAR &&
+                            surfaceState.toolbarMode == ToolbarMode.FULL
+                        )
+                )
+        if (toggleExpected) {
             assertEquals(
-                "TOOLBAR + FULL must keep ToggleLanguage reachable in both idle & composing ($label)",
+                "ToggleLanguage must stay reachable (count == 1) in $label",
                 1,
                 counts[NavBucket.TOGGLE_LANGUAGE.ordinal]
+            )
+        }
+        if (!surfaceState.canToggleLanguage) {
+            assertEquals(
+                "Scheme switch must be gated off when !canToggleLanguage in $label",
+                0,
+                counts[NavBucket.SCHEME_SWITCH.ordinal]
+            )
+            assertEquals(
+                "Variant switch must be gated off when !canToggleLanguage in $label",
+                0,
+                counts[NavBucket.SWITCH_VARIANT.ordinal]
             )
         }
         if (!surfaceState.canSwapScreen) {

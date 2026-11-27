@@ -114,7 +114,7 @@ object DuoToolbarMeta {
     fun visibleActions(state: DuoToolbarState): List<KeyAction> = buildList {
         add(KeyAction.ToggleDrawer)
         if (!state.drawerOpen) {
-            if (state.langKeyPlacement == LangKeyPlacement.TOOLBAR) {
+            if (state.langKeyPlacement == LangKeyPlacement.TOOLBAR && state.canToggleLanguage) {
                 add(KeyAction.ToggleLanguage)
                 add(KeyAction.SelectChineseScheme(nextQuickChineseScheme(state.activeChineseScheme)))
                 add(KeyAction.SwitchVariant)
@@ -130,7 +130,7 @@ object DuoToolbarMeta {
 
     private fun MutableList<KeyAction>.appendPinActions(pin: QuickPin, state: DuoToolbarState) {
         when (pin) {
-            QuickPin.SCHEME_SWITCH -> {
+            QuickPin.SCHEME_SWITCH -> if (state.canToggleLanguage) {
                 val scheme26 = if (state.activeChineseScheme == ChineseScheme.XIAOHE_SHUANGPIN) {
                     ChineseScheme.XIAOHE_SHUANGPIN
                 } else {
@@ -140,7 +140,7 @@ object DuoToolbarMeta {
                 add(KeyAction.SelectChineseScheme(ChineseScheme.PINYIN_T9))
             }
             QuickPin.SWAP_SCREEN -> if (state.canSwapScreen) add(KeyAction.SwapScreen)
-            QuickPin.VARIANT -> add(KeyAction.SwitchVariant)
+            QuickPin.VARIANT -> if (state.canToggleLanguage) add(KeyAction.SwitchVariant)
             QuickPin.NUMBER_ROW -> add(KeyAction.ToggleNumberRow)
             QuickPin.HEIGHT -> add(KeyAction.CycleHeight)
             QuickPin.SWITCH_IME -> if (state.canSwitchIme) add(KeyAction.SwitchIme)

@@ -105,11 +105,12 @@ class DuoToolbarGestureTest {
         controller.processPointerChange(down, widthPx = 176f, heightPx = 88f, flickThresholdPx = 40f)
         assertTrue(controller.pressedState.value)
         assertTrue(down.isConsumed)
-        assertEquals(listOf(FeedbackKey(KeyAction.ToggleLanguage, "中·26", FeedbackZone.TOOLBAR)), feedback)
+        assertTrue("Feedback must wait until gesture resolves", feedback.isEmpty())
 
         advanceTimeBy(150L)
         runCurrent()
         assertTrue(actions.isEmpty())
+        assertTrue(feedback.isEmpty())
 
         val up = pointerChange(1L, Offset(90f, 42f), pressed = false, previousPressed = true)
         controller.processPointerChange(up, widthPx = 176f, heightPx = 88f, flickThresholdPx = 40f)
@@ -117,17 +118,19 @@ class DuoToolbarGestureTest {
         assertNull(controller.activePointerId)
         assertTrue(up.isConsumed)
         assertEquals(listOf<KeyAction>(KeyAction.ToggleLanguage), actions)
+        assertEquals(listOf(FeedbackKey(KeyAction.ToggleLanguage, "中·26", FeedbackZone.TOOLBAR)), feedback)
     }
 
     @Test
     fun flickUpSwitchesScheme26And9AndFlickDownSwitchesVariant() = runTest(StandardTestDispatcher()) {
         val actions = mutableListOf<KeyAction>()
+        val feedback = mutableListOf<FeedbackKey>()
         val toolbarState = mutableStateOf(DuoToolbarState(activeChineseScheme = ChineseScheme.PINYIN_26))
         val controller = UnifiedLangGestureController(
             scope = this,
             stateRef = toolbarState,
             onActionState = mutableStateOf<(KeyAction) -> Unit>({ actions += it }),
-            onKeyPressDownState = mutableStateOf<(FeedbackKey) -> Unit>({}),
+            onKeyPressDownState = mutableStateOf<(FeedbackKey) -> Unit>({ feedback += it }),
             pressedState = mutableStateOf(false)
         )
 
@@ -138,16 +141,21 @@ class DuoToolbarGestureTest {
             heightPx = 88f,
             flickThresholdPx = 40f
         )
+        assertTrue(feedback.isEmpty())
         controller.processPointerChange(
             pointerChange(1L, Offset(90f, -25f), pressed = false, previousPressed = true),
             widthPx = 176f,
             heightPx = 88f,
             flickThresholdPx = 40f
         )
-        assertEquals(listOf<KeyAction>(KeyAction.SelectChineseScheme(ChineseScheme.PINYIN_T9)), actions)
+        val toT9 = KeyAction.SelectChineseScheme(ChineseScheme.PINYIN_T9)
+        assertEquals(listOf<KeyAction>(toT9), actions)
+        assertEquals(1, feedback.size)
+        assertEquals(toT9, feedback.single().action)
 
         // Flick up from T9 -> switches back to PINYIN_26
         actions.clear()
+        feedback.clear()
         toolbarState.value = toolbarState.value.copy(activeChineseScheme = ChineseScheme.PINYIN_T9)
         controller.processPointerChange(
             pointerChange(2L, Offset(88f, 50f), pressed = true, previousPressed = false),
@@ -161,10 +169,14 @@ class DuoToolbarGestureTest {
             heightPx = 88f,
             flickThresholdPx = 40f
         )
-        assertEquals(listOf<KeyAction>(KeyAction.SelectChineseScheme(ChineseScheme.PINYIN_26)), actions)
+        val to26 = KeyAction.SelectChineseScheme(ChineseScheme.PINYIN_26)
+        assertEquals(listOf<KeyAction>(to26), actions)
+        assertEquals(1, feedback.size)
+        assertEquals(to26, feedback.single().action)
 
         // Flick down -> KeyAction.SwitchVariant (简 <-> 繁)
         actions.clear()
+        feedback.clear()
         controller.processPointerChange(
             pointerChange(3L, Offset(88f, 44f), pressed = true, previousPressed = false),
             widthPx = 176f,
@@ -178,17 +190,20 @@ class DuoToolbarGestureTest {
             flickThresholdPx = 40f
         )
         assertEquals(listOf<KeyAction>(KeyAction.SwitchVariant), actions)
+        assertEquals(1, feedback.size)
+        assertEquals(KeyAction.SwitchVariant, feedback.single().action)
     }
 
     @Test
     fun sustained400msHoldSwitchesSchemeAndSuppressesTrailingReleaseTap() = runTest(StandardTestDispatcher()) {
         val actions = mutableListOf<KeyAction>()
+        val feedback = mutableListOf<FeedbackKey>()
         val toolbarState = mutableStateOf(DuoToolbarState(activeChineseScheme = ChineseScheme.PINYIN_26))
         val controller = UnifiedLangGestureController(
             scope = this,
             stateRef = toolbarState,
             onActionState = mutableStateOf<(KeyAction) -> Unit>({ actions += it }),
-            onKeyPressDownState = mutableStateOf<(FeedbackKey) -> Unit>({}),
+            onKeyPressDownState = mutableStateOf<(FeedbackKey) -> Unit>({ feedback += it }),
             pressedState = mutableStateOf(false)
         )
 
@@ -201,12 +216,16 @@ class DuoToolbarGestureTest {
         advanceTimeBy(399L)
         runCurrent()
         assertTrue("Hold must not fire before 400ms", actions.isEmpty())
+        assertTrue("Feedback must not fire before hold triggers", feedback.isEmpty())
 
         advanceTimeBy(1L)
         runCurrent()
-        assertEquals(listOf<KeyAction>(KeyAction.SelectChineseScheme(ChineseScheme.PINYIN_T9)), actions)
+        val toT9 = KeyAction.SelectChineseScheme(ChineseScheme.PINYIN_T9)
+        assertEquals(listOf<KeyAction>(toT9), actions)
+        assertEquals(1, feedback.size)
+        assertEquals(toT9, feedback.single().action)
 
-        // Release inside chip after hold -> suppressed (no trailing ToggleLanguage!)
+        // Release inside chip after hold -> suppressed (no trailing ToggleLanguage or extra feedback!)
         controller.processPointerChange(
             pointerChange(1L, Offset(88f, 44f), pressed = false, previousPressed = true),
             widthPx = 176f,
@@ -215,6 +234,7 @@ class DuoToolbarGestureTest {
         )
         assertFalse(controller.pressedState.value)
         assertEquals(1, actions.size)
+        assertEquals(1, feedback.size)
     }
 
     @Test
@@ -231,7 +251,7 @@ class DuoToolbarGestureTest {
                 pressedState = mutableStateOf(false)
             )
 
-            // 1) Horizontal slide-off cancels hold & resets pressed visual
+            // 1) Horizontal slide-off cancels hold & resets pressed visual with ZERO feedback
             controller.processPointerChange(
                 pointerChange(1L, Offset(88f, 44f), pressed = true, previousPressed = false),
                 widthPx = 176f,
@@ -251,8 +271,9 @@ class DuoToolbarGestureTest {
             advanceTimeBy(500L)
             runCurrent()
             assertTrue("Slide-off must cancel hold", actions.isEmpty())
+            assertTrue("Slide-off must emit zero feedback", feedback.isEmpty())
 
-            // 2) Pre-consumed event cancels active hold immediately
+            // 2) Pre-consumed event cancels active hold immediately with ZERO feedback
             controller.processPointerChange(
                 pointerChange(2L, Offset(88f, 44f), pressed = true, previousPressed = false),
                 widthPx = 176f,
@@ -268,8 +289,9 @@ class DuoToolbarGestureTest {
             advanceTimeBy(500L)
             runCurrent()
             assertTrue("Pre-consumed event must cancel hold", actions.isEmpty())
+            assertTrue("Pre-consumed cancel must emit zero feedback", feedback.isEmpty())
 
-            // 3) Dispose/cancel clears active hold and pressed state
+            // 3) Dispose/cancel clears active hold and pressed state with ZERO feedback
             controller.processPointerChange(
                 pointerChange(3L, Offset(88f, 44f), pressed = true, previousPressed = false),
                 widthPx = 176f,
@@ -282,6 +304,7 @@ class DuoToolbarGestureTest {
             advanceTimeBy(500L)
             runCurrent()
             assertTrue("Cancel on dispose must stop pending hold", actions.isEmpty())
+            assertTrue("Dispose cancel must emit zero feedback", feedback.isEmpty())
 
             // 4) Disabled (!canToggleLanguage) ignores all pointer events cleanly
             feedback.clear()

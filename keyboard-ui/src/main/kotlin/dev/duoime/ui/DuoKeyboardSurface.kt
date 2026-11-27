@@ -49,6 +49,8 @@ import dev.duoime.ui.panel.DuoQuickDrawer
 import dev.duoime.ui.panel.DuoQuickDrawerState
 import dev.duoime.ui.panel.DuoSymbolPanel
 import dev.duoime.ui.panel.DuoSymbolPanelState
+import dev.duoime.ui.theme.DuoDefaultDimensions
+import dev.duoime.ui.theme.DuoDimensionTokens
 import dev.duoime.ui.theme.LocalDuoColors
 import dev.duoime.ui.theme.LocalDuoDimensions
 import dev.duoime.ui.theme.resolveAdaptiveDimensions
@@ -92,6 +94,22 @@ data class DuoKeyboardSurfaceState(
  * 4-row T9, 5×4 Numpad, Symbol Panel, or Quick Drawer under equal [includeNumberRow].
  */
 internal fun resolveHeaderReferenceRowCount(includeNumberRow: Boolean): Int = if (includeNumberRow) 5 else 4
+
+/**
+ * Pure-JVM adaptive dimension resolution shared by [DuoKeyboardSurface] and unit tests.
+ * Uses [resolveHeaderReferenceRowCount] so `toolbarHeight` and `candidateBarHeight` stay
+ * locked across 5-row QWERTY, 4-row T9, 5×4 Numpad, Symbol Panel, and Quick Drawer.
+ */
+internal fun DuoKeyboardSurfaceState.resolveSurfaceDimensions(
+    availableHeightDp: Float,
+    base: DuoDimensionTokens = DuoDefaultDimensions
+): DuoDimensionTokens = resolveAdaptiveDimensions(
+    availableHeightDp = availableHeightDp,
+    keyRowCount = resolveHeaderReferenceRowCount(includeNumberRow),
+    hasSyllableRail = false,
+    base = base,
+    hasHeader = resolveHeaderSlotMode() != HeaderSlotMode.NONE
+)
 
 /**
  * Pure-JVM resolved header slot visibility for [DuoKeyboardSurface].
@@ -161,7 +179,9 @@ fun DuoKeyboardSurfaceState.toQuickDrawerState(): DuoQuickDrawerState = DuoQuick
     isOverlayMode = isOverlayMode,
     canToggleLanguage = canToggleLanguage,
     canSwapScreen = canSwapScreen,
-    canSwitchIme = canSwitchIme
+    canSwitchIme = canSwitchIme,
+    effectiveLanguage = effectiveLanguage,
+    langKeyPlacement = langKeyPlacement
 )
 
 /**
@@ -195,7 +215,6 @@ data class DuoKeyboardCallbacks(
 fun DuoKeyboardSurface(state: DuoKeyboardSurfaceState, callbacks: DuoKeyboardCallbacks, modifier: Modifier = Modifier) {
     val colors = LocalDuoColors.current
     val baseDimensions = LocalDuoDimensions.current
-    val keyRowCount = resolveHeaderReferenceRowCount(state.includeNumberRow)
     val toolbarState = state.toToolbarState()
     val candidateCallbacks = remember(callbacks) {
         CandidateBarCallbacks(
@@ -213,13 +232,7 @@ fun DuoKeyboardSurface(state: DuoKeyboardSurfaceState, callbacks: DuoKeyboardCal
 
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
         val resolvedDimensions = if (constraints.hasBoundedHeight) {
-            resolveAdaptiveDimensions(
-                availableHeightDp = maxHeight.value,
-                keyRowCount = keyRowCount,
-                hasSyllableRail = false,
-                base = baseDimensions,
-                hasHeader = hasHeader
-            )
+            state.resolveSurfaceDimensions(availableHeightDp = maxHeight.value, base = baseDimensions)
         } else {
             baseDimensions
         }

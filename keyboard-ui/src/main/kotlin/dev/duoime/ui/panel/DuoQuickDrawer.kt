@@ -34,6 +34,8 @@ import dev.duoime.core.model.ChineseVariant
 import dev.duoime.core.model.FeedbackKey
 import dev.duoime.core.model.FeedbackZone
 import dev.duoime.core.model.KeyAction
+import dev.duoime.core.model.LangKeyPlacement
+import dev.duoime.core.model.Language
 import dev.duoime.ui.R
 import dev.duoime.ui.bar.HeightPresetTier
 import dev.duoime.ui.bar.resolveHeightPresetTier
@@ -55,7 +57,9 @@ data class DuoQuickDrawerState(
     val isOverlayMode: Boolean,
     val canToggleLanguage: Boolean = true,
     val canSwapScreen: Boolean = true,
-    val canSwitchIme: Boolean = true
+    val canSwitchIme: Boolean = true,
+    val effectiveLanguage: Language = Language.CHINESE,
+    val langKeyPlacement: LangKeyPlacement = LangKeyPlacement.TOOLBAR
 )
 
 /**
@@ -63,14 +67,19 @@ data class DuoQuickDrawerState(
  */
 object DuoQuickDrawerMeta {
     fun visibleActions(state: DuoQuickDrawerState): List<KeyAction> = buildList {
-        val target26 = if (state.activeChineseScheme == ChineseScheme.XIAOHE_SHUANGPIN) {
-            ChineseScheme.XIAOHE_SHUANGPIN
-        } else {
-            ChineseScheme.PINYIN_26
+        if (state.canToggleLanguage) {
+            if (state.langKeyPlacement != LangKeyPlacement.HOST) {
+                add(KeyAction.ToggleLanguage)
+            }
+            val target26 = if (state.activeChineseScheme == ChineseScheme.XIAOHE_SHUANGPIN) {
+                ChineseScheme.XIAOHE_SHUANGPIN
+            } else {
+                ChineseScheme.PINYIN_26
+            }
+            add(KeyAction.SelectChineseScheme(target26))
+            add(KeyAction.SelectChineseScheme(ChineseScheme.PINYIN_T9))
+            add(KeyAction.SwitchVariant)
         }
-        add(KeyAction.SelectChineseScheme(target26))
-        add(KeyAction.SelectChineseScheme(ChineseScheme.PINYIN_T9))
-        add(KeyAction.SwitchVariant)
         add(KeyAction.ToggleNumberRow)
         add(KeyAction.CycleHeight)
         if (state.canSwapScreen) add(KeyAction.SwapScreen)
@@ -107,13 +116,32 @@ fun DuoQuickDrawer(
             ),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        SchemeSegmentedRow(
-            activeScheme = state.activeChineseScheme,
-            enabled = state.canToggleLanguage,
-            colors = colors,
-            onAction = onAction,
-            onKeyPressDown = onKeyPressDown
-        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(50.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            if (state.langKeyPlacement != LangKeyPlacement.HOST) {
+                DrawerActionTile(
+                    label = if (state.effectiveLanguage == Language.CHINESE) "中/英 · 中" else "中/英 · 英",
+                    selected = state.effectiveLanguage == Language.CHINESE,
+                    enabled = state.canToggleLanguage,
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        onKeyPressDown(FeedbackKey(KeyAction.ToggleLanguage, "中/英", FeedbackZone.TOOLBAR))
+                        onAction(KeyAction.ToggleLanguage)
+                    }
+                )
+            }
+            SchemeSegmentedRow(
+                state = state,
+                colors = colors,
+                onAction = onAction,
+                onKeyPressDown = onKeyPressDown,
+                modifier = Modifier.weight(2f)
+            )
+        }
 
         Row(
             modifier = Modifier
@@ -191,14 +219,16 @@ fun DuoQuickDrawer(
 
 @Composable
 private fun SchemeSegmentedRow(
-    activeScheme: ChineseScheme,
-    enabled: Boolean,
+    state: DuoQuickDrawerState,
     colors: DuoColorTokens,
     onAction: (KeyAction) -> Unit,
-    onKeyPressDown: (FeedbackKey) -> Unit
+    onKeyPressDown: (FeedbackKey) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val dimensions = LocalDuoDimensions.current
     val corner = RoundedCornerShape(dimensions.keyCornerRadius)
+    val enabled = state.canToggleLanguage
+    val activeScheme = state.activeChineseScheme
     val isT9 = activeScheme == ChineseScheme.PINYIN_T9
     val target26 = if (activeScheme == ChineseScheme.XIAOHE_SHUANGPIN) {
         ChineseScheme.XIAOHE_SHUANGPIN
@@ -206,9 +236,8 @@ private fun SchemeSegmentedRow(
         ChineseScheme.PINYIN_26
     }
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(50.dp)
+        modifier = modifier
+            .fillMaxHeight()
             .clip(corner)
             .background(colors.barBackground)
             .border(width = 1.dp, color = colors.keyBorder, shape = corner)
