@@ -436,14 +436,21 @@ class KeyboardController(
         prefs = updated.prefs
         session = updated.session
         val after = currentDerived()
+        val prevSnap = engine.state.value
 
         applyEnginePrivacyOptions(engine, effective, editorContext)
+        val afterPrivacySnap = engine.state.value
         if (!restarting) {
             engine.reset()
             syncEngineSchemaIfChanged(engine, after)
             sinkDispatcher.syncComposingOnly(engine.state.value)
         } else {
+            val privacyChangedComposing = prevSnap.isComposing &&
+                (!afterPrivacySnap.isComposing || afterPrivacySnap.composingText != prevSnap.composingText)
             syncSchemaWithComposingCleanup(engine, before, after)
+            if (privacyChangedComposing) {
+                sinkDispatcher.syncComposingOnly(engine.state.value)
+            }
         }
         publishState(engine)
     }

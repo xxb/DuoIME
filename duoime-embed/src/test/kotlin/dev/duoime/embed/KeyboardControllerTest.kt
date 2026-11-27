@@ -4,6 +4,7 @@ package dev.duoime.embed
 
 import dev.duoime.core.engine.EngineKeyEvent
 import dev.duoime.core.engine.EngineOptions
+import dev.duoime.core.engine.EngineSchemas
 import dev.duoime.core.engine.InputEngine
 import dev.duoime.core.engine.InputSink
 import dev.duoime.core.layout.KeyCodes
@@ -853,5 +854,74 @@ class KeyboardControllerTest {
         controller.close()
         advanceUntilIdle()
         assertEquals(1, third.closeCount)
+    }
+
+    @Test
+    fun restartingEditorPrivacySwapClearsHostSinkComposingSpan() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val sink = RecordingInputSink(SinkCapabilities.STANDARD_IME)
+        val privacyResettingEngine = object : InputEngine {
+            private var incognito = false
+            private val _state = MutableStateFlow(EngineSnapshot(schemaId = EngineSchemas.PINYIN_26))
+            override val state: StateFlow<EngineSnapshot> = _state
+
+            override fun onKey(event: EngineKeyEvent): KeyProcessResult {
+                _state.value = EngineSnapshot(
+                    mode = InputMode.PINYIN_26,
+                    schemaId = EngineSchemas.PINYIN_26,
+                    preedit = "nihao",
+                    composingText = "nihao",
+                    isComposing = true
+                )
+                return KeyProcessResult.Consumed
+            }
+
+            override fun selectCandidate(indexOnPage: Int): KeyProcessResult = KeyProcessResult.PassThrough
+
+            override fun page(forward: Boolean): Boolean = false
+
+            override fun setOption(name: String, on: Boolean) {
+                if (name == EngineOptions.INCOGNITO && on != incognito) {
+                    incognito = on
+                    // Mirror RimeInputEngine swapping to *_incognito companion schema and clearing composition
+                    _state.value = EngineSnapshot(
+                        mode = InputMode.PINYIN_26,
+                        schemaId = EngineSchemas.PINYIN_26,
+                        isComposing = false
+                    )
+                }
+            }
+
+            override fun selectSchema(id: String): Boolean = true
+
+            override fun reset() {
+                _state.value = _state.value.copy(preedit = "", composingText = "", isComposing = false)
+            }
+        }
+        val controller = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { privacyResettingEngine }
+        )
+        controller.attachSink(sink)
+        advanceUntilIdle()
+
+        controller.dispatchKeyAction(KeyAction.Engine(KeyCodes.keysymForChar('n')))
+        advanceUntilIdle()
+        assertTrue(controller.uiState.value.snapshot.isComposing)
+        assertTrue("compose:nihao" in sink.events)
+        sink.events.clear()
+
+        // Toggle incognito live under restarting=true with unchanged logical schema
+        controller.updateEditorContext(
+            EditorContext(packageName = "dev.example.notes", incognito = true),
+            restarting = true
+        )
+        advanceUntilIdle()
+
+        assertFalse(controller.uiState.value.snapshot.isComposing)
+        assertEquals(listOf("compose:<clear>"), sink.events)
+        controller.close()
+        advanceUntilIdle()
     }
 }
