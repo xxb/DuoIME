@@ -4,6 +4,7 @@ package dev.duoime.embed
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
@@ -76,7 +77,12 @@ fun DuoImeKeyboard(
             }
         }
     }
-    val preDispatch = remember(state) { { state.syncSessionSelectionIfComposing() } }
+    val preDispatch = remember(state) {
+        SessionPreDispatch(
+            syncIfComposing = state::syncSessionSelectionIfComposing,
+            onNewInputAction = state::clearExternalResetPending
+        )
+    }
     DuoImeKeyboardContent(
         controller = state.controller,
         chromePolicy = chromePolicy,
@@ -133,13 +139,23 @@ fun DuoImeKeyboard(
     )
 }
 
+@Immutable
+internal data class SessionPreDispatch(
+    val syncIfComposing: () -> Boolean = { false },
+    val onNewInputAction: () -> Unit = {}
+) {
+    companion object {
+        val NONE: SessionPreDispatch = SessionPreDispatch()
+    }
+}
+
 @Composable
 private fun DuoImeKeyboardContent(
     controller: KeyboardController,
     chromePolicy: ChromePolicy,
     hostChrome: HostChrome,
     modifier: Modifier = Modifier,
-    preDispatch: () -> Boolean = { false }
+    preDispatch: SessionPreDispatch = SessionPreDispatch.NONE
 ) {
     LaunchedEffect(controller, chromePolicy.langKeyPlacement, chromePolicy.initialSymbolTab) {
         controller.updateHostPolicy(
@@ -196,36 +212,31 @@ private fun DuoImeKeyboardContent(
     }
 }
 
-private fun buildKeyboardCallbacks(
+internal fun buildKeyboardCallbacks(
     controller: KeyboardController,
     hostChromeState: State<HostChrome>,
-    preDispatchState: State<() -> Boolean>
+    preDispatchState: State<SessionPreDispatch>
 ): DuoKeyboardCallbacks = DuoKeyboardCallbacks(
     onKeyAction = { action ->
-        when (action) {
-            KeyAction.SwapScreen -> hostChromeState.value.onSwapScreen?.invoke()
-            KeyAction.SwitchIme -> hostChromeState.value.onSwitchIme?.invoke()
-            KeyAction.Dismiss -> hostChromeState.value.onDismiss?.invoke()
-            else -> {
-                val reset = preDispatchState.value()
-                if (!reset || action !is KeyAction.SelectSyllable) {
-                    controller.dispatchKeyAction(action)
-                }
-            }
-        }
+        dispatchKeyActionWithSync(
+            controller = controller,
+            hostChrome = hostChromeState.value,
+            preDispatch = preDispatchState.value,
+            action = action
+        )
     },
     onSelectCandidate = { index ->
-        if (!preDispatchState.value()) {
+        if (!preDispatchState.value.syncIfComposing()) {
             controller.selectCandidate(index)
         }
     },
     onSelectSyllable = { index ->
-        if (!preDispatchState.value()) {
+        if (!preDispatchState.value.syncIfComposing()) {
             controller.selectSyllable(index)
         }
     },
     onPage = { forward ->
-        if (!preDispatchState.value()) {
+        if (!preDispatchState.value.syncIfComposing()) {
             controller.pageCandidates(forward)
         }
     },
@@ -234,24 +245,54 @@ private fun buildKeyboardCallbacks(
         if (handler != null) {
             handler(button)
         } else {
-            preDispatchState.value()
+            val preDispatch = preDispatchState.value
+            preDispatch.syncIfComposing()
+            preDispatch.onNewInputAction()
             controller.dispatchExtensionButton(button)
         }
     },
-    onKeyPressDown = controller::onKeyPressDown,
+    onKeyPressDown = { feedbackKey ->
+        val suppressFeedback =
+            feedbackKey.action is KeyAction.SelectSyllable && preDispatchState.value.syncIfComposing()
+        if (!suppressFeedback) {
+            controller.onKeyPressDown(feedbackKey)
+        }
+    },
     onKeyRepeat = controller::onKeyRepeat,
     onDismissEngineError = controller::dismissEngineError,
     onSelectWindowCandidate = { globalIndex ->
-        if (!preDispatchState.value()) {
+        if (!preDispatchState.value.syncIfComposing()) {
             controller.selectWindowCandidate(globalIndex)
         }
     },
     onLoadMoreCandidates = {
-        if (!preDispatchState.value()) {
+        if (!preDispatchState.value.syncIfComposing()) {
             controller.loadMoreCandidates()
         }
     }
 )
+
+private fun dispatchKeyActionWithSync(
+    controller: KeyboardController,
+    hostChrome: HostChrome,
+    preDispatch: SessionPreDispatch,
+    action: KeyAction
+) {
+    when (action) {
+        KeyAction.SwapScreen -> hostChrome.onSwapScreen?.invoke()
+        KeyAction.SwitchIme -> hostChrome.onSwitchIme?.invoke()
+        KeyAction.Dismiss -> hostChrome.onDismiss?.invoke()
+        else -> {
+            val reset = preDispatch.syncIfComposing()
+            if (action !is KeyAction.SelectSyllable) {
+                preDispatch.onNewInputAction()
+                controller.dispatchKeyAction(action)
+            } else if (!reset) {
+                controller.dispatchKeyAction(action)
+            }
+        }
+    }
+}
 
 /**
  * Lightweight status banner host kept for bootstrap launcher screens until M1-5 onboarding lands.

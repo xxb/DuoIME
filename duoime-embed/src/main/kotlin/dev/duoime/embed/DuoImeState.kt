@@ -25,6 +25,9 @@ class DuoImeState(val controller: KeyboardController) {
     private val _isInputSessionActive = MutableStateFlow(false)
     private val activeSinkRef = AtomicReference<InputSink?>(null)
 
+    @Volatile
+    private var externalResetPending: Boolean = false
+
     val uiState: StateFlow<KeyboardUiState>
         get() = controller.uiState
 
@@ -34,6 +37,7 @@ class DuoImeState(val controller: KeyboardController) {
         get() = activeSinkRef.get()
 
     internal fun attachSessionSink(sink: InputSink, context: EditorContext, restarting: Boolean = false) {
+        externalResetPending = false
         activeSinkRef.set(sink)
         controller.attachSink(sink)
         controller.updateEditorContext(context, restarting = restarting)
@@ -42,21 +46,45 @@ class DuoImeState(val controller: KeyboardController) {
 
     internal fun detachSessionSink(sink: InputSink) {
         if (activeSinkRef.compareAndSet(sink, null)) {
+            externalResetPending = false
             controller.detachSink(sink)
             controller.reset()
             _isInputSessionActive.value = false
         }
     }
 
+    internal fun clearExternalResetPending() {
+        externalResetPending = false
+    }
+
     /**
      * Checks the bound [EmbedInputConnectionSink] for external cursor/selection changes while
      * composing and resets [controller] immediately on divergence.
+     *
+     * Gated on `sink.hasActiveComposing` so the transient window right after `commitText` /
+     * `setComposing(null)` (before `_uiState` publishes `isComposing = false`) never false-resets,
+     * while [externalResetPending] keeps paired click callbacks (e.g. `onKeyPressDown` +
+     * `onSelectSyllable`) consistently suppressed until the queued `controller.reset()` settles or
+     * a fresh non-syllable key starts new input.
      */
     internal fun syncSessionSelectionIfComposing(): Boolean {
         val sink = activeSinkRef.get() as? EmbedInputConnectionSink ?: return false
-        val isComposing = controller.uiState.value.snapshot.isComposing || sink.hasActiveComposing
-        if (!isComposing) return false
+        val uiComposing = controller.uiState.value.snapshot.isComposing
+        val sinkComposing = sink.hasActiveComposing
+        if (!uiComposing && !sinkComposing) {
+            externalResetPending = false
+            return false
+        }
+        if (sinkComposing) {
+            externalResetPending = false
+        } else if (externalResetPending) {
+            return true
+        } else {
+            sink.syncExternalSelection(isComposing = false)
+            return false
+        }
         if (sink.syncExternalSelection(isComposing = true)) {
+            externalResetPending = true
             controller.reset()
             return true
         }
@@ -64,6 +92,7 @@ class DuoImeState(val controller: KeyboardController) {
     }
 
     fun close() {
+        externalResetPending = false
         val sink = activeSinkRef.getAndSet(null)
         (sink as? EmbedInputConnectionSink)?.finishComposingOnDisconnect()
         if (sink != null) {

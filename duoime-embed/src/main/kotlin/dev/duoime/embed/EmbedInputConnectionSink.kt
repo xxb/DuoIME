@@ -217,6 +217,7 @@ class EmbedInputConnectionSink(
             selectionTracker.recordCommitText(text)
         }
         ic.commitText(text, 1)
+        rebaselineAfterCompositionEnd(ic)
     }
 
     override fun setComposing(text: CharSequence?) {
@@ -232,6 +233,7 @@ class EmbedInputConnectionSink(
             if (shouldClear) {
                 ic.setComposingText("", 1)
                 ic.finishComposingText()
+                rebaselineAfterCompositionEnd(ic)
             }
         } else {
             val preComposeSnapshot = if (!activeComposing) ic.readSelectionSnapshot() else null
@@ -247,6 +249,21 @@ class EmbedInputConnectionSink(
                 selectionTracker.recordSetComposing(text)
             }
             ic.setComposingText(text, 1)
+        }
+    }
+
+    private fun rebaselineAfterCompositionEnd(ic: EmbedConnectionBridge) {
+        val postSnapshot = ic.readSelectionSnapshot()
+        synchronized(stateLock) {
+            if (activeComposing) return
+            selectionTracker.recordUnpredictableEdit()
+            if (postSnapshot != null) {
+                selectionTracker.onObservedSelection(
+                    isComposing = false,
+                    selStart = postSnapshot.selStart,
+                    selEnd = postSnapshot.selEnd
+                )
+            }
         }
     }
 
