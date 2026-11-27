@@ -36,6 +36,40 @@ import dev.duoime.ui.theme.LocalDuoColors
 import dev.duoime.ui.theme.LocalDuoDimensions
 
 /**
+ * Shared layout metrics for [CandidateBar] and [SyllableChipRail], enabling deterministic pure-JVM
+ * horizontal capacity checks without magic-number duplication.
+ */
+internal object CandidateBarLayout {
+    const val OUTER_HORIZONTAL_PADDING_DP: Float = 4f
+    const val OUTER_VERTICAL_PADDING_DP: Float = 2f
+    const val ROW_SPACING_DP: Float = 4f
+    const val PREEDIT_MAX_WIDTH_DP: Float = 64f
+    const val LAZY_CONTENT_HORIZONTAL_PADDING_DP: Float = 2f
+    const val CANDIDATE_MIN_WIDTH_DP: Float = 48f
+    const val CANDIDATE_SPACING_DP: Float = 6f
+    const val SMALL_BUTTON_MIN_WIDTH_DP: Float = 38f
+    const val SYLLABLE_MIN_WIDTH_DP: Float = 48f
+    const val SYLLABLE_VERTICAL_PADDING_DP: Float = 1f
+
+    fun maxVisibleMinWidthCandidates(
+        barWidthDp: Float,
+        hasPreedit: Boolean = true,
+        hasPagingButtons: Boolean = true
+    ): Int {
+        val buttonCount = if (hasPagingButtons) 3 else 1
+        val itemCount = (if (hasPreedit) 1 else 0) + 1 + buttonCount
+        val fixedWidth = OUTER_HORIZONTAL_PADDING_DP * 2f +
+            (if (hasPreedit) PREEDIT_MAX_WIDTH_DP else 0f) +
+            buttonCount * SMALL_BUTTON_MIN_WIDTH_DP +
+            (itemCount - 1) * ROW_SPACING_DP +
+            LAZY_CONTENT_HORIZONTAL_PADDING_DP * 2f
+        val available = barWidthDp - fixedWidth
+        if (available < CANDIDATE_MIN_WIDTH_DP) return 0
+        return ((available + CANDIDATE_SPACING_DP) / (CANDIDATE_MIN_WIDTH_DP + CANDIDATE_SPACING_DP)).toInt()
+    }
+}
+
+/**
  * Immutable callbacks for [CandidateBar].
  */
 @Immutable
@@ -61,9 +95,12 @@ fun CandidateBar(snapshot: EngineSnapshot, callbacks: CandidateBarCallbacks, mod
             .fillMaxWidth()
             .height(dimensions.candidateBarHeight)
             .background(colors.barBackground)
-            .padding(horizontal = 6.dp, vertical = 3.dp),
+            .padding(
+                horizontal = CandidateBarLayout.OUTER_HORIZONTAL_PADDING_DP.dp,
+                vertical = CandidateBarLayout.OUTER_VERTICAL_PADDING_DP.dp
+            ),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
+        horizontalArrangement = Arrangement.spacedBy(CandidateBarLayout.ROW_SPACING_DP.dp)
     ) {
         if (snapshot.preedit.isNotEmpty()) {
             BasicText(
@@ -76,8 +113,8 @@ fun CandidateBar(snapshot: EngineSnapshot, callbacks: CandidateBarCallbacks, mod
                     fontWeight = FontWeight.SemiBold
                 ),
                 modifier = Modifier
-                    .widthIn(max = 112.dp)
-                    .padding(horizontal = 6.dp)
+                    .widthIn(max = CandidateBarLayout.PREEDIT_MAX_WIDTH_DP.dp)
+                    .padding(horizontal = 4.dp)
             )
         }
 
@@ -85,8 +122,8 @@ fun CandidateBar(snapshot: EngineSnapshot, callbacks: CandidateBarCallbacks, mod
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight(),
-            contentPadding = PaddingValues(horizontal = 2.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(horizontal = CandidateBarLayout.LAZY_CONTENT_HORIZONTAL_PADDING_DP.dp),
+            horizontalArrangement = Arrangement.spacedBy(CandidateBarLayout.CANDIDATE_SPACING_DP.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             itemsIndexed(
@@ -139,7 +176,7 @@ fun SyllableChipRail(snapshot: EngineSnapshot, onSelectSyllable: (Int) -> Unit, 
             .fillMaxWidth()
             .height(dimensions.syllableBarHeight)
             .background(colors.barBackground)
-            .padding(horizontal = 6.dp, vertical = 3.dp),
+            .padding(horizontal = 6.dp, vertical = CandidateBarLayout.SYLLABLE_VERTICAL_PADDING_DP.dp),
         contentAlignment = Alignment.CenterStart
     ) {
         if (snapshot.syllables.isNotEmpty()) {
@@ -180,12 +217,12 @@ private fun CandidateChip(text: String, highlighted: Boolean, colors: DuoColorTo
     val fg = if (highlighted) colors.chipSelectedText else colors.chipText
     Box(
         modifier = Modifier
-            .defaultMinSize(minWidth = 56.dp)
+            .defaultMinSize(minWidth = CandidateBarLayout.CANDIDATE_MIN_WIDTH_DP.dp)
             .fillMaxHeight()
             .clip(RoundedCornerShape(8.dp))
             .background(bg)
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp),
+            .padding(horizontal = 12.dp),
         contentAlignment = Alignment.Center
     ) {
         BasicText(
@@ -193,7 +230,7 @@ private fun CandidateChip(text: String, highlighted: Boolean, colors: DuoColorTo
             maxLines = 1,
             style = TextStyle(
                 color = fg,
-                fontSize = 20.sp,
+                fontSize = 19.sp,
                 fontWeight = if (highlighted) FontWeight.SemiBold else FontWeight.Normal
             )
         )
@@ -206,7 +243,7 @@ private fun SyllableChip(text: String, highlighted: Boolean, colors: DuoColorTok
     val fg = if (highlighted) colors.chipSelectedText else colors.chipText
     Box(
         modifier = Modifier
-            .defaultMinSize(minWidth = 48.dp)
+            .defaultMinSize(minWidth = CandidateBarLayout.SYLLABLE_MIN_WIDTH_DP.dp)
             .fillMaxHeight()
             .clip(RoundedCornerShape(7.dp))
             .background(bg)
@@ -230,12 +267,12 @@ private fun SyllableChip(text: String, highlighted: Boolean, colors: DuoColorTok
 private fun SmallBarButton(label: String, enabled: Boolean, colors: DuoColorTokens, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .defaultMinSize(minWidth = 44.dp)
+            .defaultMinSize(minWidth = CandidateBarLayout.SMALL_BUTTON_MIN_WIDTH_DP.dp)
             .fillMaxHeight()
             .clip(RoundedCornerShape(8.dp))
             .background(colors.chipBackground)
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 10.dp),
+            .padding(horizontal = 6.dp),
         contentAlignment = Alignment.Center
     ) {
         BasicText(

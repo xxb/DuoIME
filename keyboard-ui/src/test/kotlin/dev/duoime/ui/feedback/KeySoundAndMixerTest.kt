@@ -513,6 +513,89 @@ class KeySoundAndMixerTest {
     }
 
     @Test
+    fun `TrackSessionLifecycle reuses matching usage recreates on usage switch and recovers uninitialized tracks`() {
+        class FakeManagedTrack(val usage: Int, override var isInitialized: Boolean = true) : ManagedAudioTrack {
+            var released: Boolean = false
+                private set
+
+            override fun release() {
+                released = true
+            }
+        }
+
+        val created = mutableListOf<FakeManagedTrack>()
+        var beforeReleaseCallbacks = 0
+        val lifecycle = TrackSessionLifecycle { usage ->
+            FakeManagedTrack(usage = usage).also { created += it }
+        }
+
+        // (a) Cold start creates track with USAGE_GAME
+        val gameTrack = lifecycle.ensureTrack(AudioAttributes.USAGE_GAME)
+        assertEquals(1, created.size)
+        assertEquals(AudioAttributes.USAGE_GAME, gameTrack?.usage)
+        assertEquals(AudioAttributes.USAGE_GAME, lifecycle.activeAudioUsage)
+        assertTrue(lifecycle.shouldContinueStreaming(false, AudioAttributes.USAGE_GAME, hasWork = true))
+
+        // (b) Matching usage reuses existing initialized track (zero recreations)
+        val reusedGame = lifecycle.ensureTrack(AudioAttributes.USAGE_GAME)
+        assertTrue(gameTrack === reusedGame)
+        assertEquals(1, created.size)
+        assertFalse(gameTrack!!.released)
+
+        // (c) Switching requestedAudioUsage breaks streaming, releases old track, creates new one, and reuses cleanly
+        assertFalse(
+            lifecycle.shouldContinueStreaming(
+                released = false,
+                requestedUsage = AudioAttributes.USAGE_ASSISTANCE_SONIFICATION,
+                hasWork = true
+            )
+        )
+        val sonificationTrack = lifecycle.ensureTrack(
+            requestedUsage = AudioAttributes.USAGE_ASSISTANCE_SONIFICATION,
+            onBeforeRelease = { beforeReleaseCallbacks++ }
+        )
+        assertTrue(gameTrack.released)
+        assertEquals(1, beforeReleaseCallbacks)
+        assertEquals(2, created.size)
+        assertEquals(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION, sonificationTrack?.usage)
+        assertEquals(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION, lifecycle.activeAudioUsage)
+        assertTrue(
+            lifecycle.shouldContinueStreaming(
+                released = false,
+                requestedUsage = AudioAttributes.USAGE_ASSISTANCE_SONIFICATION,
+                hasWork = true
+            )
+        )
+        assertTrue(sonificationTrack === lifecycle.ensureTrack(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION))
+        assertEquals(2, created.size)
+
+        // Switching back to USAGE_GAME releases sonification track and creates fresh game track
+        assertFalse(lifecycle.shouldContinueStreaming(false, AudioAttributes.USAGE_GAME, hasWork = true))
+        val restoredGame = lifecycle.ensureTrack(
+            requestedUsage = AudioAttributes.USAGE_GAME,
+            onBeforeRelease = { beforeReleaseCallbacks++ }
+        )
+        assertTrue(sonificationTrack!!.released)
+        assertEquals(2, beforeReleaseCallbacks)
+        assertEquals(3, created.size)
+        assertEquals(AudioAttributes.USAGE_GAME, restoredGame?.usage)
+        assertEquals(AudioAttributes.USAGE_GAME, lifecycle.activeAudioUsage)
+
+        // (d) Uninitialized track triggers clean release + recreation
+        restoredGame!!.isInitialized = false
+        val recoveredTrack = lifecycle.ensureTrack(
+            requestedUsage = AudioAttributes.USAGE_GAME,
+            onBeforeRelease = { beforeReleaseCallbacks++ }
+        )
+        assertTrue(restoredGame.released)
+        assertEquals(3, beforeReleaseCallbacks)
+        assertEquals(4, created.size)
+        assertTrue(recoveredTrack !== restoredGame)
+        assertEquals(AudioAttributes.USAGE_GAME, recoveredTrack?.usage)
+        assertFalse(recoveredTrack!!.released)
+    }
+
+    @Test
     fun `KeyFeedbackOptions defaults keep sound OFF haptics ON and followSystemRingerMode OFF`() {
         val defaults = KeyFeedbackOptions()
         assertFalse(defaults.soundEnabled)

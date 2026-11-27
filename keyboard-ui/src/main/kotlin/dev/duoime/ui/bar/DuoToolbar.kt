@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -96,12 +97,14 @@ fun DuoToolbar(
             .fillMaxWidth()
             .height(dimensions.toolbarHeight)
             .background(colors.barBackground)
-            .padding(horizontal = 6.dp),
+            .padding(horizontal = 6.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         LazyRow(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight(),
             contentPadding = PaddingValues(horizontal = 2.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -202,7 +205,7 @@ private fun EngineIssueChip(tag: String, colors: DuoColorTokens, onDismiss: () -
     )
     Row(
         modifier = Modifier
-            .height(38.dp)
+            .fillMaxHeight()
             .clip(RoundedCornerShape(8.dp))
             .background(colors.warningBackground)
             .widthIn(max = 148.dp)
@@ -233,8 +236,8 @@ private fun ToolbarChip(label: String, selected: Boolean, colors: DuoColorTokens
     val fg = if (selected) colors.chipSelectedText else colors.chipText
     Box(
         modifier = Modifier
-            .defaultMinSize(minWidth = 40.dp)
-            .height(38.dp)
+            .defaultMinSize(minWidth = 44.dp)
+            .fillMaxHeight()
             .clip(RoundedCornerShape(8.dp))
             .background(bg)
             .clickable(onClick = onClick)

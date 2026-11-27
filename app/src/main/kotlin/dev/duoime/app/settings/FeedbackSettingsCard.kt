@@ -4,6 +4,11 @@
  */
 package dev.duoime.app.settings
 
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioManager
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -19,13 +24,17 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import dev.duoime.app.R
 import dev.duoime.ui.feedback.KeyFeedbackOptions
 import dev.duoime.ui.feedback.KeySoundStyle
@@ -35,8 +44,38 @@ import kotlin.math.roundToInt
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun FeedbackSettingsCard(settings: DuoImeSettings, onSettingsChanged: (DuoImeSettings) -> Unit) {
+    val context = LocalContext.current
     val feedbackController = rememberKeyFeedbackController()
     var previewStep by remember { mutableIntStateOf(0) }
+    var systemRingerMuted by remember(feedbackController) { mutableStateOf(false) }
+
+    DisposableEffect(context, feedbackController, settings.soundEnabled, settings.followSystemRingerMode) {
+        if (!settings.soundEnabled || !settings.followSystemRingerMode) {
+            systemRingerMuted = false
+            return@DisposableEffect onDispose {}
+        }
+        val appContext = context.applicationContext
+        systemRingerMuted = feedbackController.isSystemRingerMuted()
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                systemRingerMuted = feedbackController.isSystemRingerMuted()
+            }
+        }
+        val registered = runCatching {
+            ContextCompat.registerReceiver(
+                appContext,
+                receiver,
+                IntentFilter(AudioManager.RINGER_MODE_CHANGED_ACTION),
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+            true
+        }.getOrDefault(false)
+        onDispose {
+            if (registered) {
+                runCatching { appContext.unregisterReceiver(receiver) }
+            }
+        }
+    }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -85,7 +124,7 @@ internal fun FeedbackSettingsCard(settings: DuoImeSettings, onSettingsChanged: (
             if (settings.soundEnabled) {
                 SoundSettingsSection(
                     settings = settings,
-                    isSystemRingerMuted = settings.followSystemRingerMode && feedbackController.isSystemRingerMuted(),
+                    isSystemRingerMuted = settings.followSystemRingerMode && systemRingerMuted,
                     onSettingsChanged = onSettingsChanged,
                     onPreviewSound = { style, followRinger ->
                         feedbackController.playPreview(

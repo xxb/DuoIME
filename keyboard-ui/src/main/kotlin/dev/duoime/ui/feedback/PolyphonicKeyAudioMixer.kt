@@ -29,6 +29,46 @@ internal fun resolveAudioUsage(followSystemRingerMode: Boolean): Int = if (follo
 internal fun shouldAllowSound(followSystemRingerMode: Boolean, nowMs: Long, ringerModeGate: RingerModeGate): Boolean =
     !followSystemRingerMode || ringerModeGate.isSoundAllowed(nowMs)
 
+internal interface ManagedAudioTrack {
+    val isInitialized: Boolean
+
+    fun release()
+}
+
+internal class TrackSessionLifecycle<T : ManagedAudioTrack>(
+    initialUsage: Int = resolveAudioUsage(followSystemRingerMode = false),
+    private val createTrack: (usage: Int) -> T?
+) {
+    var track: T? = null
+        private set
+    var activeAudioUsage: Int = initialUsage
+        private set
+
+    fun shouldContinueStreaming(released: Boolean, requestedUsage: Int, hasWork: Boolean): Boolean =
+        !released && requestedUsage == activeAudioUsage && hasWork
+
+    fun ensureTrack(requestedUsage: Int, onBeforeRelease: () -> Unit = {}, onCreated: (T) -> Unit = {}): T? {
+        track?.let { existing ->
+            if (existing.isInitialized && activeAudioUsage == requestedUsage) {
+                return existing
+            }
+            releaseTrack(onBeforeRelease)
+        }
+        val created = createTrack(requestedUsage) ?: return null
+        track = created
+        activeAudioUsage = requestedUsage
+        onCreated(created)
+        return created
+    }
+
+    fun releaseTrack(onBeforeRelease: () -> Unit = {}) {
+        val existing = track ?: return
+        track = null
+        onBeforeRelease()
+        existing.release()
+    }
+}
+
 /**
  * Pure-Kotlin burst-cached ringer mode gate matching AOSP IME expectations:
  * mutes key sounds whenever `AudioManager.ringerMode != RINGER_MODE_NORMAL`, while reading
@@ -246,18 +286,31 @@ private data class AudioHardwareSpec(
     val burstFrames: Int
 )
 
+private class AndroidManagedAudioTrack(val audioTrack: AudioTrack) : ManagedAudioTrack {
+    override val isInitialized: Boolean
+        get() = audioTrack.state == AudioTrack.STATE_INITIALIZED
+
+    override fun release() {
+        runCatching {
+            audioTrack.pause()
+            audioTrack.flush()
+            audioTrack.release()
+        }
+    }
+}
+
 private class AudioStreamSession(
     val outputRateHz: Int,
     val burstFrames: Int,
-    val bufferFrames: Int
+    val bufferFrames: Int,
+    createTrack: (usage: Int) -> AndroidManagedAudioTrack?
 ) {
     val engine = PolyphonicVoiceEngine(
         outputSampleRateHz = outputRateHz,
         sourceSampleRateHz = KeySoundSynthesizer.SAMPLE_RATE_HZ
     )
     val burstPcm = ShortArray(burstFrames)
-    var track: AudioTrack? = null
-    var activeAudioUsage: Int = resolveAudioUsage(followSystemRingerMode = false)
+    val trackLifecycle = TrackSessionLifecycle(createTrack = createTrack)
     var trackPlaying: Boolean = false
     var targetLeadFrames: Int = (burstFrames * DEFAULT_LEAD_BURSTS)
         .coerceIn(TARGET_LEAD_MIN_FRAMES, TARGET_LEAD_MAX_FRAMES)
@@ -380,7 +433,11 @@ internal class StreamingKeyAudioDriver(
         val session = AudioStreamSession(
             outputRateHz = hwSpec.outputSampleRateHz,
             burstFrames = hwSpec.burstFrames,
-            bufferFrames = bufferFrames
+            bufferFrames = bufferFrames,
+            createTrack = { usage ->
+                val bufBytes = bufferFrames * BYTES_PER_MONO_16BIT_FRAME
+                createPersistentAudioTrack(hwSpec.outputSampleRateHz, bufBytes, usage)?.let(::AndroidManagedAudioTrack)
+            }
         )
 
         try {
@@ -449,27 +506,25 @@ internal class StreamingKeyAudioDriver(
         return true
     }
 
-    private fun shouldContinueStreaming(session: AudioStreamSession): Boolean = !released.get() &&
-        requestedAudioUsage.get() == session.activeAudioUsage &&
-        session.hasWork(noteQueue.isEmpty())
+    private fun shouldContinueStreaming(session: AudioStreamSession): Boolean =
+        session.trackLifecycle.shouldContinueStreaming(
+            released = released.get(),
+            requestedUsage = requestedAudioUsage.get(),
+            hasWork = session.hasWork(noteQueue.isEmpty())
+        )
 
-    private fun ensureTrack(session: AudioStreamSession): AudioTrack? {
-        val desiredUsage = requestedAudioUsage.get()
-        session.track?.let { existing ->
-            if (existing.state == AudioTrack.STATE_INITIALIZED && session.activeAudioUsage == desiredUsage) {
-                return existing
-            }
-            releaseTrack(session)
+    private fun ensureTrack(session: AudioStreamSession): AudioTrack? = session.trackLifecycle.ensureTrack(
+        requestedUsage = requestedAudioUsage.get(),
+        onBeforeRelease = { resetSessionAfterRelease(session) },
+        onCreated = { wrapped ->
+            session.trackPlaying = false
+            configureTrackStartThreshold(wrapped.audioTrack, session, session.targetLeadFrames)
+            session.resetBufferCursors(
+                readUnsignedHeadFrames(wrapped.audioTrack),
+                readUnderrunCount(wrapped.audioTrack)
+            )
         }
-        val bufBytes = session.bufferFrames * BYTES_PER_MONO_16BIT_FRAME
-        val created = createPersistentAudioTrack(session.outputRateHz, bufBytes, desiredUsage) ?: return null
-        session.track = created
-        session.activeAudioUsage = desiredUsage
-        session.trackPlaying = false
-        configureTrackStartThreshold(created, session, session.targetLeadFrames)
-        session.resetBufferCursors(readUnsignedHeadFrames(created), readUnderrunCount(created))
-        return created
-    }
+    )?.audioTrack
 
     private fun primeAndStartTrack(track: AudioTrack, session: AudioStreamSession): Boolean {
         session.resetBufferCursors(readUnsignedHeadFrames(track), readUnderrunCount(track))
@@ -593,7 +648,7 @@ internal class StreamingKeyAudioDriver(
     }
 
     private fun pauseAndFlushTrack(session: AudioStreamSession) {
-        val track = session.track ?: return
+        val track = session.trackLifecycle.track?.audioTrack ?: return
         runCatching {
             track.pause()
             track.flush()
@@ -603,14 +658,13 @@ internal class StreamingKeyAudioDriver(
     }
 
     private fun releaseTrack(session: AudioStreamSession) {
-        val track = session.track ?: return
-        session.track = null
-        session.trackPlaying = false
-        runCatching {
-            track.pause()
-            track.flush()
-            track.release()
+        session.trackLifecycle.releaseTrack {
+            resetSessionAfterRelease(session)
         }
+    }
+
+    private fun resetSessionAfterRelease(session: AudioStreamSession) {
+        session.trackPlaying = false
         session.pendingOffset = 0
         session.pendingCount = 0
         session.silentTailBursts = 0
