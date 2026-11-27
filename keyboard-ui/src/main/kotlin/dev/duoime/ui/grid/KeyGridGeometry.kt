@@ -448,6 +448,31 @@ object KeyGridGeometry {
     }
 
     const val MIN_SECONDARY_KEY_HEIGHT_DP: Float = 36f
+
+    /**
+     * Returns `true` when [next] preserves the geometry size and key identity/action of every
+     * currently pressed key in [activeKeyIndices], so mid-touch layout refreshes (e.g., T9
+     * `t9_idle` <-> `t9_comp` during Backspace auto-repeat or two-thumb rollover) keep active
+     * pointers and hold timers intact instead of dropping them.
+     */
+    fun canPreserveActivePointers(
+        previous: KeyGridHitMap,
+        next: KeyGridHitMap,
+        activeKeyIndices: Collection<Int>
+    ): Boolean {
+        if (activeKeyIndices.isEmpty()) return false
+        if (previous.size != next.size) return false
+        if (previous.widthPx != next.widthPx || previous.heightPx != next.heightPx) return false
+        for (index in activeKeyIndices) {
+            if (index !in previous.keys.indices || index !in next.keys.indices) return false
+            val prevKey = previous.keys[index]
+            val nextKey = next.keys[index]
+            if (!nextKey.enabled || prevKey.id != nextKey.id || prevKey.action != nextKey.action) {
+                return false
+            }
+        }
+        return true
+    }
 }
 
 /**
@@ -473,6 +498,8 @@ class MultiTouchPointerTracker {
     fun isKeyPressed(keyIndex: Int): Boolean = keyIndex in pressedCounts.indices && pressedCounts[keyIndex] > 0
 
     fun keyForPointer(pointerId: Long): Int = activePointers[pointerId] ?: -1
+
+    fun activeKeyIndices(): Collection<Int> = activePointers.values
 
     fun onPointerDown(pointerId: Long, x: Float, y: Float, hitMap: KeyGridHitMap): Int {
         ensureCapacity(hitMap.size)

@@ -34,6 +34,7 @@ internal class CandidateWindowTracker(
 
     private val pages = TreeMap<Int, List<CandidateItem>>()
     private var lastKey: CompositionKey? = null
+    private var exhausted: Boolean = false
 
     var items: List<WindowCandidateItem> = emptyList()
         private set
@@ -50,6 +51,7 @@ internal class CandidateWindowTracker(
         if (forceReset || key != lastKey || pages.isEmpty()) {
             pages.clear()
             lastKey = key
+            exhausted = false
             if (snapshot.candidates.isNotEmpty()) {
                 pages[snapshot.pageIndex] = snapshot.candidates
             }
@@ -61,7 +63,7 @@ internal class CandidateWindowTracker(
             pages[snapshot.pageIndex] = snapshot.candidates
             val highestPage = pages.lastKey()
             if (snapshot.pageIndex >= highestPage) {
-                hasMore = snapshot.hasNextPage && pages.size < maxPages
+                hasMore = !exhausted && snapshot.hasNextPage && pages.size < maxPages
             }
             rebuildItems()
         }
@@ -72,6 +74,7 @@ internal class CandidateWindowTracker(
         val restorePage = engine.state.value.pageIndex
         val highestLoaded = pages.lastKey()
         if (!stepEngineToPage(engine, highestLoaded)) {
+            exhausted = true
             hasMore = false
             stepEngineToPage(engine, restorePage)
             return false
@@ -81,9 +84,11 @@ internal class CandidateWindowTracker(
         val added = if (paged && nextSnap.pageIndex > highestLoaded && nextSnap.candidates.isNotEmpty()) {
             pages[nextSnap.pageIndex] = nextSnap.candidates
             hasMore = nextSnap.hasNextPage && pages.size < maxPages
+            if (!hasMore) exhausted = true
             rebuildItems()
             true
         } else {
+            exhausted = true
             hasMore = false
             false
         }
@@ -105,6 +110,7 @@ internal class CandidateWindowTracker(
     fun reset() {
         pages.clear()
         lastKey = null
+        exhausted = false
         items = emptyList()
         hasMore = false
     }

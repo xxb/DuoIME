@@ -184,7 +184,12 @@ private fun ScrollableCandidateRow(
     val listState = rememberLazyListState()
     val items = state.windowCandidates
 
-    LaunchedEffect(state.snapshot.preedit) {
+    LaunchedEffect(
+        state.snapshot.preedit,
+        state.snapshot.selectedSyllableIndex,
+        state.snapshot.variant,
+        state.snapshot.mode
+    ) {
         if (listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0) {
             listState.scrollToItem(0)
         }

@@ -91,13 +91,17 @@ fun KeyGrid(
 
     val pressDrawTrigger = remember { mutableIntStateOf(0) }
     val currentLayout = rememberUpdatedState(layout)
+    val currentEnabled = rememberUpdatedState(enabled)
     val currentOnKeyAction = rememberUpdatedState(onKeyAction)
+    val currentOnKeyPressDown = rememberUpdatedState(onKeyPressDown)
     val currentOnKeyRepeat = rememberUpdatedState(onKeyRepeat)
-    val pointerDispatch = GridPointerDispatch(
-        enabledState = rememberUpdatedState(enabled),
-        onKeyActionState = currentOnKeyAction,
-        onPressDownState = rememberUpdatedState(onKeyPressDown)
-    )
+    val pointerDispatch = remember {
+        GridPointerDispatch(
+            enabledState = currentEnabled,
+            onKeyActionState = currentOnKeyAction,
+            onPressDownState = currentOnKeyPressDown
+        )
+    }
     val renderState = remember(coroutineScope) {
         GridRenderState(
             holdController = KeyHoldController(
@@ -127,7 +131,7 @@ fun KeyGrid(
                     pressDrawTrigger.intValue++
                 }
             }
-            .pointerInput(layout.id) {
+            .pointerInput(renderState) {
                 handleKeyGridPointers(renderState, pressDrawTrigger, pointerDispatch)
             }
     ) {
@@ -233,6 +237,8 @@ private fun updateRenderCache(
     metrics: GridLayoutMetrics,
     textMeasurer: TextMeasurer
 ) {
+    val previousSize = state.lastSize
+    val previousHitMap = state.hitMap
     state.lastSize = size
     state.lastLayoutId = layout.id
     val hitMap = KeyGridGeometry.computeHitMap(
@@ -243,8 +249,15 @@ private fun updateRenderCache(
         verticalGapPx = metrics.vGapPx
     )
     state.hitMap = hitMap
-    state.pointerTracker.reset(hitMap.size)
-    state.holdController.cancelAll()
+    val preservePointers = previousSize == size && KeyGridGeometry.canPreserveActivePointers(
+        previous = previousHitMap,
+        next = hitMap,
+        activeKeyIndices = state.pointerTracker.activeKeyIndices()
+    )
+    if (!preservePointers) {
+        state.pointerTracker.reset(hitMap.size)
+        state.holdController.cancelAll()
+    }
 
     val rowCount = layout.rows.size.coerceAtLeast(1)
     val approxRowHeightDp = (size.height.toFloat() / rowCount) / metrics.density

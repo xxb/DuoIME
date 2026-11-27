@@ -256,4 +256,29 @@ class KeyGridHitTest {
         val gapX = (hitMap.right(symIdx) + hitMap.left(backIdx)) * 0.5f
         assertEquals(symIdx, KeyGridGeometry.hitTestIndex(hitMap, gapX, cy))
     }
+
+    @Test
+    fun canPreserveActivePointersKeepsT9BackspaceAndRolloverAcrossIdleComposingSwapAndResetsOnLayoutChange() {
+        val t9Idle = KeyGridGeometry.computeHitMap(BuiltInLayouts.t9(isComposing = false), 1000f, 400f, 8f, 10f)
+        val t9Comp = KeyGridGeometry.computeHitMap(BuiltInLayouts.t9(isComposing = true), 1000f, 400f, 8f, 10f)
+        val qwerty = KeyGridGeometry.computeHitMap(BuiltInLayouts.qwerty(), 1000f, 400f, 8f, 10f)
+
+        val backspaceIdx = t9Comp.keys.indexOfFirst { it.id == "backspace" }
+        val t9Digit4Idx = t9Idle.keys.indexOfFirst { it.id == "t9_4" }
+        val t9Key1Idx = t9Idle.keys.indexOfFirst { it.id == "t9_1" }
+        assertTrue(backspaceIdx >= 0 && t9Digit4Idx >= 0 && t9Key1Idx >= 0)
+
+        // Held Backspace survives t9_comp -> t9_idle so auto-repeat keeps deleting committed text
+        assertTrue(KeyGridGeometry.canPreserveActivePointers(t9Comp, t9Idle, listOf(backspaceIdx)))
+
+        // Held t9_4 survives t9_idle -> t9_comp so two-thumb rollover is never dropped
+        assertTrue(KeyGridGeometry.canPreserveActivePointers(t9Idle, t9Comp, listOf(t9Digit4Idx)))
+
+        // Key whose action mutates (t9_1: "、" -> "分词") resets instead of preserving stale press
+        assertFalse(KeyGridGeometry.canPreserveActivePointers(t9Idle, t9Comp, listOf(t9Key1Idx)))
+
+        // Layout switch (T9 -> QWERTY) and empty active pointers always reset cleanly
+        assertFalse(KeyGridGeometry.canPreserveActivePointers(t9Idle, qwerty, listOf(t9Digit4Idx)))
+        assertFalse(KeyGridGeometry.canPreserveActivePointers(t9Idle, t9Comp, emptyList()))
+    }
 }

@@ -2,16 +2,23 @@
 // Copyright (c) 2026 DuoIME Contributors
 package dev.duoime.embed
 
+import dev.duoime.core.engine.EngineKeyEvent
+import dev.duoime.core.engine.InputEngine
 import dev.duoime.core.engine.InputSink
 import dev.duoime.core.layout.KeyCodes
+import dev.duoime.core.model.CandidateItem
 import dev.duoime.core.model.ChineseScheme
+import dev.duoime.core.model.EngineSnapshot
 import dev.duoime.core.model.InputMode
 import dev.duoime.core.model.KeyAction
+import dev.duoime.core.model.KeyProcessResult
 import dev.duoime.core.model.KeyboardPanel
 import dev.duoime.core.model.Language
 import dev.duoime.core.model.SinkCapabilities
 import dev.duoime.engine.lite.LiteInputEngine
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -174,6 +181,57 @@ class CandidateWindowTrackerTest {
         assertTrue(controller.uiState.value.activeLayout.id.startsWith("t9_comp"))
         assertTrue(
             controller.uiState.value.activeLayout.rows[1].keys.any { it.action == KeyAction.ClearPreedit }
+        )
+        controller.close()
+    }
+
+    @Test
+    fun loadMorePublishesHasMoreFalseWhenTrailingPageIsExhausted() = runTest {
+        val failingPageEngine = object : InputEngine {
+            private val _state = MutableStateFlow(
+                EngineSnapshot(
+                    preedit = "yi",
+                    composingText = "yi",
+                    candidates = listOf(
+                        CandidateItem(text = "一", indexOnPage = 0),
+                        CandidateItem(text = "以", indexOnPage = 1)
+                    ),
+                    pageIndex = 0,
+                    hasNextPage = true,
+                    isComposing = true
+                )
+            )
+            override val state: StateFlow<EngineSnapshot> = _state
+
+            override fun onKey(event: EngineKeyEvent): KeyProcessResult = KeyProcessResult.Consumed
+
+            override fun selectCandidate(indexOnPage: Int): KeyProcessResult = KeyProcessResult.PassThrough
+
+            override fun page(forward: Boolean): Boolean = false
+
+            override fun setOption(name: String, on: Boolean) = Unit
+
+            override fun selectSchema(id: String): Boolean = true
+
+            override fun reset() {
+                _state.value = EngineSnapshot.EMPTY
+            }
+        }
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val controller = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { failingPageEngine }
+        )
+        advanceUntilIdle()
+        assertTrue(controller.uiState.value.hasMoreWindowCandidates)
+
+        // When page(true) returns false, loadMore sets hasMore=false and controller must publish that transition
+        controller.loadMoreCandidates()
+        advanceUntilIdle()
+        assertFalse(
+            "Stale hasMoreWindowCandidates=true must clear when loadMore exhausts pages",
+            controller.uiState.value.hasMoreWindowCandidates
         )
         controller.close()
     }

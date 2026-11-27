@@ -254,7 +254,12 @@ class KeyboardController(
             is ControllerEvent.Nav -> handleNavCommand(engine, event.command)
             is ControllerEvent.SelectCandidate -> handleSelectCandidate(engine, event.indexOnPage)
             is ControllerEvent.SelectWindowCandidate -> handleSelectWindowCandidate(engine, event.globalIndex)
-            is ControllerEvent.LoadMoreCandidates -> if (candidateWindow.loadMore(engine)) publishState(engine)
+            is ControllerEvent.LoadMoreCandidates -> {
+                val prevHasMore = candidateWindow.hasMore
+                if (candidateWindow.loadMore(engine) || candidateWindow.hasMore != prevHasMore) {
+                    publishState(engine)
+                }
+            }
             is ControllerEvent.SelectSyllable -> handleSelectSyllable(engine, event.index)
             is ControllerEvent.Page -> if (engine.page(event.forward)) publishState(engine)
             is ControllerEvent.ExtensionButton -> handleExtensionButton(engine, event.button)
