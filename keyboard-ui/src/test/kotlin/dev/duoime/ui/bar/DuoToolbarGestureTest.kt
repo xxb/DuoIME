@@ -320,13 +320,23 @@ class DuoToolbarGestureTest {
         }
 
     @Test
-    fun accessibilitySemanticsExposeButtonRoleClickCustomActionsAndDisabledState() {
+    fun accessibilitySemanticsExposeButtonRoleClickCustomActionsAndDisabledState() = runTest(StandardTestDispatcher()) {
         val actions = mutableListOf<KeyAction>()
-        val enabledState = DuoToolbarState(
-            activeChineseScheme = ChineseScheme.PINYIN_26,
-            effectiveLanguage = Language.CHINESE,
-            variant = ChineseVariant.TRADITIONAL,
-            canToggleLanguage = true
+        val feedback = mutableListOf<FeedbackKey>()
+        val toolbarState = mutableStateOf(
+            DuoToolbarState(
+                activeChineseScheme = ChineseScheme.PINYIN_26,
+                effectiveLanguage = Language.CHINESE,
+                variant = ChineseVariant.TRADITIONAL,
+                canToggleLanguage = true
+            )
+        )
+        val gestureController = UnifiedLangGestureController(
+            scope = this,
+            stateRef = toolbarState,
+            onActionState = mutableStateOf<(KeyAction) -> Unit>({ actions += it }),
+            onKeyPressDownState = mutableStateOf<(FeedbackKey) -> Unit>({ feedback += it }),
+            pressedState = mutableStateOf(false)
         )
         val spec = UnifiedLangAccessibilitySpec(
             contentDescription = "Chinese, 26-key, Traditional",
@@ -336,7 +346,11 @@ class DuoToolbarGestureTest {
             switchVariantLabel = "Toggle Simplified or Traditional Chinese"
         )
         val enabledConfig = SemanticsConfiguration()
-        enabledConfig.applyUnifiedLangSemantics(enabledState, spec) { actions += it }
+        enabledConfig.applyUnifiedLangSemantics(
+            state = toolbarState.value,
+            spec = spec,
+            onAction = gestureController::emitAction
+        )
 
         assertEquals(Role.Button, enabledConfig[SemanticsProperties.Role])
         assertEquals(listOf(spec.contentDescription), enabledConfig[SemanticsProperties.ContentDescription])
@@ -347,26 +361,48 @@ class DuoToolbarGestureTest {
         assertEquals(spec.toggleLanguageLabel, onClick.label)
         assertTrue(onClick.action?.invoke() == true)
         assertEquals(listOf<KeyAction>(KeyAction.ToggleLanguage), actions)
+        assertEquals(
+            listOf(FeedbackKey(KeyAction.ToggleLanguage, "中·26", FeedbackZone.TOOLBAR)),
+            feedback
+        )
 
         val customActions = enabledConfig[SemanticsActions.CustomActions]
         assertEquals(2, customActions.size)
         assertEquals(spec.switchSchemeLabel, customActions[0].label)
         assertEquals(spec.switchVariantLabel, customActions[1].label)
         actions.clear()
+        feedback.clear()
         assertTrue(customActions[0].action())
         assertTrue(customActions[1].action())
+        val toT9 = KeyAction.SelectChineseScheme(ChineseScheme.PINYIN_T9)
+        assertEquals(listOf<KeyAction>(toT9, KeyAction.SwitchVariant), actions)
         assertEquals(
-            listOf<KeyAction>(KeyAction.SelectChineseScheme(ChineseScheme.PINYIN_T9), KeyAction.SwitchVariant),
-            actions
+            listOf(
+                FeedbackKey(toT9, "中·26", FeedbackZone.TOOLBAR),
+                FeedbackKey(KeyAction.SwitchVariant, "中·26", FeedbackZone.TOOLBAR)
+            ),
+            feedback
         )
 
-        // Disabled state exposes SemanticsProperties.Disabled and omits clickable/custom actions
-        val disabledState = enabledState.copy(canToggleLanguage = false)
+        // Disabled state exposes SemanticsProperties.Disabled, omits actions, and suppresses emitAction
+        toolbarState.value = toolbarState.value.copy(canToggleLanguage = false)
         val disabledConfig = SemanticsConfiguration()
-        disabledConfig.applyUnifiedLangSemantics(disabledState, spec) { actions += it }
+        disabledConfig.applyUnifiedLangSemantics(
+            state = toolbarState.value,
+            spec = spec,
+            onAction = gestureController::emitAction
+        )
         assertEquals(Role.Button, disabledConfig[SemanticsProperties.Role])
         assertTrue(SemanticsProperties.Disabled in disabledConfig)
         assertFalse(SemanticsActions.OnClick in disabledConfig)
         assertFalse(SemanticsActions.CustomActions in disabledConfig)
+
+        actions.clear()
+        feedback.clear()
+        gestureController.emitAction(KeyAction.ToggleLanguage)
+        gestureController.emitAction(toT9)
+        gestureController.emitAction(KeyAction.SwitchVariant)
+        assertTrue("emitAction while disabled must suppress actions", actions.isEmpty())
+        assertTrue("emitAction while disabled must suppress feedback", feedback.isEmpty())
     }
 }

@@ -638,8 +638,11 @@ class KeySoundAndMixerTest {
             0.0001f
         )
 
+        val unlockKey = dev.duoime.ui.grid.unlockSyllablesFeedbackKey(0)
+        assertEquals(KeyAction.UnlockSyllablesFrom(0), unlockKey.action)
+        assertEquals(FeedbackZone.CANDIDATE, unlockKey.zone)
         val unlockCandidateTrigger = KeySoundSynthesizer.resolveSoundTrigger(
-            FeedbackKey(KeyAction.UnlockSyllablesFrom(0), "×", FeedbackZone.CANDIDATE),
+            unlockKey,
             KeySoundStyle.GRAND_PIANO
         )
         val unlockActionTrigger = KeySoundSynthesizer.resolveSoundTrigger(

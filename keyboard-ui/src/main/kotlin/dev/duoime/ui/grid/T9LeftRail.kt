@@ -146,7 +146,7 @@ internal fun dispatchT9RailItemClick(
     onUnlockSyllablesFrom: (Int) -> Unit
 ) {
     if (item.isLockedEntry) {
-        onKeyPressDown(clearSyllableFeedbackKey())
+        onKeyPressDown(unlockSyllablesFeedbackKey(item.targetIndex))
         onUnlockSyllablesFrom(item.targetIndex)
     } else {
         resolveT9SyllableClick(
@@ -362,6 +362,9 @@ private val IDLE_PUNCTUATION: List<String> = listOf("，", "。", "？")
 
 internal fun clearSyllableFeedbackKey(): FeedbackKey =
     FeedbackKey(KeyAction.SelectSyllable(-1), "×", FeedbackZone.CANDIDATE)
+
+internal fun unlockSyllablesFeedbackKey(fromIndex: Int): FeedbackKey =
+    FeedbackKey(KeyAction.UnlockSyllablesFrom(fromIndex), "×", FeedbackZone.CANDIDATE)
 
 internal fun syllableFeedbackKey(index: Int, syllable: String): FeedbackKey =
     FeedbackKey(KeyAction.SelectSyllable(index), syllable, FeedbackZone.CANDIDATE)

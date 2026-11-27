@@ -233,8 +233,9 @@ internal class UnifiedLangGestureController(
         }
     }
 
-    private fun emitAction(action: KeyAction) {
+    internal fun emitAction(action: KeyAction) {
         val state = stateRef.value
+        if (!state.canToggleLanguage) return
         val label = formatUnifiedLangLabel(state.effectiveLanguage, state.activeChineseScheme)
         onKeyPressDownState.value(FeedbackKey(action, label, FeedbackZone.TOOLBAR))
         onActionState.value(action)
@@ -417,7 +418,7 @@ internal fun UnifiedLangModeChip(
                 applyUnifiedLangSemantics(
                     state = currentState.value,
                     spec = accessibilitySpec,
-                    onAction = { action -> currentOnAction.value(action) }
+                    onAction = gestureController::emitAction
                 )
             }
             .pointerInput(gestureController, flickThresholdPx) {
