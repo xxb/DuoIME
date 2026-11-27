@@ -5,6 +5,11 @@ package dev.duoime.app.ime
 import dev.duoime.app.settings.DuoImePreferences
 import dev.duoime.core.model.EditorContext
 import dev.duoime.core.model.EnterBehavior
+import dev.duoime.core.model.FieldKind
+import dev.duoime.core.model.KeyboardPanel
+import dev.duoime.core.model.Language
+import dev.duoime.core.model.SymbolTabId
+import dev.duoime.core.model.toInputConstraints
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -146,5 +151,101 @@ class EditorInfoMapperTest {
                 candidatesEnd = 11
             )
         )
+    }
+
+    @Test
+    fun classifiesAllFieldKindsAndEnforcesSecurityFailClosedWithExtensionConfig() {
+        assertEquals(FieldKind.TERMINAL, EditorInfoMapper.classifyFieldKind(EditorInfoMapper.TYPE_NULL))
+        assertEquals(FieldKind.TEXT, EditorInfoMapper.classifyFieldKind(EditorInfoMapper.TYPE_CLASS_TEXT))
+        assertEquals(FieldKind.NUMBER, EditorInfoMapper.classifyFieldKind(EditorInfoMapper.TYPE_CLASS_NUMBER))
+        assertEquals(
+            FieldKind.DECIMAL,
+            EditorInfoMapper.classifyFieldKind(
+                EditorInfoMapper.TYPE_CLASS_NUMBER or EditorInfoMapper.TYPE_NUMBER_FLAG_DECIMAL
+            )
+        )
+        assertEquals(
+            FieldKind.SIGNED_NUMBER,
+            EditorInfoMapper.classifyFieldKind(
+                EditorInfoMapper.TYPE_CLASS_NUMBER or EditorInfoMapper.TYPE_NUMBER_FLAG_SIGNED
+            )
+        )
+        assertEquals(FieldKind.PHONE, EditorInfoMapper.classifyFieldKind(EditorInfoMapper.TYPE_CLASS_PHONE))
+        assertEquals(FieldKind.DATETIME, EditorInfoMapper.classifyFieldKind(EditorInfoMapper.TYPE_CLASS_DATETIME))
+        assertEquals(
+            FieldKind.URI,
+            EditorInfoMapper.classifyFieldKind(
+                EditorInfoMapper.TYPE_CLASS_TEXT or EditorInfoMapper.TYPE_TEXT_VARIATION_URI
+            )
+        )
+        assertEquals(
+            FieldKind.EMAIL,
+            EditorInfoMapper.classifyFieldKind(
+                EditorInfoMapper.TYPE_CLASS_TEXT or EditorInfoMapper.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+            )
+        )
+        assertEquals(
+            FieldKind.EMAIL,
+            EditorInfoMapper.classifyFieldKind(
+                EditorInfoMapper.TYPE_CLASS_TEXT or EditorInfoMapper.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS
+            )
+        )
+        assertEquals(
+            FieldKind.PASSWORD,
+            EditorInfoMapper.classifyFieldKind(
+                EditorInfoMapper.TYPE_CLASS_TEXT or EditorInfoMapper.TYPE_TEXT_VARIATION_PASSWORD
+            )
+        )
+
+        // Password CANNOT be weakened by extension JSON
+        val pwdCtx = EditorInfoMapper.buildEditorContext(
+            packageName = "dev.example.auth",
+            inputType = EditorInfoMapper.TYPE_CLASS_TEXT or EditorInfoMapper.TYPE_TEXT_VARIATION_PASSWORD,
+            imeOptions = 0,
+            rawExtensionJson = """{"version":1,"fieldKind":"text","initialLanguage":"chinese","noLearning":false}""",
+            userIncognito = false
+        )
+        assertEquals(FieldKind.PASSWORD, pwdCtx.fieldKind)
+        assertTrue(pwdCtx.isPassword)
+        assertTrue(pwdCtx.incognito)
+        val pwdConstraints = pwdCtx.toInputConstraints()
+        assertFalse(pwdConstraints.allowChinese)
+        assertTrue(pwdConstraints.forceNumberRow)
+        assertTrue(pwdConstraints.noLearning)
+
+        // Extension can specialize TEXT into TERMINAL and tighten noLearning
+        val termCtx = EditorInfoMapper.buildEditorContext(
+            packageName = "dev.example.shell",
+            inputType = EditorInfoMapper.TYPE_CLASS_TEXT,
+            imeOptions = 0,
+            rawExtensionJson = """{"version":1,"fieldKind":"terminal","noLearning":true}""",
+            userIncognito = false
+        )
+        assertEquals(FieldKind.TERMINAL, termCtx.fieldKind)
+        assertTrue(termCtx.incognito)
+        val termConstraints = termCtx.toInputConstraints()
+        assertEquals(SymbolTabId.CLI, termConstraints.defaultSymbolTab)
+        assertEquals(Language.ENGLISH, termConstraints.initialLanguage)
+        assertTrue(termConstraints.allowChinese)
+
+        // IME_FLAG_FORCE_ASCII disallows Chinese on TEXT fields
+        val asciiCtx = EditorInfoMapper.buildEditorContext(
+            packageName = "dev.example.ascii",
+            inputType = EditorInfoMapper.TYPE_CLASS_TEXT,
+            imeOptions = EditorInfoMapper.IME_FLAG_FORCE_ASCII
+        )
+        val asciiConstraints = asciiCtx.toInputConstraints()
+        assertFalse(asciiConstraints.allowChinese)
+        assertEquals(Language.ENGLISH, asciiConstraints.initialLanguage)
+
+        // NUMBER class forces NUMBER panel
+        val numConstraints = EditorInfoMapper.buildEditorContext(
+            packageName = "dev.example.calc",
+            inputType = EditorInfoMapper.TYPE_CLASS_NUMBER or EditorInfoMapper.TYPE_NUMBER_FLAG_DECIMAL,
+            imeOptions = 0
+        ).toInputConstraints()
+        assertEquals(FieldKind.DECIMAL, numConstraints.kind)
+        assertEquals(KeyboardPanel.NUMBER, numConstraints.forcedPanel)
+        assertFalse(numConstraints.allowChinese)
     }
 }

@@ -13,6 +13,7 @@ import dev.duoime.core.model.FeedbackZone
 import dev.duoime.core.model.InputMode
 import dev.duoime.core.model.KeyAction
 import dev.duoime.core.model.KeyProcessResult
+import dev.duoime.core.model.KeyboardPanel
 import dev.duoime.core.model.SinkCapabilities
 import dev.duoime.core.protocol.ExtensionActionType
 import dev.duoime.core.protocol.ExtensionToolbarButton
@@ -573,7 +574,7 @@ class KeyboardControllerTest {
     }
 
     @Test
-    fun symbolsModeToggleRestoresLastNonSymbolMode() = runTest {
+    fun symbolsPanelDoubleTapRestoresBasePrimaryMode() = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val sink = RecordingInputSink(SinkCapabilities.STANDARD_IME)
         val controller = KeyboardController(
@@ -584,24 +585,27 @@ class KeyboardControllerTest {
         controller.attachSink(sink)
         advanceUntilIdle()
 
-        // T9 -> SYMBOLS -> SYMBOLS toggle restores T9
+        // T9 -> SYMBOL -> SYMBOL double-tap restores T9
         controller.dispatchKeyAction(KeyAction.SwitchMode(InputMode.PINYIN_T9))
         advanceUntilIdle()
         assertEquals(InputMode.PINYIN_T9, controller.uiState.value.activeLayout.mode)
+        assertEquals(KeyboardPanel.PRIMARY, controller.uiState.value.activeLayout.panel)
 
-        controller.dispatchKeyAction(KeyAction.SwitchMode(InputMode.SYMBOLS))
+        controller.dispatchKeyAction(KeyAction.OpenPanel(KeyboardPanel.SYMBOL))
         advanceUntilIdle()
-        assertEquals(InputMode.SYMBOLS, controller.uiState.value.activeLayout.mode)
+        assertEquals(KeyboardPanel.SYMBOL, controller.uiState.value.activeLayout.panel)
 
-        controller.dispatchKeyAction(KeyAction.SwitchMode(InputMode.SYMBOLS))
+        controller.dispatchKeyAction(KeyAction.OpenPanel(KeyboardPanel.SYMBOL))
         advanceUntilIdle()
+        assertEquals(KeyboardPanel.PRIMARY, controller.uiState.value.activeLayout.panel)
         assertEquals(InputMode.PINYIN_T9, controller.uiState.value.activeLayout.mode)
 
-        // ENGLISH -> SYMBOLS -> SYMBOLS toggle restores ENGLISH
+        // ENGLISH -> SYMBOL -> SYMBOL double-tap restores ENGLISH
         controller.dispatchKeyAction(KeyAction.SwitchMode(InputMode.ENGLISH))
-        controller.dispatchKeyAction(KeyAction.SwitchMode(InputMode.SYMBOLS))
-        controller.dispatchKeyAction(KeyAction.SwitchMode(InputMode.SYMBOLS))
+        controller.dispatchKeyAction(KeyAction.OpenPanel(KeyboardPanel.SYMBOL))
+        controller.dispatchKeyAction(KeyAction.OpenPanel(KeyboardPanel.SYMBOL))
         advanceUntilIdle()
+        assertEquals(KeyboardPanel.PRIMARY, controller.uiState.value.activeLayout.panel)
         assertEquals(InputMode.ENGLISH, controller.uiState.value.activeLayout.mode)
         controller.close()
     }

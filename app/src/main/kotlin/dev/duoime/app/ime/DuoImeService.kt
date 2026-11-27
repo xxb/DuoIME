@@ -338,7 +338,7 @@ class DuoImeService : InputMethodService() {
             initialSelStart = attribute?.initialSelStart ?: SelectionState.NO_COMPOSING,
             initialSelEnd = attribute?.initialSelEnd ?: SelectionState.NO_COMPOSING
         )
-        applyEditorInfo(attribute)
+        applyEditorInfo(attribute, restarting = restarting)
         sessionController.onStartInput()
     }
 
@@ -347,7 +347,7 @@ class DuoImeService : InputMethodService() {
         attachComposeOwnerToDecor()
         refreshSettings()
         lastEditorInfo = info
-        applyEditorInfo(info)
+        applyEditorInfo(info, restarting = restarting)
         composeOwner.onResume()
         sessionController.onStartInputView()
     }
@@ -485,7 +485,9 @@ class DuoImeService : InputMethodService() {
         val detectedPin = SystemImePinDetector.readSystemImePin(contentResolver)
         val effectivePin = SystemImePinDetector.resolveEffectivePin(detectedPin, settings.manualSystemImePin)
         val pkgName = lastEditorInfo?.packageName
-        val isPassword = EditorInfoMapper.isPasswordInputType(lastEditorInfo?.inputType ?: 0)
+        val isPassword = lastEditorInfo?.let {
+            EditorInfoMapper.fromEditorInfo(it, userIncognito = settings.alwaysIncognito).isPassword
+        } ?: false
         return PlacementEvaluationSnapshot(
             input = DisplayPlacementInput(
                 displays = candidates,
@@ -570,7 +572,7 @@ class DuoImeService : InputMethodService() {
             controller.setIncludeNumberRow(updated.includeNumberRow)
         }
         if (updated.alwaysIncognito != previous.alwaysIncognito) {
-            applyEditorInfo(lastEditorInfo)
+            applyEditorInfo(lastEditorInfo, restarting = true)
         }
         if (!sessionController.isInputViewActive) return
 
@@ -583,12 +585,12 @@ class DuoImeService : InputMethodService() {
         }
     }
 
-    private fun applyEditorInfo(info: EditorInfo?) {
+    private fun applyEditorInfo(info: EditorInfo?, restarting: Boolean = false) {
         val settings = settingsFlow.value
         val capabilities = EditorInfoMapper.resolveSinkCapabilities(info)
         inputSink.updateCapabilities(capabilities)
         val context = EditorInfoMapper.fromEditorInfo(info, userIncognito = settings.alwaysIncognito)
-        controller.updateEditorContext(context)
+        controller.updateEditorContext(context, restarting = restarting)
     }
 
     private fun showImePicker() {

@@ -22,7 +22,8 @@ data class EditorContext(
     val imeOptions: Int = 0,
     val incognito: Boolean = false,
     val isPassword: Boolean = false,
-    val extension: ExtensionConfig? = null
+    val extension: ExtensionConfig? = null,
+    val fieldKind: FieldKind = FieldKind.TEXT
 ) {
     /**
      * Resolves whether pressing Enter with no active composition should insert a newline
@@ -57,11 +58,62 @@ data class EditorContext(
         const val IME_ACTION_PREVIOUS: Int = 0x00000007
         const val IME_FLAG_NO_ENTER_ACTION: Int = 0x40000000
         const val IME_FLAG_NO_EXTRACT_UI: Int = 0x10000000
+        const val IME_FLAG_FORCE_ASCII: Int = Int.MIN_VALUE
 
         const val TYPE_CLASS_TEXT: Int = 0x00000001
         const val TYPE_TEXT_FLAG_MULTI_LINE: Int = 0x00020000
         const val TYPE_TEXT_FLAG_IME_MULTI_LINE: Int = 0x00040000
     }
+}
+
+/**
+ * Converts [EditorContext] into fail-closed [InputConstraints] for the orthogonal navigation state
+ * machine. Security constraints (`PASSWORD`, `incognito`, `IME_FLAG_FORCE_ASCII`, `TERMINAL`
+ * no-learning) can only tighten and can never be weakened by host [ExtensionConfig] declarations.
+ */
+fun EditorContext.toInputConstraints(): InputConstraints {
+    val ext = extension
+    val effectiveKind = resolveEffectiveFieldKind(ext)
+    val forceAscii = (imeOptions and EditorContext.IME_FLAG_FORCE_ASCII) != 0
+    val baseNoLearning = incognito || isPassword || ext?.noLearning == true
+    val defaultSymbolTab = ext?.defaultSymbolTab
+        ?: if (effectiveKind == FieldKind.TERMINAL) SymbolTabId.CLI else SymbolTabId.COMMON
+
+    return InputConstraints(
+        kind = effectiveKind,
+        allowChinese = resolveAllowChinese(effectiveKind, forceAscii),
+        forcedPanel = if (effectiveKind.isNumericFieldKind()) KeyboardPanel.NUMBER else null,
+        forceNumberRow = effectiveKind == FieldKind.PASSWORD,
+        noLearning = baseNoLearning || effectiveKind == FieldKind.PASSWORD || effectiveKind == FieldKind.TERMINAL,
+        initialLanguage = resolveInitialLanguage(effectiveKind, forceAscii, ext?.initialLanguage),
+        defaultSymbolTab = defaultSymbolTab,
+        langKeyPlacementOverride = ext?.langKeyPlacement,
+        candidatePagingOverride = ext?.candidatePaging
+    )
+}
+
+private fun EditorContext.resolveEffectiveFieldKind(ext: ExtensionConfig?): FieldKind = when {
+    isPassword || fieldKind == FieldKind.PASSWORD -> FieldKind.PASSWORD
+    ext?.fieldKind != null -> ext.fieldKind
+    else -> fieldKind
+}
+
+private fun FieldKind.isNumericFieldKind(): Boolean = when (this) {
+    FieldKind.NUMBER,
+    FieldKind.DECIMAL,
+    FieldKind.SIGNED_NUMBER,
+    FieldKind.PHONE,
+    FieldKind.DATETIME -> true
+    else -> false
+}
+
+private fun resolveAllowChinese(kind: FieldKind, forceAscii: Boolean): Boolean =
+    !forceAscii && kind != FieldKind.PASSWORD && !kind.isNumericFieldKind()
+
+private fun resolveInitialLanguage(kind: FieldKind, forceAscii: Boolean, extInitial: Language?): Language? = when {
+    !resolveAllowChinese(kind, forceAscii) -> Language.ENGLISH
+    kind == FieldKind.URI || kind == FieldKind.EMAIL || kind == FieldKind.TERMINAL -> extInitial ?: Language.ENGLISH
+    else -> extInitial
 }
 
 /**

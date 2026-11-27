@@ -2,7 +2,13 @@
 // Copyright (c) 2026 DuoIME Contributors
 package dev.duoime.core.protocol
 
+import dev.duoime.core.model.CandidatePaging
+import dev.duoime.core.model.FieldKind
+import dev.duoime.core.model.LangKeyPlacement
+import dev.duoime.core.model.Language
+import dev.duoime.core.model.SymbolTabId
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -174,6 +180,60 @@ class ExtensionConfigTest {
         assertEquals(false, explicitNulls.preferInline)
         assertTrue(explicitNulls.toolbarButtons.isEmpty())
         assertTrue(explicitNulls.acceptImageMimes.isEmpty())
+    }
+
+    @Test
+    fun parsesAdditiveV1HintsIgnoresUnknownKeysAndSoftFallsBackPerInvalidOptionalField() {
+        val validPayload = """
+            {
+              "version": 1,
+              "hostName": "ShellDeck",
+              "unknownFutureBlock": {"nested": [1, 2, 3]},
+              "fieldKind": "terminal",
+              "initialLanguage": "en",
+              "defaultSymbolTab": "cli",
+              "langKeyPlacement": "host",
+              "candidatePaging": "paged",
+              "noLearning": true
+            }
+        """.trimIndent()
+        val parsed = ExtensionConfigParser.parse(validPayload)
+        requireNotNull(parsed)
+        assertEquals("ShellDeck", parsed.hostName)
+        assertEquals(FieldKind.TERMINAL, parsed.fieldKind)
+        assertEquals(Language.ENGLISH, parsed.initialLanguage)
+        assertEquals(SymbolTabId.CLI, parsed.defaultSymbolTab)
+        assertEquals(LangKeyPlacement.HOST, parsed.langKeyPlacement)
+        assertEquals(CandidatePaging.PAGED, parsed.candidatePaging)
+        assertEquals(true, parsed.noLearning)
+
+        // Invalid additive optional field values fall back per-field without discarding valid config
+        val partialInvalidPayload = """
+            {
+              "version": 1,
+              "hostName": "MixedHost",
+              "fieldKind": "alien_kind",
+              "initialLanguage": 42,
+              "defaultSymbolTab": "cli",
+              "langKeyPlacement": "floating",
+              "candidatePaging": "scroll",
+              "noLearning": "true"
+            }
+        """.trimIndent()
+        val partial = ExtensionConfigParser.parse(partialInvalidPayload)
+        requireNotNull(partial)
+        assertEquals("MixedHost", partial.hostName)
+        assertNull(partial.fieldKind)
+        assertNull(partial.initialLanguage)
+        assertEquals(SymbolTabId.CLI, partial.defaultSymbolTab)
+        assertNull(partial.langKeyPlacement)
+        assertEquals(CandidatePaging.SCROLL, partial.candidatePaging)
+        assertNull(partial.noLearning)
+
+        // Explicit boolean false parses cleanly (security fail-closed is enforced when merging constraints)
+        val explicitFalse = ExtensionConfigParser.parse("""{"version": 1, "noLearning": false}""")
+        requireNotNull(explicitFalse)
+        assertFalse(explicitFalse.noLearning!!)
     }
 
     private fun assertNoLoneSurrogates(text: String) {

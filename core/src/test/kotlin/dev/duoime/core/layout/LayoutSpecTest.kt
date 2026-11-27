@@ -4,6 +4,7 @@ package dev.duoime.core.layout
 
 import dev.duoime.core.model.InputMode
 import dev.duoime.core.model.KeyAction
+import dev.duoime.core.model.KeyboardPanel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -43,12 +44,20 @@ class LayoutSpecTest {
     }
 
     @Test
-    fun symbolsV0AndToolbarAreWellFormed() {
+    fun symbolsV0NumberPadV0AndToolbarAreWellFormed() {
         val symbols = BuiltInLayouts.symbolsV0()
-        assertEquals(InputMode.SYMBOLS, symbols.mode)
+        assertEquals(KeyboardPanel.SYMBOL, symbols.panel)
+        assertEquals(InputMode.PINYIN_26, symbols.mode)
         assertEquals(4, symbols.rows.size)
         val ids = symbols.rows.flatMap { it.keys }.map { it.id }
         assertEquals(ids.size, ids.toSet().size)
+
+        val numPad = BuiltInLayouts.numberPadV0()
+        assertEquals(KeyboardPanel.NUMBER, numPad.panel)
+        assertEquals(4, numPad.rows.size)
+        val numIds = numPad.rows.flatMap { it.keys }.map { it.id }
+        assertEquals(numIds.size, numIds.toSet().size)
+        assertTrue(numPad.rows.all { it.totalWeight > 0f })
 
         val toolbar = BuiltInLayouts.defaultToolbarKeys()
         assertTrue(toolbar.any { it.action == KeyAction.SwapScreen })

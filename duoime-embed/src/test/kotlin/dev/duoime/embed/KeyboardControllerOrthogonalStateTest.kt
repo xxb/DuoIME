@@ -1,0 +1,458 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 DuoIME Contributors
+package dev.duoime.embed
+
+import dev.duoime.core.engine.EngineKeyEvent
+import dev.duoime.core.engine.EngineSchemas
+import dev.duoime.core.engine.InputEngine
+import dev.duoime.core.engine.InputSink
+import dev.duoime.core.layout.KeyCodes
+import dev.duoime.core.model.ChineseScheme
+import dev.duoime.core.model.ChineseVariant
+import dev.duoime.core.model.EditorContext
+import dev.duoime.core.model.EngineSnapshot
+import dev.duoime.core.model.FieldKind
+import dev.duoime.core.model.InputConstraints
+import dev.duoime.core.model.InputMode
+import dev.duoime.core.model.KeyAction
+import dev.duoime.core.model.KeyProcessResult
+import dev.duoime.core.model.KeyboardPanel
+import dev.duoime.core.model.KeyboardPrefs
+import dev.duoime.core.model.Language
+import dev.duoime.core.model.SinkCapabilities
+import dev.duoime.core.model.SymbolTabId
+import dev.duoime.engine.lite.LiteInputEngine
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class KeyboardControllerOrthogonalStateTest {
+
+    private class RecordingSink(
+        override val capabilities: SinkCapabilities = SinkCapabilities.STANDARD_IME
+    ) : InputSink {
+        val events = mutableListOf<String>()
+
+        override fun commitText(text: CharSequence) {
+            events.add("commit:$text")
+        }
+
+        override fun setComposing(text: CharSequence?) {
+            events.add("compose:${text ?: "<clear>"}")
+        }
+
+        override fun deleteBackward(count: Int) {
+            events.add("delete:$count")
+        }
+
+        override fun sendKey(keyCode: Int, metaState: Int) {
+            events.add("key:$keyCode:$metaState")
+        }
+
+        override fun performEditorAction(action: Int) {
+            events.add("action:$action")
+        }
+
+        override fun sendHostCommand(id: String, payload: String): Boolean {
+            events.add("host:$id:$payload")
+            return true
+        }
+    }
+
+    private class ComposingPassThroughEngine(
+        initialComposing: String = "git"
+    ) : InputEngine {
+        private val _state = MutableStateFlow(
+            EngineSnapshot(
+                preedit = initialComposing,
+                composingText = initialComposing,
+                isComposing = true
+            )
+        )
+        override val state: StateFlow<EngineSnapshot> = _state
+
+        override fun onKey(event: EngineKeyEvent): KeyProcessResult = KeyProcessResult.PassThrough
+
+        override fun selectCandidate(indexOnPage: Int): KeyProcessResult = KeyProcessResult.PassThrough
+
+        override fun page(forward: Boolean): Boolean = false
+
+        override fun setOption(name: String, on: Boolean) = Unit
+
+        override fun selectSchema(id: String): Boolean = true
+
+        override fun reset() {
+            _state.value = EngineSnapshot.EMPTY
+        }
+    }
+
+    private fun typeEngineChars(controller: KeyboardController, text: String) {
+        for (ch in text) {
+            controller.dispatchKeyAction(KeyAction.Engine(KeyCodes.keysymForChar(ch)))
+        }
+    }
+
+    @Test
+    fun t9ToEnglishToChinesePreservesT9AndPasswordRestoresCleanly() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val sink = RecordingSink()
+        val controller = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { LiteInputEngine.createDefault() }
+        )
+        controller.attachSink(sink)
+        advanceUntilIdle()
+
+        controller.setChineseScheme(ChineseScheme.PINYIN_T9)
+        controller.setVariant(ChineseVariant.TRADITIONAL)
+        advanceUntilIdle()
+        assertEquals(InputMode.PINYIN_T9, controller.uiState.value.activeLayout.mode)
+        assertEquals(ChineseVariant.TRADITIONAL, controller.uiState.value.snapshot.variant)
+
+        // Toggle T9 -> EN -> CN: PINYIN_T9 and TRADITIONAL stay intact
+        controller.toggleLanguage()
+        advanceUntilIdle()
+        assertEquals(Language.ENGLISH, controller.uiState.value.derived.effectiveLanguage)
+        assertEquals(InputMode.ENGLISH, controller.uiState.value.activeLayout.mode)
+        assertEquals(ChineseScheme.PINYIN_T9, controller.uiState.value.prefs.chineseScheme)
+
+        controller.toggleLanguage()
+        advanceUntilIdle()
+        assertEquals(Language.CHINESE, controller.uiState.value.derived.effectiveLanguage)
+        assertEquals(InputMode.PINYIN_T9, controller.uiState.value.activeLayout.mode)
+        assertEquals(ChineseVariant.TRADITIONAL, controller.uiState.value.prefs.variant)
+
+        // Enter PASSWORD -> ENGLISH + number row forced + canToggleLanguage=false; prefs stay CHINESE+T9
+        controller.updateEditorContext(EditorContext(packageName = "dev.auth", isPassword = true))
+        advanceUntilIdle()
+        val pwdState = controller.uiState.value
+        assertEquals(InputMode.ENGLISH, pwdState.activeLayout.mode)
+        assertTrue(pwdState.includeNumberRow)
+        assertFalse(pwdState.derived.canToggleLanguage)
+        assertEquals(Language.CHINESE, pwdState.prefs.language)
+        assertEquals(ChineseScheme.PINYIN_T9, pwdState.prefs.chineseScheme)
+
+        // Attempting toggleLanguage inside password is a no-op
+        controller.toggleLanguage()
+        advanceUntilIdle()
+        assertEquals(Language.ENGLISH, controller.uiState.value.derived.effectiveLanguage)
+
+        // Leaving PASSWORD to TEXT automatically restores CHINESE + PINYIN_T9 via derived constraints
+        controller.updateEditorContext(EditorContext(packageName = "dev.notes", fieldKind = FieldKind.TEXT))
+        advanceUntilIdle()
+        val restored = controller.uiState.value
+        assertEquals(Language.CHINESE, restored.derived.effectiveLanguage)
+        assertEquals(InputMode.PINYIN_T9, restored.activeLayout.mode)
+        assertFalse(restored.includeNumberRow)
+        controller.close()
+    }
+
+    @Test
+    fun midComposingLanguageSwitchPanelOverlayAndClearPreeditBehaveCleanly() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val sink = RecordingSink(SinkCapabilities.STANDARD_IME)
+        val controller = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { LiteInputEngine.createDefault() }
+        )
+        controller.attachSink(sink)
+        advanceUntilIdle()
+
+        // 1) CN -> EN while composing commits raw Latin text and clears composing
+        typeEngineChars(controller, "nihao")
+        advanceUntilIdle()
+        assertTrue(controller.uiState.value.snapshot.isComposing)
+        sink.events.clear()
+
+        controller.toggleLanguage()
+        advanceUntilIdle()
+        assertEquals(Language.ENGLISH, controller.uiState.value.derived.effectiveLanguage)
+        assertFalse(controller.uiState.value.snapshot.isComposing)
+        assertEquals(listOf("commit:nihao", "compose:<clear>"), sink.events)
+
+        // 2) OpenPanel preserves active preedit; typing symbol commits primary candidate then symbol & closes panel
+        controller.toggleLanguage()
+        advanceUntilIdle()
+        typeEngineChars(controller, "nihao")
+        advanceUntilIdle()
+        sink.events.clear()
+
+        controller.openPanel(KeyboardPanel.SYMBOL, SymbolTabId.CHINESE)
+        advanceUntilIdle()
+        assertEquals(KeyboardPanel.SYMBOL, controller.uiState.value.derived.panel)
+        assertFalse(controller.uiState.value.derived.panelLocked)
+        assertEquals(SymbolTabId.CHINESE, controller.uiState.value.derived.symbolTab)
+        assertTrue("OpenPanel must preserve active preedit", controller.uiState.value.snapshot.isComposing)
+
+        controller.dispatchKeyAction(KeyAction.Text("！"))
+        advanceUntilIdle()
+        assertEquals(listOf("commit:你好", "compose:<clear>", "commit:！"), sink.events)
+        assertEquals(KeyboardPanel.PRIMARY, controller.uiState.value.derived.panel)
+
+        // 3) Open NUMBER panel (locked by default): typing digit commits candidate + digit & STAYS on NUMBER
+        typeEngineChars(controller, "nihao")
+        advanceUntilIdle()
+        sink.events.clear()
+        controller.openPanel(KeyboardPanel.NUMBER)
+        advanceUntilIdle()
+        assertEquals(KeyboardPanel.NUMBER, controller.uiState.value.derived.panel)
+        assertTrue(controller.uiState.value.derived.panelLocked)
+        assertTrue(controller.uiState.value.snapshot.isComposing)
+
+        controller.dispatchKeyAction(KeyAction.Text("5"))
+        advanceUntilIdle()
+        assertEquals(listOf("commit:你好", "compose:<clear>", "commit:5"), sink.events)
+        assertEquals(KeyboardPanel.NUMBER, controller.uiState.value.derived.panel)
+
+        // Unlocking panel causes next direct char to return to PRIMARY
+        controller.togglePanelLock()
+        controller.dispatchKeyAction(KeyAction.Text("6"))
+        advanceUntilIdle()
+        assertEquals(KeyboardPanel.PRIMARY, controller.uiState.value.derived.panel)
+
+        // 4) ClearPreedit resets active composition cleanly
+        typeEngineChars(controller, "nihao")
+        advanceUntilIdle()
+        assertTrue(controller.uiState.value.snapshot.isComposing)
+        sink.events.clear()
+        controller.dispatchKeyAction(KeyAction.ClearPreedit)
+        advanceUntilIdle()
+        assertFalse(controller.uiState.value.snapshot.isComposing)
+        assertEquals(listOf("compose:<clear>"), sink.events)
+        controller.close()
+    }
+
+    @Test
+    fun terminalComposingEnterCommitsRawLettersWithoutSendingKeycodeEnter() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val sink = RecordingSink(SinkCapabilities.TERMINAL)
+        val controller = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { LiteInputEngine.createDefault() }
+        )
+        controller.attachSink(sink)
+        advanceUntilIdle()
+
+        // Enter TERMINAL field: defaults to ENGLISH + CLI symbol tab + allowChinese
+        controller.updateEditorContext(EditorContext(packageName = "dev.term", fieldKind = FieldKind.TERMINAL))
+        advanceUntilIdle()
+        assertEquals(Language.ENGLISH, controller.uiState.value.derived.effectiveLanguage)
+        assertEquals(SymbolTabId.CLI, controller.uiState.value.derived.symbolTab)
+
+        // Switch to Chinese in terminal and compose "nihao"
+        controller.setLanguage(Language.CHINESE)
+        advanceUntilIdle()
+        typeEngineChars(controller, "nihao")
+        advanceUntilIdle()
+        assertTrue(controller.uiState.value.snapshot.isComposing)
+        sink.events.clear()
+
+        // 1st Enter while composing commits raw letters WITHOUT KEYCODE_ENTER
+        controller.dispatchKeyAction(KeyAction.Enter)
+        advanceUntilIdle()
+        assertFalse(controller.uiState.value.snapshot.isComposing)
+        assertEquals(listOf("commit:nihao"), sink.events)
+
+        // 2nd idle Enter sends KEYCODE_ENTER
+        sink.events.clear()
+        controller.dispatchKeyAction(KeyAction.Enter)
+        advanceUntilIdle()
+        assertEquals(listOf("key:${KeyCodes.KEYCODE_ENTER}:0"), sink.events)
+        controller.close()
+
+        // Even with a PassThrough-on-Enter composing engine, TERMINAL still suppresses KEYCODE_ENTER
+        val ptSink = RecordingSink(SinkCapabilities.STANDARD_IME)
+        val ptController = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { ComposingPassThroughEngine("ls") }
+        )
+        ptController.attachSink(ptSink)
+        ptController.updateConstraints(
+            InputConstraints(
+                kind = FieldKind.TERMINAL,
+                allowChinese = true,
+                noLearning = true,
+                initialLanguage = Language.CHINESE,
+                defaultSymbolTab = SymbolTabId.CLI
+            ),
+            restarting = true
+        )
+        advanceUntilIdle()
+        ptSink.events.clear()
+        ptController.dispatchKeyAction(KeyAction.Enter)
+        advanceUntilIdle()
+        assertEquals(listOf("commit:ls", "compose:<clear>"), ptSink.events)
+
+        ptSink.events.clear()
+        ptController.dispatchKeyAction(KeyAction.Enter)
+        advanceUntilIdle()
+        assertEquals(listOf("key:${KeyCodes.KEYCODE_ENTER}:0"), ptSink.events)
+        ptController.close()
+    }
+
+    @Test
+    fun languageMemoryLruEvictsAt32AndSkipsPrivacyForcedFieldsAndBlankKeys() = runTest {
+        // Direct LRU unit verification: 32-entry cap + recency refresh + blank/null key ignore
+        val store = LanguageMemoryStore(maxEntries = 32)
+        store.put(null, Language.ENGLISH)
+        store.put("   ", Language.ENGLISH)
+        assertEquals(0, store.size)
+
+        for (i in 1..32) {
+            store.put("app.$i", Language.ENGLISH)
+        }
+        assertEquals(32, store.size)
+        // Touch app.1 so app.2 becomes least-recently-used
+        assertEquals(Language.ENGLISH, store.get("app.1"))
+        store.put("app.33", Language.CHINESE)
+        assertEquals(32, store.size)
+        assertEquals(Language.ENGLISH, store.get("app.1"))
+        assertNull("Oldest untouched entry app.2 must be evicted", store.get("app.2"))
+        assertEquals(Language.CHINESE, store.get("app.33"))
+
+        // End-to-end controller verification with languageMemoryKey & privacy/non-text skips
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val controller = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { LiteInputEngine.createDefault() }
+        )
+        advanceUntilIdle()
+
+        // Record ENGLISH for app.en and CHINESE for app.cn
+        controller.updateEditorContext(EditorContext(packageName = "app.en", fieldKind = FieldKind.TEXT))
+        controller.setLanguage(Language.ENGLISH)
+        controller.updateEditorContext(EditorContext(packageName = "app.cn", fieldKind = FieldKind.TEXT))
+        controller.setLanguage(Language.CHINESE)
+        advanceUntilIdle()
+
+        // Returning to app.en recalls ENGLISH; incognito app.en ignores & never overwrites memory
+        controller.updateEditorContext(EditorContext(packageName = "app.en", fieldKind = FieldKind.TEXT))
+        advanceUntilIdle()
+        assertEquals(Language.ENGLISH, controller.uiState.value.derived.effectiveLanguage)
+
+        controller.updateEditorContext(
+            EditorContext(packageName = "app.en", fieldKind = FieldKind.TEXT, incognito = true)
+        )
+        advanceUntilIdle()
+        // Incognito must NOT read app.en's ENGLISH (falls back to prefs.language = CHINESE)
+        assertEquals(Language.CHINESE, controller.uiState.value.derived.effectiveLanguage)
+        controller.setLanguage(Language.CHINESE)
+        advanceUntilIdle()
+
+        // Non-incognito app.en still recalls ENGLISH cleanly
+        controller.updateEditorContext(EditorContext(packageName = "app.en", fieldKind = FieldKind.TEXT))
+        advanceUntilIdle()
+        assertEquals(Language.ENGLISH, controller.uiState.value.derived.effectiveLanguage)
+
+        // Forced non-text fields (NUMBER, URI, EMAIL, PASSWORD) never write memory
+        listOf(FieldKind.NUMBER, FieldKind.URI, FieldKind.EMAIL, FieldKind.PASSWORD).forEach { kind ->
+            controller.updateEditorContext(
+                EditorContext(
+                    packageName = "app.cn",
+                    fieldKind = kind,
+                    isPassword = kind == FieldKind.PASSWORD
+                )
+            )
+            advanceUntilIdle()
+            assertEquals(Language.ENGLISH, controller.uiState.value.derived.effectiveLanguage)
+        }
+        controller.updateEditorContext(EditorContext(packageName = "app.cn", fieldKind = FieldKind.TEXT))
+        advanceUntilIdle()
+        assertEquals(Language.CHINESE, controller.uiState.value.derived.effectiveLanguage)
+
+        // Custom languageMemoryKey isolates panes inside the same package
+        controller.setLanguageMemoryKey("pane_english")
+        controller.updateEditorContext(EditorContext(packageName = "app.cn", fieldKind = FieldKind.TEXT))
+        controller.setLanguage(Language.ENGLISH)
+        controller.setLanguageMemoryKey("pane_chinese")
+        controller.updateEditorContext(EditorContext(packageName = "app.cn", fieldKind = FieldKind.TEXT))
+        controller.setLanguage(Language.CHINESE)
+        controller.setLanguageMemoryKey("pane_english")
+        controller.updateEditorContext(EditorContext(packageName = "app.cn", fieldKind = FieldKind.TEXT))
+        advanceUntilIdle()
+        assertEquals(Language.ENGLISH, controller.uiState.value.derived.effectiveLanguage)
+        controller.close()
+    }
+
+    @Test
+    fun programmaticApisCycleSchemeDrawerConstraintsPrefsAndRestartingWork() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val controller = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { LiteInputEngine.createDefault() }
+        )
+        advanceUntilIdle()
+
+        // cycleChineseScheme: PINYIN_26 -> PINYIN_T9 -> XIAOHE_SHUANGPIN -> PINYIN_26
+        controller.cycleChineseScheme()
+        advanceUntilIdle()
+        assertEquals(ChineseScheme.PINYIN_T9, controller.uiState.value.derived.effectiveChineseScheme)
+        assertEquals(EngineSchemas.T9_PINYIN, controller.uiState.value.derived.activeSchemaId)
+
+        controller.cycleChineseScheme()
+        advanceUntilIdle()
+        assertEquals(ChineseScheme.XIAOHE_SHUANGPIN, controller.uiState.value.derived.effectiveChineseScheme)
+        assertEquals(EngineSchemas.DOUBLE_PINYIN_FLYPY, controller.uiState.value.derived.activeSchemaId)
+
+        controller.cycleChineseScheme()
+        advanceUntilIdle()
+        assertEquals(ChineseScheme.PINYIN_26, controller.uiState.value.derived.effectiveChineseScheme)
+
+        // toggleDrawer + openPanel + restarting=true keeps open panel
+        controller.toggleDrawer()
+        advanceUntilIdle()
+        assertTrue(controller.uiState.value.derived.drawerOpen)
+        controller.openPanel(KeyboardPanel.SYMBOL, SymbolTabId.PAIR)
+        advanceUntilIdle()
+        assertFalse(controller.uiState.value.derived.drawerOpen)
+        assertEquals(KeyboardPanel.SYMBOL, controller.uiState.value.derived.panel)
+        assertEquals(SymbolTabId.PAIR, controller.uiState.value.derived.symbolTab)
+
+        controller.updateConstraints(InputConstraints(kind = FieldKind.TEXT), restarting = true)
+        advanceUntilIdle()
+        assertEquals(KeyboardPanel.SYMBOL, controller.uiState.value.derived.panel)
+        assertEquals(SymbolTabId.PAIR, controller.uiState.value.derived.symbolTab)
+
+        controller.closePanel()
+        advanceUntilIdle()
+        assertEquals(KeyboardPanel.PRIMARY, controller.uiState.value.derived.panel)
+
+        // updatePrefs updates scheme, variant, and number row cleanly
+        controller.updatePrefs(
+            KeyboardPrefs(
+                language = Language.CHINESE,
+                chineseScheme = ChineseScheme.XIAOHE_SHUANGPIN,
+                variant = ChineseVariant.TRADITIONAL,
+                includeNumberRow = true
+            )
+        )
+        advanceUntilIdle()
+        assertEquals(ChineseScheme.XIAOHE_SHUANGPIN, controller.uiState.value.derived.effectiveChineseScheme)
+        assertEquals(ChineseVariant.TRADITIONAL, controller.uiState.value.snapshot.variant)
+        assertTrue(controller.uiState.value.includeNumberRow)
+
+        // NUMBER constraint forces numberPadV0 layout
+        controller.updateConstraints(
+            InputConstraints(kind = FieldKind.NUMBER, allowChinese = false, forcedPanel = KeyboardPanel.NUMBER)
+        )
+        advanceUntilIdle()
+        assertEquals(KeyboardPanel.NUMBER, controller.uiState.value.activeLayout.panel)
+        assertEquals(Language.ENGLISH, controller.uiState.value.derived.effectiveLanguage)
+        controller.close()
+    }
+}

@@ -3,13 +3,22 @@
 package dev.duoime.core.model
 
 /**
- * Active logical keyboard input mode.
+ * Active logical keyboard input mode (orthogonal to [KeyboardPanel]).
  */
 enum class InputMode {
     PINYIN_26,
     PINYIN_T9,
-    ENGLISH,
-    SYMBOLS
+    ENGLISH
+}
+
+/**
+ * Migrates legacy persisted [InputMode] string values into orthogonal [Language] and
+ * [ChineseScheme] preferences (`"SYMBOLS"` and unknown values fall back to Chinese 26-key Pinyin).
+ */
+fun migrateLegacyInputMode(raw: String?): Pair<Language, ChineseScheme> = when (raw?.trim()?.uppercase()) {
+    "PINYIN_T9" -> Language.CHINESE to ChineseScheme.PINYIN_T9
+    "ENGLISH" -> Language.ENGLISH to ChineseScheme.PINYIN_26
+    else -> Language.CHINESE to ChineseScheme.PINYIN_26
 }
 
 /**

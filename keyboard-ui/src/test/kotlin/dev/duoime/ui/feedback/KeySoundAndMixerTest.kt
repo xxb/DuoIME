@@ -11,8 +11,8 @@ import dev.duoime.core.layout.BuiltInLayouts
 import dev.duoime.core.layout.KeyCodes
 import dev.duoime.core.model.FeedbackKey
 import dev.duoime.core.model.FeedbackZone
-import dev.duoime.core.model.InputMode
 import dev.duoime.core.model.KeyAction
+import dev.duoime.core.model.KeyboardPanel
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -228,7 +228,7 @@ class KeySoundAndMixerTest {
         val spaceKey = FeedbackKey(KeyAction.Space, "空格", FeedbackZone.SPACE)
         val enterKey = FeedbackKey(KeyAction.Enter, "↵", FeedbackZone.ENTER)
         val backspaceKey = FeedbackKey(KeyAction.Backspace, "⌫", FeedbackZone.BACKSPACE)
-        val modeKey = FeedbackKey(KeyAction.SwitchMode(InputMode.SYMBOLS), "123", FeedbackZone.ACTION)
+        val modeKey = FeedbackKey(KeyAction.OpenPanel(KeyboardPanel.SYMBOL), "123", FeedbackZone.ACTION)
 
         assertEquals(KeyInstrumentZone.LETTER, KeySoundSynthesizer.classifyInstrumentZone(letterKey))
         assertEquals(KeyInstrumentZone.LETTER, KeySoundSynthesizer.classifyInstrumentZone(t9LetterKey))

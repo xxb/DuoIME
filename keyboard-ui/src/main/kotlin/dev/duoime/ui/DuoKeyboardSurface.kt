@@ -21,6 +21,7 @@ import dev.duoime.core.model.EngineSnapshot
 import dev.duoime.core.model.FeedbackKey
 import dev.duoime.core.model.InputMode
 import dev.duoime.core.model.KeyAction
+import dev.duoime.core.model.KeyboardPanel
 import dev.duoime.core.protocol.ExtensionToolbarButton
 import dev.duoime.ui.bar.CandidateBar
 import dev.duoime.ui.bar.CandidateBarCallbacks
@@ -72,7 +73,7 @@ data class DuoKeyboardCallbacks(
 fun DuoKeyboardSurface(state: DuoKeyboardSurfaceState, callbacks: DuoKeyboardCallbacks, modifier: Modifier = Modifier) {
     val colors = LocalDuoColors.current
     val baseDimensions = LocalDuoDimensions.current
-    val hasSyllableRail = state.layout.mode == InputMode.PINYIN_T9
+    val hasSyllableRail = state.layout.panel == KeyboardPanel.PRIMARY && state.layout.mode == InputMode.PINYIN_T9
     val keyRowCount = state.layout.rows.size
     val toolbarState = DuoToolbarState(
         activeMode = state.layout.mode,
@@ -80,7 +81,8 @@ fun DuoKeyboardSurface(state: DuoKeyboardSurfaceState, callbacks: DuoKeyboardCal
         heightFraction = state.heightFraction,
         isOverlayMode = state.isOverlayMode,
         extensionButtons = state.extensionButtons,
-        engineIssueTag = state.engineIssueTag
+        engineIssueTag = state.engineIssueTag,
+        activePanel = state.layout.panel
     )
     val candidateCallbacks = remember(callbacks) {
         CandidateBarCallbacks(

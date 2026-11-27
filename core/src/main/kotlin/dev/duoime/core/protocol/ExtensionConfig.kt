@@ -2,6 +2,11 @@
 // Copyright (c) 2026 DuoIME Contributors
 package dev.duoime.core.protocol
 
+import dev.duoime.core.model.CandidatePaging
+import dev.duoime.core.model.FieldKind
+import dev.duoime.core.model.LangKeyPlacement
+import dev.duoime.core.model.Language
+import dev.duoime.core.model.SymbolTabId
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -33,13 +38,23 @@ data class ExtensionToolbarButton(
 
 /**
  * Sandboxed configuration parsed from `EditorInfo.extras["dev.duoime.ext.v1"]`.
+ *
+ * Additive v1 fields (`fieldKind`, `initialLanguage`, `defaultSymbolTab`, `langKeyPlacement`,
+ * `candidatePaging`, `noLearning`) fall back per-field to `null` when unrecognized or wrong-typed,
+ * while unknown top-level keys are ignored and unsupported `"version"` values fail closed to `null`.
  */
 data class ExtensionConfig(
     val schemaVersion: Int = SUPPORTED_SCHEMA_VERSION,
     val hostName: String? = null,
     val toolbarButtons: List<ExtensionToolbarButton> = emptyList(),
     val preferInline: Boolean = false,
-    val acceptImageMimes: List<String> = emptyList()
+    val acceptImageMimes: List<String> = emptyList(),
+    val fieldKind: FieldKind? = null,
+    val initialLanguage: Language? = null,
+    val defaultSymbolTab: SymbolTabId? = null,
+    val langKeyPlacement: LangKeyPlacement? = null,
+    val candidatePaging: CandidatePaging? = null,
+    val noLearning: Boolean? = null
 ) {
     companion object {
         const val SUPPORTED_SCHEMA_VERSION: Int = 1
@@ -49,9 +64,12 @@ data class ExtensionConfig(
 /**
  * Boundary parser and sanitizer for untrusted host JSON in `dev.duoime.ext.v1`.
  *
- * Uses strict JSON DOM type inspection so wrong-typed primitives (such as `"version": "1"`,
- * `"preferInline": "true"`, or `"hostName": 7`) fail closed to `null`, while explicit JSON `null`
- * values on optional fields fall back cleanly to defaults.
+ * Uses strict JSON DOM type inspection on core protocol fields (`version`, `preferInline`,
+ * `hostName`, `toolbarButtons`, `acceptImageMimes`) so unsupported versions or wrong-typed core
+ * fields fail closed to `null`. Unknown keys are ignored, and invalid values on additive optional
+ * v1 fields (`fieldKind`, `initialLanguage`, `defaultSymbolTab`, `langKeyPlacement`,
+ * `candidatePaging`, `noLearning`) fall back per-field to `null` without discarding the rest of
+ * the valid configuration.
  */
 object ExtensionConfigParser {
     const val MAX_RAW_JSON_BYTES: Int = 8_192
@@ -72,7 +90,7 @@ object ExtensionConfigParser {
 
     /**
      * Parses and sanitizes [rawJson]. Returns `null` for null, blank, oversized,
-     * malformed, wrong-typed, or unsupported-version payloads without throwing.
+     * malformed, wrong-typed core fields, or unsupported-version payloads without throwing.
      */
     fun parse(rawJson: String?): ExtensionConfig? {
         if (rawJson.isNullOrBlank()) return null
@@ -101,7 +119,13 @@ object ExtensionConfigParser {
             hostName = sanitizedHost,
             toolbarButtons = sanitizeButtons(buttonsArray),
             preferInline = preferInline,
-            acceptImageMimes = sanitizeImageMimes(mimesArray)
+            acceptImageMimes = sanitizeImageMimes(mimesArray),
+            fieldKind = parseSoftFieldKind(root["fieldKind"]),
+            initialLanguage = parseSoftLanguage(root["initialLanguage"]),
+            defaultSymbolTab = parseSoftSymbolTab(root["defaultSymbolTab"]),
+            langKeyPlacement = parseSoftLangKeyPlacement(root["langKeyPlacement"]),
+            candidatePaging = parseSoftCandidatePaging(root["candidatePaging"]),
+            noLearning = parseSoftBoolean(root["noLearning"])
         )
     }
 
@@ -128,6 +152,57 @@ object ExtensionConfigParser {
     private fun parseOptionalJsonArray(element: JsonElement?): JsonArray? = when (element) {
         null, JsonNull -> JsonArray(emptyList())
         is JsonArray -> element
+        else -> null
+    }
+
+    private fun parseSoftString(element: JsonElement?): String? =
+        (element as? JsonPrimitive)?.takeIf { it.isString }?.content?.trim()?.lowercase()
+
+    private fun parseSoftBoolean(element: JsonElement?): Boolean? =
+        (element as? JsonPrimitive)?.takeIf { !it.isString }?.booleanOrNull
+
+    private fun parseSoftFieldKind(element: JsonElement?): FieldKind? = when (parseSoftString(element)) {
+        "text" -> FieldKind.TEXT
+        "number" -> FieldKind.NUMBER
+        "decimal" -> FieldKind.DECIMAL
+        "signed_number" -> FieldKind.SIGNED_NUMBER
+        "phone" -> FieldKind.PHONE
+        "datetime" -> FieldKind.DATETIME
+        "password" -> FieldKind.PASSWORD
+        "uri", "url" -> FieldKind.URI
+        "email" -> FieldKind.EMAIL
+        "terminal" -> FieldKind.TERMINAL
+        else -> null
+    }
+
+    private fun parseSoftLanguage(element: JsonElement?): Language? = when (parseSoftString(element)) {
+        "chinese", "zh", "cn" -> Language.CHINESE
+        "english", "en" -> Language.ENGLISH
+        else -> null
+    }
+
+    private fun parseSoftSymbolTab(element: JsonElement?): SymbolTabId? = when (parseSoftString(element)) {
+        "common" -> SymbolTabId.COMMON
+        "chinese", "zh", "cn" -> SymbolTabId.CHINESE
+        "cli" -> SymbolTabId.CLI
+        "english", "en" -> SymbolTabId.ENGLISH
+        "pair" -> SymbolTabId.PAIR
+        "math_unit" -> SymbolTabId.MATH_UNIT
+        "sequence" -> SymbolTabId.SEQUENCE
+        "arrow_special" -> SymbolTabId.ARROW_SPECIAL
+        "greek_phonetic" -> SymbolTabId.GREEK_PHONETIC
+        else -> null
+    }
+
+    private fun parseSoftLangKeyPlacement(element: JsonElement?): LangKeyPlacement? = when (parseSoftString(element)) {
+        "grid" -> LangKeyPlacement.GRID
+        "host" -> LangKeyPlacement.HOST
+        else -> null
+    }
+
+    private fun parseSoftCandidatePaging(element: JsonElement?): CandidatePaging? = when (parseSoftString(element)) {
+        "scroll" -> CandidatePaging.SCROLL
+        "paged" -> CandidatePaging.PAGED
         else -> null
     }
 

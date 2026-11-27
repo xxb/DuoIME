@@ -357,7 +357,11 @@ internal object KeySoundPitchRouter {
         key.zone == FeedbackZone.SPACE || key.action is KeyAction.Space -> 0.94f
         key.zone == FeedbackZone.BACKSPACE || key.action is KeyAction.Backspace -> 0.89f
         key.zone == FeedbackZone.CANDIDATE -> 1.04f
-        key.action is KeyAction.SwitchMode -> 1.06f
+        key.action is KeyAction.SwitchMode ||
+            key.action is KeyAction.ToggleLanguage ||
+            key.action is KeyAction.SelectChineseScheme ||
+            key.action is KeyAction.OpenPanel ||
+            key.action is KeyAction.ClosePanel -> 1.06f
         key.zone == FeedbackZone.TOOLBAR -> 1.02f
         else -> 1.0f
     }

@@ -24,6 +24,24 @@ sealed interface KeyAction {
 
     data class SwitchMode(val targetMode: InputMode) : KeyAction
 
+    data object ToggleLanguage : KeyAction
+
+    data class SelectChineseScheme(val scheme: ChineseScheme) : KeyAction
+
+    data class OpenPanel(val panel: KeyboardPanel, val tab: SymbolTabId? = null) : KeyAction
+
+    data object ClosePanel : KeyAction
+
+    data object TogglePanelLock : KeyAction
+
+    data object ClearPreedit : KeyAction
+
+    data object ToggleDrawer : KeyAction
+
+    data object ToggleNumberRow : KeyAction
+
+    data class SelectSymbolTab(val tab: SymbolTabId) : KeyAction
+
     data object SwitchVariant : KeyAction
 
     data object SwapScreen : KeyAction

@@ -5,6 +5,7 @@ package dev.duoime.core.layout
 import dev.duoime.core.model.FeedbackZone
 import dev.duoime.core.model.InputMode
 import dev.duoime.core.model.KeyAction
+import dev.duoime.core.model.KeyboardPanel
 
 /**
  * Immutable descriptor for a single key in a keyboard row.
@@ -39,7 +40,8 @@ data class KeyRowSpec(val keys: List<KeySpec>) {
 data class LayoutSpec(
     val id: String,
     val mode: InputMode,
-    val rows: List<KeyRowSpec>
+    val rows: List<KeyRowSpec>,
+    val panel: KeyboardPanel = KeyboardPanel.PRIMARY
 )
 
 /**
@@ -114,7 +116,7 @@ object BuiltInLayouts {
                     KeySpec(
                         id = "t9_sym",
                         label = "符",
-                        action = KeyAction.SwitchMode(InputMode.SYMBOLS),
+                        action = KeyAction.OpenPanel(KeyboardPanel.SYMBOL),
                         weight = 1f,
                         zone = FeedbackZone.ACTION
                     ),
@@ -129,7 +131,7 @@ object BuiltInLayouts {
                     KeySpec(
                         id = "t9_en",
                         label = "英",
-                        action = KeyAction.SwitchMode(InputMode.ENGLISH),
+                        action = KeyAction.ToggleLanguage,
                         weight = 1f,
                         zone = FeedbackZone.ACTION
                     ),
@@ -177,9 +179,10 @@ object BuiltInLayouts {
         )
     )
 
-    fun symbolsV0(): LayoutSpec = LayoutSpec(
+    fun symbolsV0(mode: InputMode = InputMode.PINYIN_26): LayoutSpec = LayoutSpec(
         id = "symbols_v0",
-        mode = InputMode.SYMBOLS,
+        mode = mode,
+        panel = KeyboardPanel.SYMBOL,
         rows = listOf(
             KeyRowSpec(digitsRow.map { digitTextKey(it) }),
             KeyRowSpec(symbolsRow2.mapIndexed { idx, sym -> symbolKey(id = "sym_r2_$idx", label = sym) }),
@@ -194,7 +197,7 @@ object BuiltInLayouts {
                     KeySpec(
                         id = "sym_back",
                         label = "返回",
-                        action = KeyAction.SwitchMode(InputMode.SYMBOLS),
+                        action = KeyAction.ClosePanel,
                         weight = 1.5f,
                         zone = FeedbackZone.ACTION
                     ),
@@ -208,6 +211,58 @@ object BuiltInLayouts {
                     ),
                     symbolKey(id = "sym_dot", label = ".", weight = 1f),
                     enterKey(weight = 1.5f)
+                )
+            )
+        )
+    )
+
+    fun numberPadV0(mode: InputMode = InputMode.ENGLISH): LayoutSpec = LayoutSpec(
+        id = "number_pad_v0",
+        mode = mode,
+        panel = KeyboardPanel.NUMBER,
+        rows = listOf(
+            KeyRowSpec(
+                listOf(
+                    digitTextKey('1', weight = 1.2f),
+                    digitTextKey('2', weight = 1.2f),
+                    digitTextKey('3', weight = 1.2f),
+                    backspaceKey(weight = 1.2f)
+                )
+            ),
+            KeyRowSpec(
+                listOf(
+                    digitTextKey('4', weight = 1.2f),
+                    digitTextKey('5', weight = 1.2f),
+                    digitTextKey('6', weight = 1.2f),
+                    symbolKey(id = "num_minus", label = "-", weight = 1.2f)
+                )
+            ),
+            KeyRowSpec(
+                listOf(
+                    digitTextKey('7', weight = 1.2f),
+                    digitTextKey('8', weight = 1.2f),
+                    digitTextKey('9', weight = 1.2f),
+                    symbolKey(id = "num_dot", label = ".", weight = 1.2f)
+                )
+            ),
+            KeyRowSpec(
+                listOf(
+                    KeySpec(
+                        id = "num_back",
+                        label = "返回",
+                        action = KeyAction.ClosePanel,
+                        weight = 1.2f,
+                        zone = FeedbackZone.ACTION
+                    ),
+                    digitTextKey('0', weight = 1.2f),
+                    KeySpec(
+                        id = "num_sym",
+                        label = "符",
+                        action = KeyAction.OpenPanel(KeyboardPanel.SYMBOL),
+                        weight = 1.2f,
+                        zone = FeedbackZone.ACTION
+                    ),
+                    enterKey(weight = 1.2f)
                 )
             )
         )
@@ -228,21 +283,20 @@ object BuiltInLayouts {
     )
 
     private fun qwertyBottomRow(englishMode: Boolean): KeyRowSpec {
-        val nextMode = if (englishMode) InputMode.PINYIN_26 else InputMode.ENGLISH
         val toggleLabel = if (englishMode) "中" else "EN"
         return KeyRowSpec(
             listOf(
                 KeySpec(
                     id = "mode_sym",
                     label = "123",
-                    action = KeyAction.SwitchMode(InputMode.SYMBOLS),
+                    action = KeyAction.OpenPanel(KeyboardPanel.SYMBOL),
                     weight = 1.5f,
                     zone = FeedbackZone.ACTION
                 ),
                 KeySpec(
                     id = "mode_lang",
                     label = toggleLabel,
-                    action = KeyAction.SwitchMode(nextMode),
+                    action = KeyAction.ToggleLanguage,
                     weight = 1.2f,
                     zone = FeedbackZone.ACTION
                 ),

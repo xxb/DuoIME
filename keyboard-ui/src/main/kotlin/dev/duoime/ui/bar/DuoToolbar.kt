@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.sp
 import dev.duoime.core.model.ChineseVariant
 import dev.duoime.core.model.InputMode
 import dev.duoime.core.model.KeyAction
+import dev.duoime.core.model.KeyboardPanel
 import dev.duoime.core.protocol.ExtensionToolbarButton
 import dev.duoime.ui.R
 import dev.duoime.ui.theme.DuoColorTokens
@@ -67,7 +68,8 @@ data class DuoToolbarState(
     val heightFraction: Float,
     val isOverlayMode: Boolean,
     val extensionButtons: List<ExtensionToolbarButton> = emptyList(),
-    val engineIssueTag: String? = null
+    val engineIssueTag: String? = null,
+    val activePanel: KeyboardPanel = KeyboardPanel.PRIMARY
 )
 
 /**
@@ -121,7 +123,7 @@ fun DuoToolbar(
             item(key = "mode_26") {
                 ToolbarChip(
                     label = "26键",
-                    selected = state.activeMode == InputMode.PINYIN_26,
+                    selected = state.activePanel == KeyboardPanel.PRIMARY && state.activeMode == InputMode.PINYIN_26,
                     colors = colors,
                     onClick = { onAction(KeyAction.SwitchMode(InputMode.PINYIN_26)) }
                 )
@@ -129,7 +131,7 @@ fun DuoToolbar(
             item(key = "mode_t9") {
                 ToolbarChip(
                     label = "九键",
-                    selected = state.activeMode == InputMode.PINYIN_T9,
+                    selected = state.activePanel == KeyboardPanel.PRIMARY && state.activeMode == InputMode.PINYIN_T9,
                     colors = colors,
                     onClick = { onAction(KeyAction.SwitchMode(InputMode.PINYIN_T9)) }
                 )
@@ -137,7 +139,7 @@ fun DuoToolbar(
             item(key = "mode_en") {
                 ToolbarChip(
                     label = "EN",
-                    selected = state.activeMode == InputMode.ENGLISH,
+                    selected = state.activePanel == KeyboardPanel.PRIMARY && state.activeMode == InputMode.ENGLISH,
                     colors = colors,
                     onClick = { onAction(KeyAction.SwitchMode(InputMode.ENGLISH)) }
                 )
@@ -145,9 +147,9 @@ fun DuoToolbar(
             item(key = "mode_sym") {
                 ToolbarChip(
                     label = "?123",
-                    selected = state.activeMode == InputMode.SYMBOLS,
+                    selected = state.activePanel == KeyboardPanel.SYMBOL,
                     colors = colors,
-                    onClick = { onAction(KeyAction.SwitchMode(InputMode.SYMBOLS)) }
+                    onClick = { onAction(KeyAction.OpenPanel(KeyboardPanel.SYMBOL)) }
                 )
             }
             item(key = "variant") {
