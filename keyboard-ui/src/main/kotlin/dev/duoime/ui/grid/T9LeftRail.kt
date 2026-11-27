@@ -17,10 +17,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -87,7 +89,7 @@ internal fun buildT9SyllableRailItems(state: T9LeftRailState): List<T9SyllableRa
         val legacySelected = state.lockedSyllables.isEmpty() && idx == state.selectedSyllableIndex
         add(
             T9SyllableRailItem(
-                key = "opt:$idx:$syl",
+                key = "opt:${state.lockedSyllables.size}:$idx:$syl",
                 syllable = syl,
                 label = formatT9SyllableLabel(syl, selected = legacySelected),
                 selected = legacySelected,
@@ -96,6 +98,27 @@ internal fun buildT9SyllableRailItems(state: T9LeftRailState): List<T9SyllableRa
             )
         )
     }
+}
+
+/**
+ * Pure-JVM scroll target for scrollable [T9LeftRail] lists (> 3 items):
+ * - 0–2 locked syllables snap to index 0 so locked `"$syl ×"` chips and top unlocked options stay
+ *   visible together.
+ * - 3+ locked syllables with remaining options anchor at the latest locked chip (`lockedCount - 1`)
+ *   so the next unlocked options appear immediately below it.
+ * - 3+ locked syllables with no remaining options show the trailing 3 locked chips.
+ */
+internal fun resolveT9RailScrollTargetIndex(lockedCount: Int, optionCount: Int): Int {
+    val safeLocked = lockedCount.coerceAtLeast(0)
+    val safeOptions = optionCount.coerceAtLeast(0)
+    val total = safeLocked + safeOptions
+    if (total <= 0) return 0
+    val target = when {
+        safeLocked <= 2 -> 0
+        safeOptions > 0 -> safeLocked - 1
+        else -> (safeLocked - 3).coerceAtLeast(0)
+    }
+    return target.coerceIn(0, total - 1)
 }
 
 /**
@@ -289,7 +312,17 @@ private fun ComposingSyllableRail(
                 }
             }
         } else {
+            val listState = rememberLazyListState()
+            LaunchedEffect(state.lockedSyllables, state.syllables) {
+                listState.scrollToItem(
+                    resolveT9RailScrollTargetIndex(
+                        lockedCount = state.lockedSyllables.size,
+                        optionCount = state.syllables.size
+                    )
+                )
+            }
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(gapDp)
             ) {

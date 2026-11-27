@@ -27,6 +27,7 @@ import dev.duoime.ui.grid.buildT9SyllableRailItems
 import dev.duoime.ui.grid.clearSyllableFeedbackKey
 import dev.duoime.ui.grid.dispatchT9RailItemClick
 import dev.duoime.ui.grid.formatT9SyllableLabel
+import dev.duoime.ui.grid.resolveT9RailScrollTargetIndex
 import dev.duoime.ui.grid.resolveT9SyllableClick
 import dev.duoime.ui.grid.resolveT9SyllableItemHeightDp
 import dev.duoime.ui.grid.syllableFeedbackKey
@@ -461,5 +462,63 @@ class DuoKeyboardUiSmokeTest {
         val gridCandidateState = composingSurface.copy(langKeyPlacement = LangKeyPlacement.GRID).toCandidateBarState()
         assertEquals(null, gridCandidateState.langChipState)
         assertTrue(CandidateBarMeta.visibleActions(gridCandidateState).isEmpty())
+    }
+
+    @Test
+    fun t9RailKeysDisjointAcrossLockDepthAndScrollTargetResolves() {
+        // 6262 progression: raw -> 1st lock ("ma") -> 2nd lock ("ma", "ma")
+        val rawItems = buildT9SyllableRailItems(
+            T9LeftRailState(
+                isComposing = true,
+                syllables = listOf("ma", "na", "nan", "man"),
+                selectedSyllableIndex = -1,
+                lockedSyllables = emptyList()
+            )
+        )
+        val lock1Items = buildT9SyllableRailItems(
+            T9LeftRailState(
+                isComposing = true,
+                syllables = listOf("ma", "na", "o", "nan"),
+                selectedSyllableIndex = -1,
+                lockedSyllables = listOf("ma")
+            )
+        )
+        val lock2Items = buildT9SyllableRailItems(
+            T9LeftRailState(
+                isComposing = true,
+                syllables = listOf("ma", "na"),
+                selectedSyllableIndex = -1,
+                lockedSyllables = listOf("ma", "ma")
+            )
+        )
+
+        val rawKeys = rawItems.map { it.key }.toSet()
+        val lock1Keys = lock1Items.map { it.key }.toSet()
+        assertTrue("opt:0:0:ma" in rawKeys)
+        assertTrue("opt:0:0:ma" !in lock1Keys)
+        assertTrue((rawKeys intersect lock1Keys).isEmpty())
+
+        assertEquals("locked:0:ma", lock1Items[0].key)
+        assertEquals("ma ×", lock1Items[0].label)
+        assertTrue(lock1Items[0].selected && lock1Items[0].isLockedEntry)
+        assertEquals("opt:1:0:ma", lock1Items[1].key)
+
+        val lock1OptionKeys = lock1Items.filterNot { it.isLockedEntry }.map { it.key }.toSet()
+        val lock2OptionKeys = lock2Items.filterNot { it.isLockedEntry }.map { it.key }.toSet()
+        assertTrue((lock1OptionKeys intersect lock2OptionKeys).isEmpty())
+        assertEquals("locked:0:ma", lock2Items[0].key)
+        assertEquals("ma ×", lock2Items[0].label)
+        assertEquals("locked:1:ma", lock2Items[1].key)
+        assertEquals("ma ×", lock2Items[1].label)
+        assertEquals("opt:2:0:ma", lock2Items[2].key)
+
+        // Scroll target resolution across locked/option depths and defensive edge inputs
+        assertEquals(0, resolveT9RailScrollTargetIndex(0, 4))
+        assertEquals(0, resolveT9RailScrollTargetIndex(1, 4))
+        assertEquals(0, resolveT9RailScrollTargetIndex(2, 2))
+        assertEquals(2, resolveT9RailScrollTargetIndex(3, 2))
+        assertEquals(1, resolveT9RailScrollTargetIndex(4, 0))
+        assertEquals(0, resolveT9RailScrollTargetIndex(0, 0))
+        assertEquals(0, resolveT9RailScrollTargetIndex(-1, 3))
     }
 }
