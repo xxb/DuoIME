@@ -99,7 +99,7 @@ fi
 CACHE_DIR="$(mkdir -p "$CACHE_DIR" && cd "$CACHE_DIR" && pwd)"
 
 if [[ -z "$OUTPUT_DIR" ]]; then
-    OUTPUT_DIR="${WORK_DIR}/dist"
+    OUTPUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/duoime-rime-dist.XXXXXX")"
 fi
 OUTPUT_DIR="$(mkdir -p "$OUTPUT_DIR" && cd "$OUTPUT_DIR" && pwd)"
 
@@ -115,6 +115,14 @@ case "$OUTPUT_DIR" in
         exit 1
         ;;
 esac
+if (( TEMP_WORK_CREATED == 1 )); then
+    case "$OUTPUT_DIR" in
+        "${WORK_DIR}"|"${WORK_DIR}"/*)
+            echo "ERROR: --output-dir must not live inside the temporary work directory (${WORK_DIR})." >&2
+            exit 1
+            ;;
+    esac
+fi
 
 cleanup() {
     if (( TEMP_WORK_CREATED == 1 )) && [[ -d "$WORK_DIR" ]]; then
@@ -128,14 +136,27 @@ if command -v ninja >/dev/null 2>&1; then
     CMAKE_GENERATOR_ARGS=(-G Ninja)
 fi
 
-LLVM_STRIP="$(find "${NDK_DIR}/toolchains/llvm/prebuilt" -maxdepth 3 \( -type f -o -type l \) -name llvm-strip 2>/dev/null | head -n 1 || true)"
-LLVM_READELF="$(find "${NDK_DIR}/toolchains/llvm/prebuilt" -maxdepth 3 \( -type f -o -type l \) -name llvm-readelf 2>/dev/null | head -n 1 || true)"
-if [[ -z "$LLVM_STRIP" || ! -x "$LLVM_STRIP" ]]; then
+find_ndk_executable() {
+    local tool_name="$1"
+    local candidate=""
+    while IFS= read -r candidate; do
+        if [[ -x "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done < <(find "${NDK_DIR}/toolchains/llvm/prebuilt" -maxdepth 3 \( -type f -o -type l \) -name "$tool_name" 2>/dev/null || true)
+    return 1
+}
+
+LLVM_STRIP="$(find_ndk_executable llvm-strip || true)"
+LLVM_READELF="$(find_ndk_executable llvm-readelf || true)"
+if [[ -z "$LLVM_STRIP" ]]; then
     echo "ERROR: executable llvm-strip not found under NDK prebuilt toolchain: ${NDK_DIR}" >&2
     exit 1
 fi
-if [[ -n "$LLVM_READELF" && ! -x "$LLVM_READELF" ]]; then
-    LLVM_READELF=""
+if [[ -z "$LLVM_READELF" ]]; then
+    echo "ERROR: executable llvm-readelf not found under NDK prebuilt toolchain: ${NDK_DIR}" >&2
+    exit 1
 fi
 
 SRC_DIR="${WORK_DIR}/src"
@@ -330,7 +351,7 @@ cmake -S "${SRC_DIR}/librime" -B "${BUILD_DIR}/librime" \
     "-DOpencc_INCLUDE_PATH=${STAGE_DIR}/include" \
     "-DOpencc_LIBRARY=${STAGE_DIR}/lib/libopencc.a" \
     "-DCMAKE_C_FLAGS=${COMMON_C_FLAGS}" \
-    "-DCMAKE_CXX_FLAGS=${COMMON_CXX_FLAGS} -DBOOST_REGEX_STANDALONE -I${SRC_DIR}/boost -I${STAGE_DIR}/include"
+    "-DCMAKE_CXX_FLAGS=${COMMON_CXX_FLAGS} -DRIME_DLL= -DBOOST_REGEX_STANDALONE -I${SRC_DIR}/boost -I${STAGE_DIR}/include"
 cmake --build "${BUILD_DIR}/librime" --parallel "$JOBS"
 cmake --install "${BUILD_DIR}/librime"
 
@@ -375,35 +396,44 @@ endian = "<" if ei_data == 1 else ">"
 if ei_class == 2:
     e_phoff, = struct.unpack_from(endian + "Q", data, 32)
     e_phentsize, e_phnum = struct.unpack_from(endian + "HH", data, 54)
-    load_aligns = []
+    load_segments = []
     for i in range(e_phnum):
         off = e_phoff + i * e_phentsize
         p_type, = struct.unpack_from(endian + "I", data, off)
         if p_type == 1:  # PT_LOAD
+            p_offset, p_vaddr = struct.unpack_from(endian + "QQ", data, off + 8)
             p_align, = struct.unpack_from(endian + "Q", data, off + 48)
-            load_aligns.append(p_align)
+            load_segments.append((p_offset, p_vaddr, p_align))
 elif ei_class == 1:
     e_phoff, = struct.unpack_from(endian + "I", data, 28)
     e_phentsize, e_phnum = struct.unpack_from(endian + "HH", data, 42)
-    load_aligns = []
+    load_segments = []
     for i in range(e_phnum):
         off = e_phoff + i * e_phentsize
         p_type, = struct.unpack_from(endian + "I", data, off)
         if p_type == 1:  # PT_LOAD
+            p_offset, p_vaddr = struct.unpack_from(endian + "II", data, off + 4)
             p_align, = struct.unpack_from(endian + "I", data, off + 28)
-            load_aligns.append(p_align)
+            load_segments.append((p_offset, p_vaddr, p_align))
 else:
     sys.exit(f"ERROR: unexpected ELF class {ei_class}")
 
-if not load_aligns:
+if not load_segments:
     sys.exit("ERROR: no PT_LOAD segments found")
-for idx, align in enumerate(load_aligns):
-    if align < 16384 or (align % 16384) != 0:
-        sys.exit(f"ERROR: PT_LOAD[{idx}] p_align={hex(align)} < 0x4000 (16 KB)")
-print(f"ELF PT_LOAD alignments verified (>=16KB): {[hex(a) for a in load_aligns]}")
+for idx, (p_offset, p_vaddr, p_align) in enumerate(load_segments):
+    if p_align < 16384 or (p_align % 16384) != 0:
+        sys.exit(f"ERROR: PT_LOAD[{idx}] p_align={hex(p_align)} < 0x4000 (16 KB)")
+    if (p_offset % 16384) != (p_vaddr % 16384) or (p_offset % p_align) != (p_vaddr % p_align):
+        sys.exit(
+            f"ERROR: PT_LOAD[{idx}] incongruent offset/vaddr "
+            f"(p_offset={hex(p_offset)}, p_vaddr={hex(p_vaddr)}, p_align={hex(p_align)})"
+        )
+print(
+    "ELF PT_LOAD 16 KB alignment & congruence verified: "
+    f"{[hex(seg[2]) for seg in load_segments]}"
+)
 
-readelf_cmd = llvm_readelf if llvm_readelf else "readelf"
-dyn_out = subprocess.check_output([readelf_cmd, "-d", so_path], text=True)
+dyn_out = subprocess.check_output([llvm_readelf, "-d", so_path], text=True)
 allowed_needed = {"liblog.so", "libandroid.so", "libc.so", "libm.so", "libdl.so"}
 needed = []
 for line in dyn_out.splitlines():
@@ -414,7 +444,7 @@ for line in dyn_out.splitlines():
             sys.exit(f"ERROR: forbidden DT_NEEDED library: {lib} (allowed: {sorted(allowed_needed)})")
 print(f"DT_NEEDED verified (system-only): {needed}")
 
-syms_out = subprocess.check_output([readelf_cmd, "--dyn-syms", "-W", so_path], text=True)
+syms_out = subprocess.check_output([llvm_readelf, "--dyn-syms", "-W", so_path], text=True)
 exported = []
 for line in syms_out.splitlines():
     parts = line.split()
@@ -485,13 +515,15 @@ EOF
 
 ARCHIVE_NAME="duoime-rime-native-${ABI}.tar.gz"
 ARCHIVE_PATH="${OUTPUT_DIR}/${ARCHIVE_NAME}"
+CHECKSUM_FILE="SHA256SUMS-${ABI}"
 tar --sort=name --mtime='UTC 2026-01-01' --owner=0 --group=0 --numeric-owner \
-    -czf "$ARCHIVE_PATH" -C "$BUNDLE_ROOT" jniLibs manifest.json
+    -cf - -C "$BUNDLE_ROOT" jniLibs manifest.json \
+    | gzip -n -9 > "$ARCHIVE_PATH"
 
 (
     cd "$OUTPUT_DIR"
-    sha256sum "$ARCHIVE_NAME" > SHA256SUMS
+    sha256sum "$ARCHIVE_NAME" > "$CHECKSUM_FILE"
 )
 
 echo "==> Built ${ARCHIVE_PATH} (libduoime_rime.so: ${SO_BYTES} bytes, sha256=${SO_SHA256})"
-cat "${OUTPUT_DIR}/SHA256SUMS"
+cat "${OUTPUT_DIR}/${CHECKSUM_FILE}"

@@ -117,7 +117,7 @@ jobs:
           retention-days: 14
           path: |
             ${{ runner.temp }}/rime-dist/duoime-rime-native-*.tar.gz
-            ${{ runner.temp }}/rime-dist/SHA256SUMS
+            ${{ runner.temp }}/rime-dist/SHA256SUMS-*
 
       - name: Ensure clean worktree
         run: |
@@ -151,9 +151,11 @@ jobs:
           name: duoime-rime-native-${{ inputs.abi || 'arm64-v8a' }}
           path: ${{ runner.temp }}/release-assets
 
-      - name: Verify SHA256SUMS before publishing
+      - name: Verify per-ABI SHA256SUMS before publishing
+        env:
+          TARGET_ABI: ${{ inputs.abi || 'arm64-v8a' }}
         working-directory: ${{ runner.temp }}/release-assets
-        run: sha256sum -c SHA256SUMS
+        run: sha256sum -c "SHA256SUMS-${TARGET_ABI}"
 
       - name: Create or update GitHub Release
         env:
@@ -167,12 +169,12 @@ jobs:
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" \
               "duoime-rime-native-${TARGET_ABI}.tar.gz" \
-              SHA256SUMS \
+              "SHA256SUMS-${TARGET_ABI}" \
               --clobber
           else
             gh release create "$RELEASE_TAG" \
               "duoime-rime-native-${TARGET_ABI}.tar.gz" \
-              SHA256SUMS \
+              "SHA256SUMS-${TARGET_ABI}" \
               --target "$TARGET_SHA" \
               --title "DuoIME Native Rime (${RELEASE_TAG})" \
               --notes "Reproducible 16 KB page-aligned Option A permissive native Rime build (${TARGET_ABI})." \

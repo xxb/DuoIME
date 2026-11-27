@@ -19,7 +19,7 @@ An open-source, dual-screen-first Android input method editor (IME) built with *
 | `:engine-lite` | Pure JVM | Lightweight pure-Kotlin input engine (M1 brain & permanent fallback) |
 | `:keyboard-ui` | Android Library (Compose) | Theme tokens, single-pointer `KeyGrid`, `CandidateBar`, toolbar, feedback & sketch packages |
 | `:duoime-embed` | Android Library (AAR) | Pure-Kotlin Jetpack Compose embed API wrapping `:keyboard-ui` + `:engine-lite` (zero native `.so`, zero Material 3) |
-| `:engine-rime` *(M2)* | Android Library (optional) | Clean-room BSD-3 JNI over self-built `librime` + `librime-lua` + OpenCC (16 KB page-aligned; kept outside `:duoime-embed`) |
+| `:engine-rime` *(planned M2-1B)* | Android Library (optional) | Clean-room BSD-3 JNI consumer over self-built `librime` + `librime-lua` + OpenCC (kept outside `:duoime-embed`; native build pipeline, clean-room schemas & M2 gates land first in M2-1A) |
 | `:app` | Android Application | System `InputMethodService`, inline & opposite-display overlay hosts, settings, onboarding |
 
 ## Roadmap
@@ -49,9 +49,9 @@ bash scripts/check.sh
 bash scripts/test_pii_check.sh
 ```
 
-### Native Rime Build (M2)
+### Native Rime Build (M2-1A Pipeline)
 
-GitHub Actions (`.github/workflows/build-rime-native.yml`) is the **default reproducible builder** for DuoIME's 16 KB page-aligned `libduoime_rime.so` (Option A 100% permissive: `librime` + `librime-lua` + `Lua 5.4` + header-only `Boost` + `yaml-cpp` + `leveldb` + `marisa-trie` under BSD-2-Clause + `OpenCC`). Native `.so` binaries are never committed to git.
+GitHub Actions (`.github/workflows/build-rime-native.yml`) is the **default reproducible builder** for DuoIME's 16 KB page-aligned `libduoime_rime.so` (Option A 100% permissive: `librime` + `librime-lua` + `Lua 5.4` + header-only `Boost` + `yaml-cpp` + `leveldb` + `marisa-trie` under BSD-2-Clause + `OpenCC`). Native `.so` binaries are never committed to git. This standalone native-build, schema, and gate pipeline lands first in M2-1A so checksummed prebuilt archives can be published and pinned before M2-1B adds the `:engine-rime` Kotlin module and wires `--require-rime-native` into CI.
 
 ```bash
 # Fetch a published SHA-256-verified prebuilt bundle outside the repository

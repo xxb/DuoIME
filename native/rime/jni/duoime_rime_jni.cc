@@ -373,13 +373,16 @@ Java_dev_duoime_engine_rime_JniRimeNativeBridge_nativeDeployWorkspace(
       return JNI_FALSE;
     }
     RimeApi* api = rime_get_api();
-    if (api == nullptr || api->start_maintenance == nullptr ||
-        api->join_maintenance_thread == nullptr) {
+    if (api == nullptr || api->deploy == nullptr) {
       return JNI_FALSE;
     }
-    const Bool started = api->start_maintenance(True);
-    api->join_maintenance_thread();
-    return started ? JNI_TRUE : JNI_FALSE;
+    if (api->join_maintenance_thread != nullptr) {
+      api->join_maintenance_thread();
+    }
+    if (api->deployer_initialize != nullptr) {
+      api->deployer_initialize(nullptr);
+    }
+    return api->deploy() != False ? JNI_TRUE : JNI_FALSE;
   } catch (...) {
     return JNI_FALSE;
   }
@@ -568,8 +571,12 @@ Java_dev_duoime_engine_rime_JniRimeNativeBridge_nativeGetSnapshot(
         statusGuard.active && statusGuard.status.is_composing != False;
     const bool isAsciiMode =
         statusGuard.active && statusGuard.status.is_ascii_mode != False;
+    const bool hasTraditionalizationOpt =
+        api->get_option != nullptr &&
+        api->get_option(sid, "traditionalization") != False;
     const bool isTraditional =
-        statusGuard.active && statusGuard.status.is_traditional != False;
+        (statusGuard.active && statusGuard.status.is_traditional != False) ||
+        hasTraditionalizationOpt;
 
     const char* preedit =
         (contextGuard.active &&

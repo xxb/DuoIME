@@ -198,7 +198,7 @@ def verify_elf_16kb(raw: bytes, label: str) -> None:
     ei_class = raw[4]
     ei_data = raw[5]
     endian = "<" if ei_data == 1 else ">"
-    load_aligns = []
+    load_segments = []
     if ei_class == 2:
         (e_phoff,) = struct.unpack_from(endian + "Q", raw, 32)
         e_phentsize, e_phnum = struct.unpack_from(endian + "HH", raw, 54)
@@ -206,8 +206,9 @@ def verify_elf_16kb(raw: bytes, label: str) -> None:
             off = e_phoff + i * e_phentsize
             (p_type,) = struct.unpack_from(endian + "I", raw, off)
             if p_type == 1:  # PT_LOAD
+                p_offset, p_vaddr = struct.unpack_from(endian + "QQ", raw, off + 8)
                 (p_align,) = struct.unpack_from(endian + "Q", raw, off + 48)
-                load_aligns.append(p_align)
+                load_segments.append((p_offset, p_vaddr, p_align))
     elif ei_class == 1:
         (e_phoff,) = struct.unpack_from(endian + "I", raw, 28)
         e_phentsize, e_phnum = struct.unpack_from(endian + "HH", raw, 42)
@@ -215,15 +216,21 @@ def verify_elf_16kb(raw: bytes, label: str) -> None:
             off = e_phoff + i * e_phentsize
             (p_type,) = struct.unpack_from(endian + "I", raw, off)
             if p_type == 1:  # PT_LOAD
+                p_offset, p_vaddr = struct.unpack_from(endian + "II", raw, off + 4)
                 (p_align,) = struct.unpack_from(endian + "I", raw, off + 28)
-                load_aligns.append(p_align)
+                load_segments.append((p_offset, p_vaddr, p_align))
     else:
         sys.exit(f"ERROR: {label} has unsupported ELF class {ei_class}")
-    if not load_aligns:
+    if not load_segments:
         sys.exit(f"ERROR: {label} has no PT_LOAD segments")
-    for idx, align in enumerate(load_aligns):
-        if align < 16384 or (align % 16384) != 0:
-            sys.exit(f"ERROR: {label} PT_LOAD[{idx}] p_align={hex(align)} < 0x4000 (16 KB)")
+    for idx, (p_offset, p_vaddr, p_align) in enumerate(load_segments):
+        if p_align < 16384 or (p_align % 16384) != 0:
+            sys.exit(f"ERROR: {label} PT_LOAD[{idx}] p_align={hex(p_align)} < 0x4000 (16 KB)")
+        if (p_offset % 16384) != (p_vaddr % 16384) or (p_offset % p_align) != (p_vaddr % p_align):
+            sys.exit(
+                f"ERROR: {label} PT_LOAD[{idx}] incongruent offset/vaddr "
+                f"(p_offset={hex(p_offset)}, p_vaddr={hex(p_vaddr)}, p_align={hex(p_align)})"
+            )
 
 
 def verify_apk_so_zip_alignment(apk_file, info: zipfile.ZipInfo) -> None:
