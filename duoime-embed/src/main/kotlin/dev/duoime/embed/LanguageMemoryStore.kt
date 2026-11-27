@@ -52,6 +52,7 @@ internal class LanguageMemoryStore(
             !constraints.noLearning &&
             constraints.kind == FieldKind.TEXT &&
             constraints.allowChinese &&
-            constraints.forcedPanel == null
+            constraints.forcedPanel == null &&
+            constraints.initialLanguage == null
     }
 }

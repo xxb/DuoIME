@@ -337,14 +337,8 @@ class KeyboardController(
             engine.reset()
             syncEngineSchemaIfChanged(engine, after)
             sinkDispatcher.syncComposingOnly(engine.state.value)
-        } else if (before.activeSchemaId != after.activeSchemaId) {
-            if (before.effectiveLanguage == Language.CHINESE && after.effectiveLanguage == Language.ENGLISH) {
-                sinkDispatcher.commitRawComposingLatin(engine)
-            } else {
-                engine.reset()
-                sinkDispatcher.syncComposingOnly(engine.state.value)
-            }
-            syncEngineSchemaIfChanged(engine, after)
+        } else {
+            syncSchemaWithComposingCleanup(engine, before, after)
         }
         publishState(engine)
     }
@@ -357,10 +351,7 @@ class KeyboardController(
         if (variantChanged) {
             engine.setOption(EngineOptions.TRADITIONALIZATION, prefs.variant == ChineseVariant.TRADITIONAL)
         }
-        if (before.effectiveLanguage == Language.CHINESE && after.effectiveLanguage == Language.ENGLISH) {
-            sinkDispatcher.commitRawComposingLatin(engine)
-        }
-        syncEngineSchemaIfChanged(engine, after)
+        syncSchemaWithComposingCleanup(engine, before, after)
         publishState(engine)
     }
 
@@ -412,14 +403,25 @@ class KeyboardController(
         session = updated.session
         val after = currentDerived()
 
-        if (before.effectiveLanguage == Language.CHINESE && after.effectiveLanguage == Language.ENGLISH) {
-            sinkDispatcher.commitRawComposingLatin(engine)
-        }
-        syncEngineSchemaIfChanged(engine, after)
+        syncSchemaWithComposingCleanup(engine, before, after)
         if (recordMemory && LanguageMemoryStore.isEligibleForMemory(constraints, editorContext)) {
             languageMemory.put(resolveMemoryKey(editorContext), after.effectiveLanguage)
         }
         publishState(engine)
+    }
+
+    private suspend fun syncSchemaWithComposingCleanup(
+        engine: InputEngine,
+        before: DerivedKeyboardState,
+        after: DerivedKeyboardState
+    ) {
+        if (before.effectiveLanguage == Language.CHINESE && after.effectiveLanguage == Language.ENGLISH) {
+            sinkDispatcher.commitRawComposingLatin(engine)
+        } else if (before.activeSchemaId != after.activeSchemaId && engine.state.value.isComposing) {
+            engine.reset()
+            sinkDispatcher.syncComposingOnly(engine.state.value)
+        }
+        syncEngineSchemaIfChanged(engine, after)
     }
 
     private fun applyVariantChange(engine: InputEngine, variant: ChineseVariant) {
@@ -475,7 +477,7 @@ class KeyboardController(
                 handleNavCommand(engine, NavCommand.SetNumberRow(!prefs.includeNumberRow))
             is KeyAction.SelectSymbolTab -> handleNavCommand(engine, NavCommand.SelectSymbolTab(action.tab))
             is KeyAction.SwitchVariant -> {
-                val nextVariant = if (engine.state.value.variant == ChineseVariant.TRADITIONAL) {
+                val nextVariant = if (prefs.variant == ChineseVariant.TRADITIONAL) {
                     ChineseVariant.SIMPLIFIED
                 } else {
                     ChineseVariant.TRADITIONAL

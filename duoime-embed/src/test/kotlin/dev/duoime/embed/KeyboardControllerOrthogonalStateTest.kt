@@ -21,6 +21,7 @@ import dev.duoime.core.model.KeyboardPrefs
 import dev.duoime.core.model.Language
 import dev.duoime.core.model.SinkCapabilities
 import dev.duoime.core.model.SymbolTabId
+import dev.duoime.core.protocol.ExtensionConfig
 import dev.duoime.engine.lite.LiteInputEngine
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -374,6 +375,22 @@ class KeyboardControllerOrthogonalStateTest {
         advanceUntilIdle()
         assertEquals(Language.CHINESE, controller.uiState.value.derived.effectiveLanguage)
 
+        // Host-hinted TEXT field (initialLanguage != null) must NOT pollute sibling TEXT memory under same packageName
+        controller.updateEditorContext(
+            EditorContext(
+                packageName = "app.cn",
+                fieldKind = FieldKind.TEXT,
+                extension = ExtensionConfig(initialLanguage = Language.ENGLISH)
+            )
+        )
+        advanceUntilIdle()
+        assertEquals(Language.ENGLISH, controller.uiState.value.derived.effectiveLanguage)
+        controller.setLanguage(Language.ENGLISH)
+        advanceUntilIdle()
+        controller.updateEditorContext(EditorContext(packageName = "app.cn", fieldKind = FieldKind.TEXT))
+        advanceUntilIdle()
+        assertEquals(Language.CHINESE, controller.uiState.value.derived.effectiveLanguage)
+
         // Custom languageMemoryKey isolates panes inside the same package
         controller.setLanguageMemoryKey("pane_english")
         controller.updateEditorContext(EditorContext(packageName = "app.cn", fieldKind = FieldKind.TEXT))
@@ -454,5 +471,59 @@ class KeyboardControllerOrthogonalStateTest {
         assertEquals(KeyboardPanel.NUMBER, controller.uiState.value.activeLayout.panel)
         assertEquals(Language.ENGLISH, controller.uiState.value.derived.effectiveLanguage)
         controller.close()
+    }
+
+    @Test
+    fun midComposingChineseSchemeSwitchClearsSinkComposingSpanAndSwitchVariantUsesPrefs() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val sink = RecordingSink(SinkCapabilities.STANDARD_IME)
+        val controller = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { LiteInputEngine.createDefault() }
+        )
+        controller.attachSink(sink)
+        advanceUntilIdle()
+
+        // Compose "ni" in PINYIN_26, then switch to PINYIN_T9 -> must clear sink composing span
+        typeEngineChars(controller, "ni")
+        advanceUntilIdle()
+        assertTrue(controller.uiState.value.snapshot.isComposing)
+        sink.events.clear()
+
+        controller.setChineseScheme(ChineseScheme.PINYIN_T9)
+        advanceUntilIdle()
+        assertFalse(controller.uiState.value.snapshot.isComposing)
+        assertEquals(InputMode.PINYIN_T9, controller.uiState.value.activeLayout.mode)
+        assertEquals(listOf("compose:<clear>"), sink.events)
+
+        // Compose "64" in PINYIN_T9, then switch via updatePrefs -> must also clear sink composing span
+        typeEngineChars(controller, "64")
+        advanceUntilIdle()
+        assertTrue(controller.uiState.value.snapshot.isComposing)
+        sink.events.clear()
+
+        controller.updatePrefs(controller.uiState.value.prefs.copy(chineseScheme = ChineseScheme.XIAOHE_SHUANGPIN))
+        advanceUntilIdle()
+        assertFalse(controller.uiState.value.snapshot.isComposing)
+        assertEquals(ChineseScheme.XIAOHE_SHUANGPIN, controller.uiState.value.derived.effectiveChineseScheme)
+        assertEquals(listOf("compose:<clear>"), sink.events)
+        controller.close()
+
+        // SwitchVariant toggles from Layer 1 prefs.variant even when engine ignores setOption
+        val stubController = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { ComposingPassThroughEngine("") }
+        )
+        advanceUntilIdle()
+        assertEquals(ChineseVariant.SIMPLIFIED, stubController.uiState.value.prefs.variant)
+        stubController.dispatchKeyAction(KeyAction.SwitchVariant)
+        advanceUntilIdle()
+        assertEquals(ChineseVariant.TRADITIONAL, stubController.uiState.value.prefs.variant)
+        stubController.dispatchKeyAction(KeyAction.SwitchVariant)
+        advanceUntilIdle()
+        assertEquals(ChineseVariant.SIMPLIFIED, stubController.uiState.value.prefs.variant)
+        stubController.close()
     }
 }
