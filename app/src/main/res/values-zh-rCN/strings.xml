@@ -47,7 +47,10 @@
     <string name="scratchpad_label">点击此处测试双屏悬浮、一键换屏、26键、九键、英文</string>
 
     <string name="card_prefs_title">6. 键盘偏好设置</string>
-    <string name="pref_dark_theme">OLED 深色主题</string>
+    <string name="pref_theme_label">键盘主题</string>
+    <string name="theme_preset_dark">深色</string>
+    <string name="theme_preset_light">浅色</string>
+    <string name="theme_preset_eink">墨水屏</string>
     <string name="pref_number_row">显示顶部数字行（26键）</string>
     <string name="pref_always_incognito">始终无痕模式（禁用词频学习）</string>
     <string name="pref_same_screen">键盘保持同屏显示</string>

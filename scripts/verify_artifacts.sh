@@ -158,6 +158,7 @@ fi
 
 echo "==> Inspecting APK and AAR contents..."
 python3 - "$APK_PATH" "$AAR_PATH" <<'PY'
+import io
 import re
 import sys
 import zipfile
@@ -183,6 +184,15 @@ with zipfile.ZipFile(aar_path, "r") as zf:
         if "<service" in manifest or "BIND_INPUT_METHOD" in manifest:
             print("ERROR: Embed AAR AndroidManifest must not declare an IME service", file=sys.stderr)
             sys.exit(1)
+        if "<uses-permission" in manifest:
+            print("ERROR: Embed AAR AndroidManifest must declare zero permissions", file=sys.stderr)
+            sys.exit(1)
+    if "classes.jar" in names:
+        with zipfile.ZipFile(io.BytesIO(zf.read("classes.jar")), "r") as cjf:
+            for cls in cjf.namelist():
+                if "androidx/compose/material3/" in cls or "com/google/android/material/" in cls:
+                    print(f"ERROR: Forbidden Material class in Embed AAR classes.jar: {cls}", file=sys.stderr)
+                    sys.exit(1)
 
 print("APK and AAR archive inspections passed.")
 PY

@@ -58,6 +58,7 @@ import dev.duoime.app.settings.PerAppInlineOverridesCard
 import dev.duoime.app.settings.SettingSwitchRow
 import dev.duoime.app.settings.SystemPinImeCard
 import dev.duoime.embed.DuoImeEmbed
+import dev.duoime.ui.theme.DuoThemePreset
 
 /**
  * Onboarding, dual-screen calibration, live typing testbed, and preferences Activity for DuoIME (`:app`).
@@ -292,10 +293,9 @@ private fun PreferencesCard(settings: DuoImeSettings, onSettingsChanged: (DuoIme
         ) {
             Text(text = stringResource(R.string.card_prefs_title), style = MaterialTheme.typography.titleMedium)
 
-            SettingSwitchRow(
-                title = stringResource(R.string.pref_dark_theme),
-                checked = settings.darkTheme,
-                onCheckedChange = { onSettingsChanged(settings.copy(darkTheme = it)) }
+            ThemePresetSelector(
+                selected = settings.themePreset,
+                onSelected = { preset -> onSettingsChanged(settings.copy(themePreset = preset)) }
             )
             SettingSwitchRow(
                 title = stringResource(R.string.pref_number_row),
@@ -317,6 +317,43 @@ private fun PreferencesCard(settings: DuoImeSettings, onSettingsChanged: (DuoIme
                 heightFraction = settings.heightFraction,
                 onHeightChanged = { onSettingsChanged(settings.copy(heightFraction = it)) }
             )
+        }
+    }
+}
+
+@Composable
+private fun ThemePresetSelector(selected: DuoThemePreset, onSelected: (DuoThemePreset) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = stringResource(R.string.pref_theme_label),
+            style = MaterialTheme.typography.bodyMedium
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            val options = listOf(
+                DuoThemePreset.DARK to stringResource(R.string.theme_preset_dark),
+                DuoThemePreset.LIGHT to stringResource(R.string.theme_preset_light),
+                DuoThemePreset.EINK to stringResource(R.string.theme_preset_eink)
+            )
+            for ((preset, label) in options) {
+                if (selected == preset) {
+                    Button(
+                        onClick = { onSelected(preset) },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(text = label)
+                    }
+                } else {
+                    OutlinedButton(
+                        onClick = { onSelected(preset) },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(text = label)
+                    }
+                }
+            }
         }
     }
 }

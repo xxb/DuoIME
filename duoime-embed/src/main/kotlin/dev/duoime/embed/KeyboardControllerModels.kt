@@ -84,6 +84,7 @@ data class KeyboardControllerConfig(
 /**
  * Host-level callbacks invoked by [KeyboardController] for system/window-level actions.
  */
+@Immutable
 data class KeyboardHostCallbacks(
     val onSwapScreenRequested: () -> Unit = {},
     val onSwitchImeRequested: () -> Unit = {},

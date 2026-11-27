@@ -8,6 +8,7 @@ import dev.duoime.core.policy.DisplayPlacementInput
 import dev.duoime.core.policy.DisplayPlacementPolicy
 import dev.duoime.core.policy.PlacementDecision
 import dev.duoime.core.policy.PlacementReason
+import dev.duoime.ui.theme.DuoThemePreset
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
@@ -121,7 +122,7 @@ class OverlayLayoutMetricsTest {
             )
 
             // (a) Active overlay -> !VISIBLE for 80 ms -> session boundary reset forces re-show + fresh 150 ms probe
-            tracker.beginShow(displayId = 2, heightFraction = 0.75f, darkTheme = true)
+            tracker.beginShow(displayId = 2, heightFraction = 0.75f, themePreset = DuoThemePreset.DARK)
             tracker.onWindowVisibilityChanged(isVisible = false)
             advanceTimeBy(80L)
             runCurrent()
@@ -129,11 +130,11 @@ class OverlayLayoutMetricsTest {
 
             suppression.resetForSessionBoundary()
             assertTrue(tracker.forceReshow)
-            assertFalse(tracker.shouldSkipShow(2, 0.75f, darkTheme = true, isWindowVisible = false))
-            assertFalse(tracker.shouldSkipShow(2, 0.75f, darkTheme = true, isWindowVisible = true))
+            assertFalse(tracker.shouldSkipShow(2, 0.75f, themePreset = DuoThemePreset.DARK, isWindowVisible = false))
+            assertFalse(tracker.shouldSkipShow(2, 0.75f, themePreset = DuoThemePreset.DARK, isWindowVisible = true))
 
             // Re-show runs because shouldSkipShow returned false; probing already-hidden window arms fresh 150 ms timer
-            tracker.beginShow(displayId = 2, heightFraction = 0.75f, darkTheme = true)
+            tracker.beginShow(displayId = 2, heightFraction = 0.75f, themePreset = DuoThemePreset.DARK)
             tracker.probeWindowVisibility(isWindowVisible = false)
             advanceTimeBy(149L)
             runCurrent()
@@ -177,7 +178,7 @@ class OverlayLayoutMetricsTest {
             assertEquals(2, (restoredDecision as PlacementDecision.Overlay).targetDisplayId)
 
             // (b) Recovery when VISIBLE arrives within 150 ms cancels probe and re-enables shouldSkipShow
-            tracker.beginShow(displayId = 2, heightFraction = 0.75f, darkTheme = true)
+            tracker.beginShow(displayId = 2, heightFraction = 0.75f, themePreset = DuoThemePreset.DARK)
             tracker.probeWindowVisibility(isWindowVisible = false)
             advanceTimeBy(100L)
             runCurrent()
@@ -186,6 +187,7 @@ class OverlayLayoutMetricsTest {
             runCurrent()
             assertFalse(suppression.overlayHiddenByHost)
             assertEquals(1, fallbackCalls)
-            assertTrue(tracker.shouldSkipShow(2, 0.75f, darkTheme = true, isWindowVisible = true))
+            assertTrue(tracker.shouldSkipShow(2, 0.75f, themePreset = DuoThemePreset.DARK, isWindowVisible = true))
+            assertFalse(tracker.shouldSkipShow(2, 0.75f, themePreset = DuoThemePreset.EINK, isWindowVisible = true))
         }
 }

@@ -3,6 +3,7 @@
 package dev.duoime.app.dualscreen
 
 import dev.duoime.core.policy.DisplayPlacementPolicy
+import dev.duoime.ui.theme.DuoThemePreset
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -113,7 +114,7 @@ class OverlayShowTracker(
         private set
     var lastHeightFraction: Float = DEFAULT_HEIGHT_FRACTION
         private set
-    var lastDarkTheme: Boolean = true
+    var lastThemePreset: DuoThemePreset = DuoThemePreset.DARK
         private set
 
     private val visibilityDebouncer = OverlayVisibilityDebouncer(
@@ -126,25 +127,29 @@ class OverlayShowTracker(
         }
     )
 
-    fun shouldSkipShow(displayId: Int, heightFraction: Float, darkTheme: Boolean, isWindowVisible: Boolean): Boolean =
-        isShowing &&
-            !forceReshow &&
-            (isWindowVisible || visibilityDebouncer.hasPendingHide) &&
-            attachedDisplayId == displayId &&
-            kotlin.math.abs(lastHeightFraction - heightFraction) < HEIGHT_EPSILON &&
-            lastDarkTheme == darkTheme
+    fun shouldSkipShow(
+        displayId: Int,
+        heightFraction: Float,
+        themePreset: DuoThemePreset,
+        isWindowVisible: Boolean
+    ): Boolean = isShowing &&
+        !forceReshow &&
+        (isWindowVisible || visibilityDebouncer.hasPendingHide) &&
+        attachedDisplayId == displayId &&
+        kotlin.math.abs(lastHeightFraction - heightFraction) < HEIGHT_EPSILON &&
+        lastThemePreset == themePreset
 
     fun resetVisibilityTracking() {
         visibilityDebouncer.reset()
         forceReshow = true
     }
 
-    fun beginShow(displayId: Int, heightFraction: Float, darkTheme: Boolean) {
+    fun beginShow(displayId: Int, heightFraction: Float, themePreset: DuoThemePreset) {
         isShowing = true
         forceReshow = false
         attachedDisplayId = displayId
         lastHeightFraction = heightFraction
-        lastDarkTheme = darkTheme
+        lastThemePreset = themePreset
         visibilityDebouncer.reset()
     }
 
@@ -152,9 +157,9 @@ class OverlayShowTracker(
         visibilityDebouncer.onVisibilityChanged(isVisible = isWindowVisible, isSessionActive = isShowing)
     }
 
-    fun updatePresentation(heightFraction: Float, darkTheme: Boolean) {
+    fun updatePresentation(heightFraction: Float, themePreset: DuoThemePreset) {
         lastHeightFraction = heightFraction
-        lastDarkTheme = darkTheme
+        lastThemePreset = themePreset
     }
 
     fun markHidden() {

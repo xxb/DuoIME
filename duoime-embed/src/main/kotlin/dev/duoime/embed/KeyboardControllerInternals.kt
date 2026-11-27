@@ -82,6 +82,11 @@ internal sealed interface ControllerEvent {
         val languageMemoryKey: String? = null
     ) : ControllerEvent
 
+    data class HostPolicyChanged(
+        val langKeyPlacement: LangKeyPlacement,
+        val initialSymbolTab: SymbolTabId
+    ) : ControllerEvent
+
     data object DismissEngineError : ControllerEvent
 
     data object Reset : ControllerEvent
@@ -163,6 +168,23 @@ internal fun selectEngineSchemaWithFallback(
             engine.selectSchema(fallback)
         }
     }
+}
+
+internal fun applyHostPolicyDefaults(
+    base: InputConstraints,
+    editorContext: EditorContext,
+    hostLangKeyPlacement: LangKeyPlacement,
+    hostInitialSymbolTab: SymbolTabId
+): InputConstraints {
+    val resolvedPlacement = base.langKeyPlacementOverride ?: hostLangKeyPlacement
+    val hasExplicitEditorTab = base.kind == FieldKind.TERMINAL ||
+        base.defaultSymbolTab != SymbolTabId.COMMON ||
+        editorContext.extension?.defaultSymbolTab != null
+    val resolvedTab = if (hasExplicitEditorTab) base.defaultSymbolTab else hostInitialSymbolTab
+    return base.copy(
+        langKeyPlacementOverride = resolvedPlacement,
+        defaultSymbolTab = resolvedTab
+    )
 }
 
 internal fun resolveKeyboardLayout(

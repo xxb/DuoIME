@@ -2,9 +2,11 @@
 // Copyright (c) 2026 DuoIME Contributors
 package dev.duoime.ui.grid
 
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -31,8 +34,10 @@ import dev.duoime.core.model.FeedbackKey
 import dev.duoime.core.model.FeedbackZone
 import dev.duoime.core.model.KeyAction
 import dev.duoime.ui.theme.DuoColorTokens
+import dev.duoime.ui.theme.DuoThemePreset
 import dev.duoime.ui.theme.LocalDuoColors
 import dev.duoime.ui.theme.LocalDuoDimensions
+import dev.duoime.ui.theme.LocalDuoThemePreset
 
 /**
  * Immutable render state for [T9LeftRail] mounted inside `t9_left_slot` (Col 0, Rows 0–2).
@@ -61,6 +66,8 @@ fun T9LeftRail(
     val dimensions = LocalDuoDimensions.current
     val corner = RoundedCornerShape(dimensions.keyCornerRadius)
 
+    val indication = if (LocalDuoThemePreset.current == DuoThemePreset.EINK) null else LocalIndication.current
+
     if (!state.isComposing) {
         Column(
             modifier = modifier
@@ -76,7 +83,10 @@ fun T9LeftRail(
                         .clip(corner)
                         .background(colors.keyBackground)
                         .border(width = 1.dp, color = colors.keyBorder, shape = corner)
-                        .clickable {
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = indication
+                        ) {
                             val action = KeyAction.Text(punct)
                             onKeyPressDown(FeedbackKey(action, punct, FeedbackZone.SYMBOL))
                             onKeyAction(action)
@@ -177,6 +187,7 @@ private fun ComposingSyllableRail(
 @Composable
 private fun VerticalSyllableChip(label: String, selected: Boolean, colors: DuoColorTokens, onClick: () -> Unit) {
     val fontSizeSp = LocalDuoDimensions.current.syllableFontSp
+    val indication = if (LocalDuoThemePreset.current == DuoThemePreset.EINK) null else LocalIndication.current
     val bg = if (selected) colors.chipSelectedBackground else colors.chipBackground
     val fg = if (selected) colors.chipSelectedText else colors.chipText
     Box(
@@ -185,7 +196,11 @@ private fun VerticalSyllableChip(label: String, selected: Boolean, colors: DuoCo
             .height(36.dp)
             .clip(RoundedCornerShape(6.dp))
             .background(bg)
-            .clickable(onClick = onClick)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = indication,
+                onClick = onClick
+            )
             .padding(horizontal = 4.dp),
         contentAlignment = Alignment.Center
     ) {

@@ -271,4 +271,29 @@ class DisplayClassifierTest {
             )
         )
     }
+
+    @Test
+    fun hasEligiblePeerDisplayRequiresAtLeastTwoActiveNonVirtualDisplays() {
+        // Single active display -> false
+        assertFalse(DisplayClassifier.hasEligiblePeerDisplay(listOf(retroidDisplay0())))
+
+        // Two active built-in displays -> true
+        assertTrue(DisplayClassifier.hasEligiblePeerDisplay(listOf(retroidDisplay0(), retroidDisplay2())))
+
+        // Second display OFF -> false
+        assertFalse(
+            DisplayClassifier.hasEligiblePeerDisplay(
+                listOf(retroidDisplay0(), retroidDisplay2().copy(state = DisplayClassifier.STATE_OFF))
+            )
+        )
+
+        // Default + virtual display only -> false
+        val virtual = RawDisplayInfo(
+            displayId = 4,
+            flags = 0,
+            state = DisplayClassifier.STATE_ON,
+            reflectedType = DisplayClassifier.TYPE_VIRTUAL
+        )
+        assertFalse(DisplayClassifier.hasEligiblePeerDisplay(listOf(retroidDisplay0(), virtual)))
+    }
 }

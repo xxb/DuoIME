@@ -22,6 +22,7 @@ import dev.duoime.core.model.KeyboardNavReducer
 import dev.duoime.core.model.KeyboardNavUpdate
 import dev.duoime.core.model.KeyboardPanel
 import dev.duoime.core.model.KeyboardPrefs
+import dev.duoime.core.model.LangKeyPlacement
 import dev.duoime.core.model.Language
 import dev.duoime.core.model.SessionState
 import dev.duoime.core.model.SymbolTabId
@@ -69,6 +70,8 @@ class KeyboardController(
     private var prefs: KeyboardPrefs = config.initialPrefs
     private var session: SessionState = SessionState()
     private var constraints: InputConstraints = InputConstraints()
+    private var hostLangKeyPlacement: LangKeyPlacement = LangKeyPlacement.GRID
+    private var hostInitialSymbolTab: SymbolTabId = SymbolTabId.COMMON
     private var languageMemoryKey: String? = config.languageMemoryKey
     private val languageMemory = LanguageMemoryStore()
     private val candidateWindow = CandidateWindowTracker()
@@ -181,6 +184,13 @@ class KeyboardController(
         eventChannel.trySend(ControllerEvent.HostStateChanged(isOverlay = isOverlay))
     }
 
+    fun updateHostPolicy(
+        langKeyPlacement: LangKeyPlacement = LangKeyPlacement.GRID,
+        initialSymbolTab: SymbolTabId = SymbolTabId.COMMON
+    ) {
+        eventChannel.trySend(ControllerEvent.HostPolicyChanged(langKeyPlacement, initialSymbolTab))
+    }
+
     fun setIncludeNumberRow(enabled: Boolean) = sendNav(NavCommand.SetNumberRow(enabled))
 
     fun dismissEngineError() {
@@ -277,6 +287,7 @@ class KeyboardController(
                 applyConstraintsTransition(engine, event.constraints, event.restarting)
             is ControllerEvent.PrefsChanged -> handlePrefsChanged(engine, event.prefs)
             is ControllerEvent.HostStateChanged -> handleHostStateChanged(engine, event)
+            is ControllerEvent.HostPolicyChanged -> handleHostPolicyChanged(engine, event)
             is ControllerEvent.DismissEngineError -> {
                 engineIssue = null
                 publishState(engine)
@@ -307,6 +318,19 @@ class KeyboardController(
         publishState(engine)
     }
 
+    private fun handleHostPolicyChanged(engine: InputEngine, event: ControllerEvent.HostPolicyChanged) {
+        val prevTab = hostInitialSymbolTab
+        hostLangKeyPlacement = event.langKeyPlacement
+        hostInitialSymbolTab = event.initialSymbolTab
+        if (session.panel != KeyboardPanel.SYMBOL &&
+            session.symbolTab == prevTab &&
+            editorContext.extension?.defaultSymbolTab == null
+        ) {
+            session = session.copy(symbolTab = effectiveConstraints().defaultSymbolTab)
+        }
+        publishState(engine)
+    }
+
     private suspend fun applyConstraintsTransition(
         engine: InputEngine,
         newConstraints: InputConstraints,
@@ -314,17 +338,18 @@ class KeyboardController(
     ) {
         val before = currentDerived()
         constraints = newConstraints
-        val remembered = if (!restarting && LanguageMemoryStore.isEligibleForMemory(newConstraints, editorContext)) {
+        val effective = effectiveConstraints(newConstraints)
+        val remembered = if (!restarting && LanguageMemoryStore.isEligibleForMemory(effective, editorContext)) {
             languageMemory.get(resolveMemoryKey(editorContext))
         } else {
             null
         }
-        val updated = KeyboardNavReducer.enterEditor(prefs, session, newConstraints, remembered, restarting)
+        val updated = KeyboardNavReducer.enterEditor(prefs, session, effective, remembered, restarting)
         prefs = updated.prefs
         session = updated.session
         val after = currentDerived()
 
-        applyPrivacyOptions(engine, newConstraints, editorContext)
+        applyPrivacyOptions(engine, effective, editorContext)
         if (!restarting) {
             engine.reset()
             syncEngineSchemaIfChanged(engine, after)
@@ -393,13 +418,14 @@ class KeyboardController(
     ) {
         val previousPrefs = prefs
         val before = currentDerived()
-        val updated = transition(prefs, session, constraints)
+        val effective = effectiveConstraints()
+        val updated = transition(prefs, session, effective)
         prefs = updated.prefs
         session = updated.session
         val after = currentDerived()
 
         syncSchemaWithComposingCleanup(engine, before, after)
-        if (recordMemory && LanguageMemoryStore.isEligibleForMemory(constraints, editorContext)) {
+        if (recordMemory && LanguageMemoryStore.isEligibleForMemory(effective, editorContext)) {
             languageMemory.put(resolveMemoryKey(editorContext), after.effectiveLanguage)
         }
         publishState(engine)
@@ -522,7 +548,7 @@ class KeyboardController(
         withSink { it.commitText(text) }
         if (beforeDerived.panel != KeyboardPanel.PRIMARY) {
             if (!keepPanelOpen && !beforeDerived.panelLocked) {
-                session = KeyboardNavReducer.closePanel(prefs, session, constraints).session
+                session = KeyboardNavReducer.closePanel(prefs, session, effectiveConstraints()).session
             }
         } else if (beforeDerived.effectiveLanguage == Language.ENGLISH) {
             session = KeyboardNavReducer.consumeOneShotShift(prefs, session).session
@@ -590,8 +616,11 @@ class KeyboardController(
     private fun resolveMemoryKey(context: EditorContext): String? =
         LanguageMemoryStore.normalizeKey(languageMemoryKey ?: context.packageName)
 
+    private fun effectiveConstraints(base: InputConstraints = constraints): InputConstraints =
+        applyHostPolicyDefaults(base, editorContext, hostLangKeyPlacement, hostInitialSymbolTab)
+
     private fun currentDerived(): DerivedKeyboardState =
-        deriveKeyboardState(prefs, session, constraints, activeSchemaIds)
+        deriveKeyboardState(prefs, session, effectiveConstraints(), activeSchemaIds)
 
     private fun publishState(engine: InputEngine) {
         val snap = engine.state.value
@@ -600,7 +629,8 @@ class KeyboardController(
     }
 
     private fun buildUiState(isEngineReady: Boolean, snapshot: EngineSnapshot): KeyboardUiState {
-        val derived = currentDerived()
+        val effective = effectiveConstraints()
+        val derived = deriveKeyboardState(prefs, session, effective, activeSchemaIds)
         return KeyboardUiState(
             isEngineReady = isEngineReady,
             engineIssue = engineIssue,
@@ -613,7 +643,7 @@ class KeyboardController(
             editorContext = editorContext,
             prefs = prefs,
             session = session,
-            constraints = constraints,
+            constraints = effective,
             derived = derived,
             windowCandidates = candidateWindow.items,
             hasMoreWindowCandidates = candidateWindow.hasMore

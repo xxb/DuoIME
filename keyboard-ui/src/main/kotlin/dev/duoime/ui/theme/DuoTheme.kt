@@ -11,6 +11,28 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
+ * Visual color & interaction preset for DuoIME surfaces (decoupled from Material 3).
+ */
+enum class DuoThemePreset {
+    DARK,
+    LIGHT,
+    EINK;
+
+    fun toColorTokens(): DuoColorTokens = when (this) {
+        DARK -> DuoDarkColors
+        LIGHT -> DuoLightColors
+        EINK -> DuoEinkColors
+    }
+
+    companion object {
+        fun fromNameOrDefault(raw: String?, fallback: DuoThemePreset = DARK): DuoThemePreset {
+            val normalized = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return fallback
+            return entries.firstOrNull { it.name.equals(normalized, ignoreCase = true) } ?: fallback
+        }
+    }
+}
+
+/**
  * OLED-friendly minimalist color tokens for DuoIME (decoupled from Material 3).
  */
 @Immutable
@@ -88,16 +110,17 @@ fun resolveAdaptiveDimensions(
     availableHeightDp: Float,
     keyRowCount: Int,
     hasSyllableRail: Boolean,
-    base: DuoDimensionTokens = DuoDefaultDimensions
+    base: DuoDimensionTokens = DuoDefaultDimensions,
+    hasHeader: Boolean = true
 ): DuoDimensionTokens {
     val safeHeight = if (availableHeightDp.isFinite()) availableHeightDp else 0f
     val safeRows = keyRowCount.coerceAtLeast(1)
-    val overheadDp = 1f +
+    val overheadDp = (if (hasHeader) 1f else 0f) +
         (if (hasSyllableRail) 1f else 0f) +
         base.gridVerticalPadding.value * 2f +
         base.keyVerticalGap.value * (safeRows - 1)
     val rowUnits = safeRows.toFloat() +
-        1f +
+        (if (hasHeader) 1f else 0f) +
         (if (hasSyllableRail) ADAPTIVE_SYLLABLE_ROW_RATIO else 0f)
     val targetRowDp = (safeHeight - overheadDp).coerceAtLeast(1f) / rowUnits
     val headerHeight = targetRowDp.coerceIn(MIN_ADAPTIVE_HEADER_HEIGHT_DP, MAX_ADAPTIVE_HEADER_HEIGHT_DP).dp
@@ -159,21 +182,62 @@ val DuoLightColors: DuoColorTokens = DuoColorTokens(
     warningText = Color(0xFF664400)
 )
 
+val DuoEinkColors: DuoColorTokens = DuoColorTokens(
+    keyboardBackground = Color(0xFFFFFFFF),
+    barBackground = Color(0xFFFFFFFF),
+    keyBackground = Color(0xFFFFFFFF),
+    keyPressedBackground = Color(0xFFCCCCCC),
+    actionKeyBackground = Color(0xFFFFFFFF),
+    actionKeyPressedBackground = Color(0xFFCCCCCC),
+    accentKeyBackground = Color(0xFF000000),
+    accentKeyPressedBackground = Color(0xFF333333),
+    keyText = Color(0xFF000000),
+    keySecondaryText = Color(0xFF444444),
+    accentKeyText = Color(0xFFFFFFFF),
+    keyBorder = Color(0xFF000000),
+    chipBackground = Color(0xFFFFFFFF),
+    chipSelectedBackground = Color(0xFF000000),
+    chipText = Color(0xFF000000),
+    chipSelectedText = Color(0xFFFFFFFF),
+    preeditText = Color(0xFF000000),
+    divider = Color(0xFF000000),
+    disabledScrim = Color(0x33000000),
+    warningBackground = Color(0xFFFFFFFF),
+    warningText = Color(0xFF000000)
+)
+
 val DuoDefaultDimensions: DuoDimensionTokens = DuoDimensionTokens()
 
+val LocalDuoThemePreset = staticCompositionLocalOf { DuoThemePreset.DARK }
 val LocalDuoColors = staticCompositionLocalOf { DuoDarkColors }
 val LocalDuoDimensions = staticCompositionLocalOf { DuoDefaultDimensions }
 
 @Composable
 fun DuoTheme(
-    darkTheme: Boolean = true,
-    colors: DuoColorTokens = if (darkTheme) DuoDarkColors else DuoLightColors,
+    preset: DuoThemePreset = DuoThemePreset.DARK,
+    colors: DuoColorTokens = preset.toColorTokens(),
     dimensions: DuoDimensionTokens = DuoDefaultDimensions,
     content: @Composable () -> Unit
 ) {
     CompositionLocalProvider(
+        LocalDuoThemePreset provides preset,
         LocalDuoColors provides colors,
         LocalDuoDimensions provides dimensions,
+        content = content
+    )
+}
+
+@Composable
+fun DuoTheme(
+    darkTheme: Boolean,
+    colors: DuoColorTokens = if (darkTheme) DuoDarkColors else DuoLightColors,
+    dimensions: DuoDimensionTokens = DuoDefaultDimensions,
+    content: @Composable () -> Unit
+) {
+    DuoTheme(
+        preset = if (darkTheme) DuoThemePreset.DARK else DuoThemePreset.LIGHT,
+        colors = colors,
+        dimensions = dimensions,
         content = content
     )
 }

@@ -31,6 +31,7 @@ import dev.duoime.core.model.KeyboardPanel
 import dev.duoime.core.model.Language
 import dev.duoime.core.model.QuickPin
 import dev.duoime.core.model.SymbolTabId
+import dev.duoime.core.model.ToolbarMode
 import dev.duoime.core.model.WindowCandidateItem
 import dev.duoime.core.protocol.ExtensionToolbarButton
 import dev.duoime.ui.bar.CandidateBar
@@ -79,8 +80,27 @@ data class DuoKeyboardSurfaceState(
     val candidatePaging: CandidatePaging = CandidatePaging.SCROLL,
     val windowCandidates: List<WindowCandidateItem> = emptyList(),
     val hasMoreWindowCandidates: Boolean = false,
-    val toolbarPins: List<QuickPin> = DEFAULT_TOOLBAR_PINS
+    val toolbarPins: List<QuickPin> = DEFAULT_TOOLBAR_PINS,
+    val toolbarMode: ToolbarMode = ToolbarMode.FULL
 )
+
+/**
+ * Pure-JVM resolved header slot visibility for [DuoKeyboardSurface].
+ */
+internal enum class HeaderSlotMode {
+    NONE,
+    TOOLBAR,
+    CANDIDATES
+}
+
+internal fun DuoKeyboardSurfaceState.resolveHeaderSlotMode(): HeaderSlotMode {
+    val hasCandidates = snapshot.isComposing || snapshot.candidates.isNotEmpty()
+    return when (toolbarMode) {
+        ToolbarMode.NONE -> HeaderSlotMode.NONE
+        ToolbarMode.CANDIDATE_ONLY -> if (hasCandidates) HeaderSlotMode.CANDIDATES else HeaderSlotMode.NONE
+        ToolbarMode.FULL -> if (!drawerOpen && hasCandidates) HeaderSlotMode.CANDIDATES else HeaderSlotMode.TOOLBAR
+    }
+}
 
 /**
  * Pure-JVM mapping from [DuoKeyboardSurfaceState] to [DuoToolbarState], shared by
@@ -159,13 +179,17 @@ fun DuoKeyboardSurface(state: DuoKeyboardSurfaceState, callbacks: DuoKeyboardCal
         )
     }
 
+    val headerMode = state.resolveHeaderSlotMode()
+    val hasHeader = headerMode != HeaderSlotMode.NONE
+
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
         val resolvedDimensions = if (constraints.hasBoundedHeight) {
             resolveAdaptiveDimensions(
                 availableHeightDp = maxHeight.value,
                 keyRowCount = keyRowCount,
                 hasSyllableRail = false,
-                base = baseDimensions
+                base = baseDimensions,
+                hasHeader = hasHeader
             )
         } else {
             baseDimensions
@@ -179,38 +203,39 @@ fun DuoKeyboardSurface(state: DuoKeyboardSurfaceState, callbacks: DuoKeyboardCal
         CompositionLocalProvider(LocalDuoDimensions provides resolvedDimensions) {
             Column(modifier = columnModifier.background(colors.keyboardBackground)) {
                 val snap = state.snapshot
-                val showCandidates = !state.drawerOpen && (snap.isComposing || snap.candidates.isNotEmpty())
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(resolvedDimensions.toolbarHeight)
-                ) {
-                    if (showCandidates) {
-                        CandidateBar(
-                            state = CandidateBarState(
-                                snapshot = snap,
-                                windowCandidates = state.windowCandidates,
-                                hasMoreWindowCandidates = state.hasMoreWindowCandidates,
-                                pagingMode = state.candidatePaging
-                            ),
-                            callbacks = candidateCallbacks
-                        )
-                    } else {
-                        DuoToolbar(
-                            state = toolbarState,
-                            onAction = callbacks.onKeyAction,
-                            onExtensionButton = callbacks.onExtensionButton,
-                            onDismissEngineError = callbacks.onDismissEngineError
-                        )
+                if (hasHeader) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(resolvedDimensions.toolbarHeight)
+                    ) {
+                        when (headerMode) {
+                            HeaderSlotMode.CANDIDATES -> CandidateBar(
+                                state = CandidateBarState(
+                                    snapshot = snap,
+                                    windowCandidates = state.windowCandidates,
+                                    hasMoreWindowCandidates = state.hasMoreWindowCandidates,
+                                    pagingMode = state.candidatePaging
+                                ),
+                                callbacks = candidateCallbacks
+                            )
+                            HeaderSlotMode.TOOLBAR -> DuoToolbar(
+                                state = toolbarState,
+                                onAction = callbacks.onKeyAction,
+                                onExtensionButton = callbacks.onExtensionButton,
+                                onDismissEngineError = callbacks.onDismissEngineError
+                            )
+                            HeaderSlotMode.NONE -> Unit
+                        }
                     }
-                }
 
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(1.dp)
-                        .background(colors.divider)
-                )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(colors.divider)
+                    )
+                }
 
                 SurfaceBody(
                     state = state,

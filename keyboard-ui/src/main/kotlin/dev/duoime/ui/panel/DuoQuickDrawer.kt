@@ -2,9 +2,11 @@
 // Copyright (c) 2026 DuoIME Contributors
 package dev.duoime.ui.panel
 
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,8 +38,10 @@ import dev.duoime.ui.R
 import dev.duoime.ui.bar.HeightPresetTier
 import dev.duoime.ui.bar.resolveHeightPresetTier
 import dev.duoime.ui.theme.DuoColorTokens
+import dev.duoime.ui.theme.DuoThemePreset
 import dev.duoime.ui.theme.LocalDuoColors
 import dev.duoime.ui.theme.LocalDuoDimensions
+import dev.duoime.ui.theme.LocalDuoThemePreset
 
 /**
  * Immutable render state for [DuoQuickDrawer] mounted in-place over the keypad area.
@@ -244,6 +249,7 @@ private fun DrawerSegmentOption(
     onClick: () -> Unit
 ) {
     val colors = LocalDuoColors.current
+    val indication = if (LocalDuoThemePreset.current == DuoThemePreset.EINK) null else LocalIndication.current
     val bg = if (selected && enabled) colors.chipSelectedBackground else colors.chipBackground
     val fg = when {
         !enabled -> colors.keySecondaryText
@@ -255,7 +261,12 @@ private fun DrawerSegmentOption(
             .fillMaxHeight()
             .clip(RoundedCornerShape(6.dp))
             .background(bg)
-            .clickable(enabled = enabled, onClick = onClick),
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = indication,
+                enabled = enabled,
+                onClick = onClick
+            ),
         contentAlignment = Alignment.Center
     ) {
         BasicText(
@@ -280,6 +291,7 @@ private fun DrawerActionTile(
 ) {
     val colors = LocalDuoColors.current
     val dimensions = LocalDuoDimensions.current
+    val indication = if (LocalDuoThemePreset.current == DuoThemePreset.EINK) null else LocalIndication.current
     val corner = RoundedCornerShape(dimensions.keyCornerRadius)
     val bg = if (selected && enabled) colors.chipSelectedBackground else colors.keyBackground
     val fg = when {
@@ -293,7 +305,12 @@ private fun DrawerActionTile(
             .clip(corner)
             .background(bg)
             .border(width = 1.dp, color = colors.keyBorder, shape = corner)
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = indication,
+                enabled = enabled,
+                onClick = onClick
+            )
             .padding(horizontal = 8.dp),
         contentAlignment = Alignment.Center
     ) {

@@ -21,20 +21,23 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.unit.Density
 import dev.duoime.app.ime.ImeComposeOwner
 import dev.duoime.core.engine.InputSink
+import dev.duoime.embed.ChromePolicy
 import dev.duoime.embed.DuoImeKeyboard
+import dev.duoime.embed.HostChrome
 import dev.duoime.embed.KeyboardController
+import dev.duoime.ui.theme.DuoThemePreset
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 
 private data class OverlayRenderConfig(
-    val darkTheme: Boolean = true,
+    val themePreset: DuoThemePreset = DuoThemePreset.DARK,
+    val hostChrome: HostChrome = HostChrome.NONE,
     val bottomInsetPx: Int = 0,
     val physicalDensity: Float = 2.0f
 )
@@ -62,15 +65,17 @@ private class OverlayRootView(
  * - Detects silent overlay hiding (`onWindowVisibilityChanged(!VISIBLE)` debounced by 150 ms) and
  *   reports back via [onOverlayHiddenByHost] so the service degrades to Inline in the same session.
  */
+@Suppress("LongParameterList")
 @RequiresApi(Build.VERSION_CODES.R)
 class OverlayHost(
     private val serviceContext: Context,
     private val scope: CoroutineScope,
     private val controller: KeyboardController,
     private val inputSink: InputSink,
+    initialHostChrome: HostChrome = HostChrome.NONE,
     private val onOverlayHiddenByHost: () -> Unit
 ) {
-    private val renderConfigFlow = MutableStateFlow(OverlayRenderConfig())
+    private val renderConfigFlow = MutableStateFlow(OverlayRenderConfig(hostChrome = initialHostChrome))
     private val showTracker = OverlayShowTracker(
         scope = scope,
         onHiddenConfirmed = onOverlayHiddenByHost
@@ -90,34 +95,38 @@ class OverlayHost(
     val activeView: View?
         get() = rootView
 
-    fun isShowingOn(displayId: Int, heightFraction: Float, darkTheme: Boolean): Boolean {
+    fun updateHostChrome(hostChrome: HostChrome) {
+        renderConfigFlow.value = renderConfigFlow.value.copy(hostChrome = hostChrome)
+    }
+
+    fun isShowingOn(displayId: Int, heightFraction: Float, themePreset: DuoThemePreset): Boolean {
         val root = rootView ?: return false
         return showTracker.shouldSkipShow(
             displayId = displayId,
             heightFraction = heightFraction,
-            darkTheme = darkTheme,
+            themePreset = themePreset,
             isWindowVisible = root.windowVisibility == View.VISIBLE
         )
     }
 
-    fun show(targetDisplay: Display, heightFraction: Float, darkTheme: Boolean): Boolean {
-        if (isShowingOn(targetDisplay.displayId, heightFraction, darkTheme)) {
+    fun show(targetDisplay: Display, heightFraction: Float, themePreset: DuoThemePreset): Boolean {
+        if (isShowingOn(targetDisplay.displayId, heightFraction, themePreset)) {
             return true
         }
         if (attachedDisplayId != targetDisplay.displayId || rootView == null) {
             detach()
-            if (!attachToDisplay(targetDisplay, heightFraction, darkTheme)) {
+            if (!attachToDisplay(targetDisplay, heightFraction, themePreset)) {
                 return false
             }
         } else {
-            updatePresentation(heightFraction, darkTheme)
+            updatePresentation(heightFraction, themePreset)
         }
 
         val root = rootView ?: return false
         val wm = windowManager ?: return false
         val lp = layoutParams ?: return false
 
-        showTracker.beginShow(targetDisplay.displayId, heightFraction, darkTheme)
+        showTracker.beginShow(targetDisplay.displayId, heightFraction, themePreset)
         controller.attachSink(inputSink)
         lp.flags = ACTIVE_FLAGS
         root.visibility = View.VISIBLE
@@ -150,8 +159,8 @@ class OverlayHost(
         runCatching { wm.updateViewLayout(root, lp) }
     }
 
-    fun updatePresentation(heightFraction: Float, darkTheme: Boolean) {
-        showTracker.updatePresentation(heightFraction, darkTheme)
+    fun updatePresentation(heightFraction: Float, themePreset: DuoThemePreset) {
+        showTracker.updatePresentation(heightFraction, themePreset)
         val wm = windowManager ?: return
         val root = rootView ?: return
         val lp = layoutParams ?: return
@@ -162,8 +171,8 @@ class OverlayHost(
             context = root.context,
             wm = wm
         )
-        renderConfigFlow.value = OverlayRenderConfig(
-            darkTheme = darkTheme,
+        renderConfigFlow.value = renderConfigFlow.value.copy(
+            themePreset = themePreset,
             bottomInsetPx = metrics.bottomInsetPx,
             physicalDensity = physicalDensity
         )
@@ -208,7 +217,7 @@ class OverlayHost(
         owner?.onDestroy()
     }
 
-    private fun attachToDisplay(targetDisplay: Display, heightFraction: Float, darkTheme: Boolean): Boolean {
+    private fun attachToDisplay(targetDisplay: Display, heightFraction: Float, themePreset: DuoThemePreset): Boolean {
         val windowContext = runCatching {
             serviceContext
                 .createDisplayContext(targetDisplay)
@@ -222,8 +231,8 @@ class OverlayHost(
             context = windowContext,
             wm = wm
         )
-        renderConfigFlow.value = OverlayRenderConfig(
-            darkTheme = darkTheme,
+        renderConfigFlow.value = renderConfigFlow.value.copy(
+            themePreset = themePreset,
             bottomInsetPx = metrics.bottomInsetPx,
             physicalDensity = physicalDensity
         )
@@ -243,7 +252,7 @@ class OverlayHost(
                     LocalDensity provides Density(density = cfg.physicalDensity, fontScale = 1f)
                 ) {
                     val bottomPadDp = with(LocalDensity.current) { cfg.bottomInsetPx.toDp() }
-                    val bgColor = if (cfg.darkTheme) Color(0xFF0A0C10) else Color(0xFFECEFF4)
+                    val bgColor = cfg.themePreset.toColorTokens().keyboardBackground
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -253,7 +262,8 @@ class OverlayHost(
                         DuoImeKeyboard(
                             controller = controller,
                             sink = inputSink,
-                            darkTheme = cfg.darkTheme,
+                            chromePolicy = ChromePolicy.APP_DEFAULT.copy(themePreset = cfg.themePreset),
+                            hostChrome = cfg.hostChrome,
                             modifier = Modifier.fillMaxSize()
                         )
                     }

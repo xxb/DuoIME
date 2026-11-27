@@ -63,16 +63,20 @@ import dev.duoime.app.settings.DuoImeSettings
 import dev.duoime.app.settings.LiveSettingsPlacementAction
 import dev.duoime.app.settings.resolveLiveSettingsAction
 import dev.duoime.core.engine.InputSink
+import dev.duoime.core.model.KeyboardPanel
 import dev.duoime.core.model.KeyboardPrefs
 import dev.duoime.core.policy.DisplayPlacementInput
 import dev.duoime.core.policy.PlacementDecision
 import dev.duoime.core.policy.PlacementReason
+import dev.duoime.embed.ChromePolicy
 import dev.duoime.embed.DuoImeKeyboard
+import dev.duoime.embed.HostChrome
 import dev.duoime.embed.KeyboardController
 import dev.duoime.embed.KeyboardControllerConfig
 import dev.duoime.embed.KeyboardHostCallbacks
 import dev.duoime.ui.feedback.KeyFeedbackController
 import dev.duoime.ui.feedback.KeyFeedbackOptions
+import dev.duoime.ui.theme.DuoThemePreset
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -98,6 +102,7 @@ class DuoImeService : InputMethodService() {
     private val decisionFlow = MutableStateFlow<PlacementDecision>(
         PlacementDecision.Inline(reason = PlacementReason.NO_ELIGIBLE_OPPOSITE_DISPLAY)
     )
+    private val hasEligiblePeerDisplayFlow = MutableStateFlow(false)
 
     private lateinit var preferences: DuoImePreferences
     private lateinit var controller: KeyboardController
@@ -151,7 +156,7 @@ class DuoImeService : InputMethodService() {
             ),
             hostCallbacks = KeyboardHostCallbacks(
                 onSwapScreenRequested = { handleSwapScreenRequested() },
-                onDismissRequested = { hideAllKeyboardSurfaces() },
+                onDismissRequested = { handleDismissRequested() },
                 onSwitchImeRequested = { showImePicker() },
                 onHeightFractionChanged = { fraction -> handleHeightChanged(fraction) },
                 onPrefsChanged = { updatedPrefs -> handleKeyboardPrefsChanged(updatedPrefs) },
@@ -160,12 +165,18 @@ class DuoImeService : InputMethodService() {
             )
         )
 
+        displayManager = (getSystemService(DISPLAY_SERVICE) as? DisplayManager)?.also { dm ->
+            dm.registerDisplayListener(displayListener, mainHandler)
+        }
+        val initialPeerEligible = refreshEligiblePeerDisplay()
+
         val overlaySurface = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             OverlayHost(
                 serviceContext = this,
                 scope = serviceScope,
                 controller = controller,
                 inputSink = overlaySinkProxy,
+                initialHostChrome = buildHostChrome(initialPeerEligible),
                 onOverlayHiddenByHost = { sessionController.onOverlayHiddenByHost() }
             ).also { overlayHost = it }.let(::createOverlaySurfaceAdapter)
         } else {
@@ -191,9 +202,6 @@ class DuoImeService : InputMethodService() {
             }
         )
 
-        displayManager = (getSystemService(DISPLAY_SERVICE) as? DisplayManager)?.also { dm ->
-            dm.registerDisplayListener(displayListener, mainHandler)
-        }
         pinObserverHandle = SystemImePinDetector.observe(contentResolver, mainHandler) {
             sessionController.onRelevantEnvironmentChanged()
         }
@@ -227,6 +235,7 @@ class DuoImeService : InputMethodService() {
         val settings by settingsFlow.collectAsState()
         val decision by decisionFlow.collectAsState()
         val keyboardState by controller.uiState.collectAsState()
+        val hasEligiblePeerDisplay by hasEligiblePeerDisplayFlow.collectAsState()
 
         if (decision is PlacementDecision.Overlay) {
             Box(
@@ -257,7 +266,7 @@ class DuoImeService : InputMethodService() {
             density = physicalDensity
         )
         val heightDp = with(systemDensity) { heightPx.toDp() }
-        val bgColor = if (settings.darkTheme) Color(0xFF0A0C10) else Color(0xFFECEFF4)
+        val bgColor = settings.themePreset.toColorTokens().keyboardBackground
 
         Column(
             modifier = Modifier
@@ -282,7 +291,8 @@ class DuoImeService : InputMethodService() {
                     DuoImeKeyboard(
                         controller = controller,
                         sink = inlineSinkProxy,
-                        darkTheme = settings.darkTheme,
+                        chromePolicy = ChromePolicy.APP_DEFAULT.copy(themePreset = settings.themePreset),
+                        hostChrome = buildHostChrome(hasEligiblePeerDisplay),
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -322,7 +332,17 @@ class DuoImeService : InputMethodService() {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK && isOverlayCurrentlyShowing()) {
-            hideAllKeyboardSurfaces()
+            handleDismissRequested()
+            return true
+        }
+        val uiState = controller.uiState.value
+        val pageForward = resolveHardwareCandidatePageDirection(
+            keyCode = keyCode,
+            isComposing = uiState.snapshot.isComposing,
+            activePanel = uiState.derived.panel
+        )
+        if (pageForward != null) {
+            controller.pageCandidates(pageForward)
             return true
         }
         return super.onKeyDown(keyCode, event)
@@ -348,6 +368,7 @@ class DuoImeService : InputMethodService() {
         super.onStartInputView(info, restarting)
         attachComposeOwnerToDecor()
         refreshSettings()
+        refreshEligiblePeerDisplay()
         lastEditorInfo = info
         applyEditorInfo(info, restarting = restarting)
         composeOwner.onResume()
@@ -445,12 +466,36 @@ class DuoImeService : InputMethodService() {
         preferences.updateKeyboardPrefs(updatedPrefs)
     }
 
-    private fun hideAllKeyboardSurfaces() {
+    private fun handleDismissRequested() {
         hideOverlayWindow()
         requestHideSelf(0)
     }
 
+    private fun buildHostChrome(hasEligiblePeerDisplay: Boolean): HostChrome = HostChrome(
+        onSwapScreen = if (hasEligiblePeerDisplay) {
+            { handleSwapScreenRequested() }
+        } else {
+            null
+        },
+        onSwitchIme = { showImePicker() },
+        onDismiss = { handleDismissRequested() }
+    )
+
+    private fun refreshEligiblePeerDisplay(): Boolean {
+        val rawDisplays = displayManager?.displays?.map(DisplayClassifier::fromAndroidDisplay).orEmpty()
+        val eligible = DisplayClassifier.hasEligiblePeerDisplay(
+            displays = rawDisplays,
+            pairedPeerDisplayId = settingsFlow.value.pairedPeerDisplayId
+        )
+        hasEligiblePeerDisplayFlow.value = eligible
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            overlayHost?.updateHostChrome(buildHostChrome(eligible))
+        }
+        return eligible
+    }
+
     private fun handleDisplayAddedOrRemoved(displayId: Int, removed: Boolean) {
+        refreshEligiblePeerDisplay()
         if (removed) {
             sessionController.onDisplayRemoved(displayId)
         } else {
@@ -459,6 +504,7 @@ class DuoImeService : InputMethodService() {
     }
 
     private fun handleDisplayChanged(changedDisplayId: Int) {
+        refreshEligiblePeerDisplay()
         if (!sessionController.isInputViewActive) return
         val currentActiveStates = snapshotDisplayActiveStates()
         val activeStateChanged = currentActiveStates != lastDisplayActiveStates
@@ -489,6 +535,11 @@ class DuoImeService : InputMethodService() {
             it.displayId to DisplayClassifier.isDisplayActive(it.state)
         }
         val candidates = DisplayClassifier.classifyDisplays(rawDisplays, settings.pairedPeerDisplayId)
+        val eligiblePeer = DisplayClassifier.hasEligiblePeerDisplay(candidates)
+        hasEligiblePeerDisplayFlow.value = eligiblePeer
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            overlayHost?.updateHostChrome(buildHostChrome(eligiblePeer))
+        }
         val sourceDisplayId = resolveSourceDisplayId()
         lastSourceDisplayId = sourceDisplayId
         val hasOverlayPerm = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && Settings.canDrawOverlays(this)
@@ -511,7 +562,7 @@ class DuoImeService : InputMethodService() {
                 apiLevel = Build.VERSION.SDK_INT,
                 heightFraction = settings.heightFraction
             ),
-            darkTheme = settings.darkTheme
+            themePreset = settings.themePreset
         )
     }
 
@@ -523,12 +574,12 @@ class DuoImeService : InputMethodService() {
         override val attachedDisplayId: Int
             get() = host.attachedDisplayId
 
-        override fun isShowingOn(displayId: Int, heightFraction: Float, darkTheme: Boolean): Boolean =
-            host.isShowingOn(displayId, heightFraction, darkTheme)
+        override fun isShowingOn(displayId: Int, heightFraction: Float, themePreset: DuoThemePreset): Boolean =
+            host.isShowingOn(displayId, heightFraction, themePreset)
 
-        override fun show(targetDisplayId: Int, heightFraction: Float, darkTheme: Boolean): Boolean {
+        override fun show(targetDisplayId: Int, heightFraction: Float, themePreset: DuoThemePreset): Boolean {
             val targetDisplay = displayManager?.getDisplay(targetDisplayId) ?: return false
-            return host.show(targetDisplay, heightFraction, darkTheme)
+            return host.show(targetDisplay, heightFraction, themePreset)
         }
 
         override fun hide() {
@@ -618,6 +669,23 @@ class DuoImeService : InputMethodService() {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         runCatching { startActivity(intent) }
+    }
+}
+
+/**
+ * Pure-JVM hardware candidate paging resolver for handheld shoulder buttons (`L1`/`R1`) and
+ * physical `PageUp`/`PageDown` keys: active ONLY while composing outside `KeyboardPanel.SYMBOL`.
+ */
+internal fun resolveHardwareCandidatePageDirection(
+    keyCode: Int,
+    isComposing: Boolean,
+    activePanel: KeyboardPanel
+): Boolean? {
+    if (!isComposing || activePanel == KeyboardPanel.SYMBOL) return null
+    return when (keyCode) {
+        KeyEvent.KEYCODE_BUTTON_L1, KeyEvent.KEYCODE_PAGE_UP -> false
+        KeyEvent.KEYCODE_BUTTON_R1, KeyEvent.KEYCODE_PAGE_DOWN -> true
+        else -> null
     }
 }
 

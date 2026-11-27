@@ -58,8 +58,8 @@ if [[ -n "$SDK_DIR" && -d "$SDK_DIR" ]]; then
 fi
 
 if [[ "$MODE" == "--ci-fast" ]]; then
-    echo "==> Running fast static checks (ktlintCheck detekt)..."
-    ./gradlew ktlintCheck detekt "${GRADLE_ARGS[@]}"
+    echo "==> Running fast static checks (ktlintCheck detekt :duoime-embed:verifyNoMaterial3)..."
+    ./gradlew ktlintCheck detekt :duoime-embed:verifyNoMaterial3 "${GRADLE_ARGS[@]}"
     exit 0
 fi
 
@@ -138,6 +138,7 @@ if (( HAS_JAVA == 1 && HAS_ANDROID_SDK == 1 )); then
     ./gradlew \
         ktlintCheck \
         detekt \
+        :duoime-embed:verifyNoMaterial3 \
         :core:test \
         :engine-lite:test \
         testDebugUnitTest \

@@ -3,10 +3,12 @@
 package dev.duoime.ui.panel
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -54,8 +56,10 @@ import dev.duoime.core.model.Language
 import dev.duoime.core.model.SymbolTabId
 import dev.duoime.ui.grid.KeyHoldController
 import dev.duoime.ui.theme.DuoColorTokens
+import dev.duoime.ui.theme.DuoThemePreset
 import dev.duoime.ui.theme.LocalDuoColors
 import dev.duoime.ui.theme.LocalDuoDimensions
+import dev.duoime.ui.theme.LocalDuoThemePreset
 
 /**
  * Immutable render state for [DuoSymbolPanel].
@@ -185,12 +189,17 @@ fun DuoSymbolPanel(
 private fun SymbolTabChip(label: String, selected: Boolean, colors: DuoColorTokens, onClick: () -> Unit) {
     val bg = if (selected) colors.chipSelectedBackground else colors.chipBackground
     val fg = if (selected) colors.chipSelectedText else colors.chipText
+    val indication = if (LocalDuoThemePreset.current == DuoThemePreset.EINK) null else LocalIndication.current
     Box(
         modifier = Modifier
             .fillMaxHeight()
             .clip(RoundedCornerShape(7.dp))
             .background(bg)
-            .clickable(onClick = onClick)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = indication,
+                onClick = onClick
+            )
             .padding(horizontal = 12.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -210,6 +219,7 @@ private fun SymbolTabChip(label: String, selected: Boolean, colors: DuoColorToke
 @Composable
 private fun SymbolTile(symbol: String, colors: DuoColorTokens, onTap: () -> Unit, onLongPress: () -> Unit) {
     val dimensions = LocalDuoDimensions.current
+    val indication = if (LocalDuoThemePreset.current == DuoThemePreset.EINK) null else LocalIndication.current
     val corner = RoundedCornerShape(dimensions.keyCornerRadius)
     Box(
         modifier = Modifier
@@ -219,6 +229,8 @@ private fun SymbolTile(symbol: String, colors: DuoColorTokens, onTap: () -> Unit
             .background(colors.keyBackground)
             .border(width = 1.dp, color = colors.keyBorder, shape = corner)
             .combinedClickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = indication,
                 onClick = onTap,
                 onLongClick = onLongPress
             ),
@@ -462,6 +474,7 @@ private fun SymbolActionButton(
     onClick: () -> Unit
 ) {
     val dimensions = LocalDuoDimensions.current
+    val indication = if (LocalDuoThemePreset.current == DuoThemePreset.EINK) null else LocalIndication.current
     val corner = RoundedCornerShape(dimensions.keyCornerRadius)
     val bg = if (highlighted) colors.chipSelectedBackground else colors.actionKeyBackground
     val fg = if (highlighted) colors.chipSelectedText else colors.keyText
@@ -471,7 +484,11 @@ private fun SymbolActionButton(
             .clip(corner)
             .background(bg)
             .border(width = 1.dp, color = colors.keyBorder, shape = corner)
-            .clickable(onClick = onClick),
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = indication,
+                onClick = onClick
+            ),
         contentAlignment = Alignment.Center
     ) {
         BasicText(

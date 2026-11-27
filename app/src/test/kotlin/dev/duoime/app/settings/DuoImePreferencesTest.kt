@@ -7,6 +7,7 @@ import dev.duoime.core.model.ChineseScheme
 import dev.duoime.core.model.ChineseVariant
 import dev.duoime.core.model.KeyboardPrefs
 import dev.duoime.core.model.Language
+import dev.duoime.ui.theme.DuoThemePreset
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -19,6 +20,10 @@ class DuoImePreferencesTest {
         private val listeners = LinkedHashSet<SharedPreferences.OnSharedPreferenceChangeListener>()
 
         fun putRawString(key: String, value: String) {
+            data[key] = value
+        }
+
+        fun putRawBoolean(key: String, value: Boolean) {
             data[key] = value
         }
 
@@ -245,10 +250,11 @@ class DuoImePreferencesTest {
             )
         )
 
-        // MainActivity toggles darkTheme & includeNumberRow on the stale snapshot and saves
+        // MainActivity toggles themePreset & includeNumberRow on the stale snapshot and saves
         val merged = prefs.saveGeneralSettingsPreservingKeyboardPrefs(
-            staleMainActivitySnapshot.copy(darkTheme = false, includeNumberRow = true)
+            staleMainActivitySnapshot.copy(themePreset = DuoThemePreset.LIGHT, includeNumberRow = true)
         )
+        assertEquals(DuoThemePreset.LIGHT, merged.themePreset)
         assertFalse(merged.darkTheme)
         assertTrue(merged.includeNumberRow)
         assertEquals(Language.ENGLISH, merged.preferredLanguage)
@@ -258,5 +264,40 @@ class DuoImePreferencesTest {
         // Persisted state matches merged snapshot on reload
         val reloaded = DuoImePreferences(backing).load()
         assertEquals(merged, reloaded)
+    }
+
+    @Test
+    fun themePresetMigratesFromLegacyDarkThemePersistsEinkAndTriggersLivePlacementUpdate() {
+        // Legacy user with KEY_DARK_THEME = false migrates to LIGHT
+        val legacyLightBacking = InMemorySharedPreferences().apply {
+            putRawBoolean(DuoImePreferences.KEY_DARK_THEME, false)
+        }
+        val migratedLight = DuoImePreferences(legacyLightBacking).load()
+        assertEquals(DuoThemePreset.LIGHT, migratedLight.themePreset)
+        assertFalse(migratedLight.darkTheme)
+
+        // Legacy user with KEY_DARK_THEME = true migrates to DARK
+        val legacyDarkBacking = InMemorySharedPreferences().apply {
+            putRawBoolean(DuoImePreferences.KEY_DARK_THEME, true)
+        }
+        val migratedDark = DuoImePreferences(legacyDarkBacking).load()
+        assertEquals(DuoThemePreset.DARK, migratedDark.themePreset)
+        assertTrue(migratedDark.darkTheme)
+
+        // Saving EINK persists KEY_THEME_PRESET and derives darkTheme = false
+        val prefs = DuoImePreferences(legacyDarkBacking)
+        prefs.save(migratedDark.copy(themePreset = DuoThemePreset.EINK))
+        val reloadedEink = DuoImePreferences(legacyDarkBacking).load()
+        assertEquals(DuoThemePreset.EINK, reloadedEink.themePreset)
+        assertFalse(reloadedEink.darkTheme)
+
+        // Switching LIGHT <-> EINK triggers RELEVANT_ENVIRONMENT_CHANGED even though darkTheme stays false
+        assertEquals(
+            LiveSettingsPlacementAction.RELEVANT_ENVIRONMENT_CHANGED,
+            resolveLiveSettingsAction(
+                previous = DuoImeSettings(themePreset = DuoThemePreset.LIGHT),
+                updated = DuoImeSettings(themePreset = DuoThemePreset.EINK)
+            )
+        )
     }
 }

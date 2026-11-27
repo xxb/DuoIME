@@ -153,6 +153,16 @@ object DisplayClassifier {
             candidate.isOn
     }
 
+    /**
+     * Returns `true` when at least two active non-virtual displays are currently available,
+     * enabling the dual-screen `[换屏]` capability in `HostChrome`.
+     */
+    fun hasEligiblePeerDisplay(displays: List<RawDisplayInfo>, pairedPeerDisplayId: Int? = null): Boolean =
+        hasEligiblePeerDisplay(classifyDisplays(displays, pairedPeerDisplayId))
+
+    fun hasEligiblePeerDisplay(candidates: List<DisplayCandidate>): Boolean =
+        candidates.count { it.isOn && it.kind != DisplayKind.VIRTUAL } >= 2
+
     internal fun parseTypeFromDescription(description: String): Int? {
         if (description.isBlank()) return null
         val upper = description.uppercase()

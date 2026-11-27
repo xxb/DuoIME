@@ -7,6 +7,7 @@ import dev.duoime.core.policy.DisplayKind
 import dev.duoime.core.policy.DisplayPlacementInput
 import dev.duoime.core.policy.PlacementDecision
 import dev.duoime.core.policy.PlacementReason
+import dev.duoime.ui.theme.DuoThemePreset
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -44,20 +45,20 @@ class DualScreenSessionControllerTest {
         override val attachedDisplayId: Int
             get() = tracker.attachedDisplayId
 
-        override fun isShowingOn(displayId: Int, heightFraction: Float, darkTheme: Boolean): Boolean =
+        override fun isShowingOn(displayId: Int, heightFraction: Float, themePreset: DuoThemePreset): Boolean =
             tracker.shouldSkipShow(
                 displayId = displayId,
                 heightFraction = heightFraction,
-                darkTheme = darkTheme,
+                themePreset = themePreset,
                 isWindowVisible = windowVisible
             )
 
-        override fun show(targetDisplayId: Int, heightFraction: Float, darkTheme: Boolean): Boolean {
-            if (isShowingOn(targetDisplayId, heightFraction, darkTheme)) {
+        override fun show(targetDisplayId: Int, heightFraction: Float, themePreset: DuoThemePreset): Boolean {
+            if (isShowingOn(targetDisplayId, heightFraction, themePreset)) {
                 return true
             }
             showCalls++
-            tracker.beginShow(targetDisplayId, heightFraction, darkTheme)
+            tracker.beginShow(targetDisplayId, heightFraction, themePreset)
             tracker.probeWindowVisibility(isWindowVisible = windowVisible)
             return true
         }
@@ -84,6 +85,7 @@ class DualScreenSessionControllerTest {
         )
         var isPasswordField: Boolean = false
         var swapToSameScreen: Boolean = false
+        var themePreset: DuoThemePreset = DuoThemePreset.DARK
         val appliedDecisions = mutableListOf<PlacementDecision>()
         lateinit var controller: DualScreenSessionController
         val surface = FakeOverlaySurface(
@@ -107,7 +109,7 @@ class DualScreenSessionControllerTest {
                             apiLevel = 34,
                             heightFraction = 0.75f
                         ),
-                        darkTheme = true
+                        themePreset = themePreset
                     )
                 },
                 onOverlayApplied = { appliedDecisions += it },
@@ -290,5 +292,14 @@ class DualScreenSessionControllerTest {
         h5.controller.onSwapScreenToggled(swapToSameScreen = false)
         assertFalse(h5.controller.overlayHiddenByHost)
         assertTrue(h5.controller.currentDecision is PlacementDecision.Overlay)
+
+        // Switching LIGHT -> EINK forces overlay presentation refresh
+        h5.themePreset = DuoThemePreset.LIGHT
+        h5.controller.onRelevantEnvironmentChanged()
+        val callsAtLight = h5.surface.showCalls
+        h5.themePreset = DuoThemePreset.EINK
+        h5.controller.onRelevantEnvironmentChanged()
+        assertEquals(callsAtLight + 1, h5.surface.showCalls)
+        assertEquals(DuoThemePreset.EINK, h5.surface.tracker.lastThemePreset)
     }
 }

@@ -18,6 +18,7 @@ import dev.duoime.core.model.LangKeyPlacement
 import dev.duoime.core.model.Language
 import dev.duoime.core.model.QuickPin
 import dev.duoime.core.model.SessionState
+import dev.duoime.core.model.ToolbarMode
 import dev.duoime.core.model.deriveKeyboardState
 import dev.duoime.core.model.toInputConstraints
 import dev.duoime.ui.bar.DEFAULT_TOOLBAR_PINS
@@ -109,6 +110,7 @@ class ZeroDuplicationInvariantTest {
             LangKeyPlacement.entries.size *
             2 * // isComposing
             2 * // drawerOpen
+            ToolbarMode.entries.size *
             pinConfigs.size *
             capabilityCombos.size
         assertEquals(expected, combinationsChecked)
@@ -157,34 +159,38 @@ class ZeroDuplicationInvariantTest {
             } else {
                 closedDerived
             }
-            for (pins in pinConfigs) {
-                for (caps in capabilityCombos) {
-                    val surfaceState = DuoKeyboardSurfaceState(
-                        snapshot = snapshot,
-                        layout = activeLayout,
-                        isReady = true,
-                        heightFraction = 0.75f,
-                        isOverlayMode = false,
-                        canToggleLanguage = derived.canToggleLanguage,
-                        activeChineseScheme = derived.effectiveChineseScheme,
-                        effectiveLanguage = derived.effectiveLanguage,
-                        activePanel = derived.panel,
-                        panelLocked = derived.panelLocked,
-                        symbolTab = derived.symbolTab,
-                        fieldKind = derived.fieldKind,
-                        drawerOpen = derived.drawerOpen,
-                        includeNumberRow = derived.includeNumberRow,
-                        canSwapScreen = caps.canSwapScreen,
-                        canSwitchIme = caps.canSwitchIme,
-                        showDismiss = caps.showDismiss,
-                        toolbarPins = pins
-                    )
-                    verifySingleSurfaceState(
-                        surfaceState = surfaceState,
-                        bodyGridActions = bodyGridActions,
-                        label = "$language/$scheme/$panel/$fieldKind/$placement/comp=$isComposing/drawer=$drawerOpen/pins=$pins/$caps"
-                    )
-                    checked++
+            for (toolbarMode in ToolbarMode.entries) {
+                for (pins in pinConfigs) {
+                    for (caps in capabilityCombos) {
+                        val surfaceState = DuoKeyboardSurfaceState(
+                            snapshot = snapshot,
+                            layout = activeLayout,
+                            isReady = true,
+                            heightFraction = 0.75f,
+                            isOverlayMode = false,
+                            canToggleLanguage = derived.canToggleLanguage,
+                            activeChineseScheme = derived.effectiveChineseScheme,
+                            effectiveLanguage = derived.effectiveLanguage,
+                            activePanel = derived.panel,
+                            panelLocked = derived.panelLocked,
+                            symbolTab = derived.symbolTab,
+                            fieldKind = derived.fieldKind,
+                            drawerOpen = derived.drawerOpen,
+                            includeNumberRow = derived.includeNumberRow,
+                            canSwapScreen = caps.canSwapScreen,
+                            canSwitchIme = caps.canSwitchIme,
+                            showDismiss = caps.showDismiss,
+                            toolbarPins = pins,
+                            toolbarMode = toolbarMode
+                        )
+                        verifySingleSurfaceState(
+                            surfaceState = surfaceState,
+                            bodyGridActions = bodyGridActions,
+                            label = "$language/$scheme/$panel/$fieldKind/$placement/comp=$isComposing/" +
+                                "drawer=$drawerOpen/tb=$toolbarMode/pins=$pins/$caps"
+                        )
+                        checked++
+                    }
                 }
             }
         }
@@ -201,9 +207,15 @@ class ZeroDuplicationInvariantTest {
             counts[bucket.ordinal]++
         }
 
-        // Top bar mirrors DuoKeyboardSurface: CandidateBar only when !drawerOpen && isComposing
-        val showToolbar = surfaceState.drawerOpen || !surfaceState.snapshot.isComposing
-        if (showToolbar) {
+        // Top bar mirrors DuoKeyboardSurface.resolveHeaderSlotMode()
+        val headerMode = surfaceState.resolveHeaderSlotMode()
+        if (surfaceState.toolbarMode != ToolbarMode.FULL) {
+            assertFalse(
+                "Non-FULL ToolbarMode must never render DuoToolbar in $label",
+                headerMode == HeaderSlotMode.TOOLBAR
+            )
+        }
+        if (headerMode == HeaderSlotMode.TOOLBAR) {
             recordActionsList(DuoToolbarMeta.visibleActions(surfaceState.toToolbarState()), ::record)
         }
 

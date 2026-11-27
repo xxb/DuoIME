@@ -12,6 +12,7 @@ import dev.duoime.core.model.migrateLegacyInputMode
 import dev.duoime.core.policy.DisplayPlacementPolicy
 import dev.duoime.ui.feedback.KeyFeedbackOptions
 import dev.duoime.ui.feedback.KeySoundStyle
+import dev.duoime.ui.theme.DuoThemePreset
 import kotlin.math.roundToInt
 
 /**
@@ -19,7 +20,7 @@ import kotlin.math.roundToInt
  * Defaults keep acoustic key sounds OFF and haptic feedback ON.
  */
 data class DuoImeSettings(
-    val darkTheme: Boolean = true,
+    val themePreset: DuoThemePreset = DuoThemePreset.DARK,
     val includeNumberRow: Boolean = false,
     val preferredLanguage: Language = Language.CHINESE,
     val chineseScheme: ChineseScheme = ChineseScheme.PINYIN_26,
@@ -37,6 +38,8 @@ data class DuoImeSettings(
     val soundVolume: Float = KeyFeedbackOptions.DEFAULT_SOUND_VOLUME,
     val followSystemRingerMode: Boolean = false
 ) {
+    val darkTheme: Boolean
+        get() = themePreset == DuoThemePreset.DARK
     fun toKeyboardPrefs(): KeyboardPrefs = KeyboardPrefs(
         language = preferredLanguage,
         chineseScheme = chineseScheme,
@@ -72,7 +75,7 @@ internal fun resolveLiveSettingsAction(previous: DuoImeSettings, updated: DuoIme
         updated == previous -> LiveSettingsPlacementAction.NONE
         updated.swapToSameScreen != previous.swapToSameScreen -> LiveSettingsPlacementAction.SWAP_TOGGLED
         updated.heightFraction != previous.heightFraction ||
-            updated.darkTheme != previous.darkTheme ||
+            updated.themePreset != previous.themePreset ||
             updated.pairedPeerDisplayId != previous.pairedPeerDisplayId ||
             updated.manualSystemImePin != previous.manualSystemImePin ||
             updated.perAppInlinePackages != previous.perAppInlinePackages ->
@@ -101,8 +104,12 @@ class DuoImePreferences internal constructor(
             rawLegacyInputMode = prefs.getString(KEY_LEGACY_INPUT_MODE, null),
             includeNumberRow = prefs.getBoolean(KEY_NUMBER_ROW, false)
         )
+        val themePreset = resolvePersistedThemePreset(
+            rawThemePreset = prefs.getString(KEY_THEME_PRESET, null),
+            legacyDarkTheme = prefs.getBoolean(KEY_DARK_THEME, true)
+        )
         return DuoImeSettings(
-            darkTheme = prefs.getBoolean(KEY_DARK_THEME, true),
+            themePreset = themePreset,
             includeNumberRow = keyboardPrefs.includeNumberRow,
             preferredLanguage = keyboardPrefs.language,
             chineseScheme = keyboardPrefs.chineseScheme,
@@ -134,6 +141,7 @@ class DuoImePreferences internal constructor(
             .filter { it.isNotEmpty() }
             .toSet()
         prefs.edit()
+            .putString(KEY_THEME_PRESET, settings.themePreset.name)
             .putBoolean(KEY_DARK_THEME, settings.darkTheme)
             .putBoolean(KEY_NUMBER_ROW, settings.includeNumberRow)
             .putString(KEY_PREFERRED_LANGUAGE, settings.preferredLanguage.name)
@@ -212,7 +220,8 @@ class DuoImePreferences internal constructor(
 
     companion object {
         private const val PREFS_NAME = "duoime_settings"
-        private const val KEY_DARK_THEME = "dark_theme"
+        internal const val KEY_THEME_PRESET = "theme_preset"
+        internal const val KEY_DARK_THEME = "dark_theme"
         private const val KEY_NUMBER_ROW = "include_number_row"
         internal const val KEY_PREFERRED_LANGUAGE = "preferred_language"
         internal const val KEY_CHINESE_SCHEME = "chinese_scheme"
@@ -231,6 +240,11 @@ class DuoImePreferences internal constructor(
         private const val KEY_SOUND_VOLUME = "sound_volume"
         private const val KEY_FOLLOW_SYSTEM_RINGER_MODE = "follow_system_ringer_mode"
         private const val NO_PAIRED_DISPLAY = -1
+
+        internal fun resolvePersistedThemePreset(rawThemePreset: String?, legacyDarkTheme: Boolean): DuoThemePreset {
+            val fallback = if (legacyDarkTheme) DuoThemePreset.DARK else DuoThemePreset.LIGHT
+            return DuoThemePreset.fromNameOrDefault(rawThemePreset, fallback = fallback)
+        }
 
         /**
          * Resolves persisted orthogonal [KeyboardPrefs], falling back to [migrateLegacyInputMode]

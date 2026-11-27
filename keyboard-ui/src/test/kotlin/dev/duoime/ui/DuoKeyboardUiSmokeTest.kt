@@ -4,13 +4,21 @@
  */
 package dev.duoime.ui
 
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import dev.duoime.core.layout.BuiltInLayouts
 import dev.duoime.core.layout.LayoutSpec
+import dev.duoime.core.model.CandidateItem
+import dev.duoime.core.model.EngineSnapshot
+import dev.duoime.core.model.ToolbarMode
 import dev.duoime.ui.bar.CandidateBarLayout
 import dev.duoime.ui.grid.KeyGridGeometry
+import dev.duoime.ui.theme.DuoDarkColors
 import dev.duoime.ui.theme.DuoDefaultDimensions
 import dev.duoime.ui.theme.DuoDimensionTokens
+import dev.duoime.ui.theme.DuoEinkColors
+import dev.duoime.ui.theme.DuoLightColors
+import dev.duoime.ui.theme.DuoThemePreset
 import dev.duoime.ui.theme.resolveAdaptiveDimensions
 import kotlin.math.abs
 import org.junit.Assert.assertEquals
@@ -117,5 +125,58 @@ class DuoKeyboardUiSmokeTest {
         assertTrue(r900.barButtonFontSp in 15f..22f)
         assertTrue(r900.preeditFontSp in 13f..19f)
         assertTrue(r900.toolbarFontSp in 12f..18f)
+
+        // Header-less (ToolbarMode.NONE / idle CANDIDATE_ONLY) gives reclaimed height cleanly to key rows
+        val withHeader = resolveAdaptiveDimensions(300f, qwerty4.rows.size, hasSyllableRail = false, hasHeader = true)
+        val noHeader = resolveAdaptiveDimensions(300f, qwerty4.rows.size, hasSyllableRail = false, hasHeader = false)
+        assertTrue(noHeader.toolbarHeight > withHeader.toolbarHeight)
+    }
+
+    @Test
+    fun einkThemePresetHasHighContrastLegibleColorsAndToolbarModeResolvesHeaderCleanly() {
+        assertEquals(DuoDarkColors, DuoThemePreset.DARK.toColorTokens())
+        assertEquals(DuoLightColors, DuoThemePreset.LIGHT.toColorTokens())
+        assertEquals(DuoEinkColors, DuoThemePreset.EINK.toColorTokens())
+        assertEquals(DuoThemePreset.EINK, DuoThemePreset.fromNameOrDefault("eink"))
+        assertEquals(DuoThemePreset.DARK, DuoThemePreset.fromNameOrDefault("unknown"))
+
+        assertEquals(Color(0xFFFFFFFF), DuoEinkColors.keyboardBackground)
+        assertEquals(Color(0xFFFFFFFF), DuoEinkColors.keyBackground)
+        assertEquals(Color(0xFF000000), DuoEinkColors.keyText)
+        assertEquals(Color(0xFF000000), DuoEinkColors.keyBorder)
+        assertEquals(Color(0xFF000000), DuoEinkColors.divider)
+        assertEquals(Color(0xFF000000), DuoEinkColors.accentKeyBackground)
+        assertEquals(Color(0xFFFFFFFF), DuoEinkColors.accentKeyText)
+        assertEquals(Color(0xFFFFFFFF), DuoEinkColors.chipSelectedText)
+        assertEquals(Color(0xFFCCCCCC), DuoEinkColors.keyPressedBackground)
+        assertEquals(Color(0xFFCCCCCC), DuoEinkColors.actionKeyPressedBackground)
+
+        val idle = DuoKeyboardSurfaceState(
+            snapshot = EngineSnapshot.EMPTY,
+            layout = BuiltInLayouts.qwerty(),
+            isReady = true,
+            heightFraction = 0.75f,
+            isOverlayMode = false
+        )
+        val composing = idle.copy(
+            snapshot = EngineSnapshot(
+                preedit = "ni",
+                candidates = listOf(CandidateItem(text = "你", indexOnPage = 0)),
+                isComposing = true
+            )
+        )
+        assertEquals(HeaderSlotMode.TOOLBAR, idle.copy(toolbarMode = ToolbarMode.FULL).resolveHeaderSlotMode())
+        assertEquals(HeaderSlotMode.CANDIDATES, composing.copy(toolbarMode = ToolbarMode.FULL).resolveHeaderSlotMode())
+        assertEquals(
+            HeaderSlotMode.TOOLBAR,
+            composing.copy(toolbarMode = ToolbarMode.FULL, drawerOpen = true).resolveHeaderSlotMode()
+        )
+        assertEquals(HeaderSlotMode.NONE, idle.copy(toolbarMode = ToolbarMode.CANDIDATE_ONLY).resolveHeaderSlotMode())
+        assertEquals(
+            HeaderSlotMode.CANDIDATES,
+            composing.copy(toolbarMode = ToolbarMode.CANDIDATE_ONLY).resolveHeaderSlotMode()
+        )
+        assertEquals(HeaderSlotMode.NONE, idle.copy(toolbarMode = ToolbarMode.NONE).resolveHeaderSlotMode())
+        assertEquals(HeaderSlotMode.NONE, composing.copy(toolbarMode = ToolbarMode.NONE).resolveHeaderSlotMode())
     }
 }

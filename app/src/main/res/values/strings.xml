@@ -47,7 +47,10 @@
     <string name="scratchpad_label">Tap here to test dual-screen overlay, swap, 26-key, T9, EN</string>
 
     <string name="card_prefs_title">6. Keyboard Preferences</string>
-    <string name="pref_dark_theme">OLED Dark Theme</string>
+    <string name="pref_theme_label">Keyboard Theme</string>
+    <string name="theme_preset_dark">Dark</string>
+    <string name="theme_preset_light">Light</string>
+    <string name="theme_preset_eink">E-Ink</string>
     <string name="pref_number_row">Show Number Row (QWERTY)</string>
     <string name="pref_always_incognito">Always Incognito (No Learning)</string>
     <string name="pref_same_screen">Keep Keyboard on Same Screen</string>

@@ -2,8 +2,10 @@
 // Copyright (c) 2026 DuoIME Contributors
 package dev.duoime.ui.bar
 
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -22,6 +24,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,8 +38,10 @@ import dev.duoime.core.model.CandidatePaging
 import dev.duoime.core.model.EngineSnapshot
 import dev.duoime.core.model.WindowCandidateItem
 import dev.duoime.ui.theme.DuoColorTokens
+import dev.duoime.ui.theme.DuoThemePreset
 import dev.duoime.ui.theme.LocalDuoColors
 import dev.duoime.ui.theme.LocalDuoDimensions
+import dev.duoime.ui.theme.LocalDuoThemePreset
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 /**
@@ -283,13 +288,18 @@ private fun CandidateChip(
 ) {
     val bg = if (highlighted) colors.chipSelectedBackground else colors.chipBackground
     val fg = if (highlighted) colors.chipSelectedText else colors.chipText
+    val indication = if (LocalDuoThemePreset.current == DuoThemePreset.EINK) null else LocalIndication.current
     Box(
         modifier = Modifier
             .defaultMinSize(minWidth = CandidateBarLayout.CANDIDATE_MIN_WIDTH_DP.dp)
             .fillMaxHeight()
             .clip(RoundedCornerShape(8.dp))
             .background(bg)
-            .clickable(onClick = onClick)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = indication,
+                onClick = onClick
+            )
             .padding(horizontal = 12.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -313,13 +323,19 @@ private fun SmallBarButton(
     colors: DuoColorTokens,
     onClick: () -> Unit
 ) {
+    val indication = if (LocalDuoThemePreset.current == DuoThemePreset.EINK) null else LocalIndication.current
     Box(
         modifier = Modifier
             .defaultMinSize(minWidth = CandidateBarLayout.SMALL_BUTTON_MIN_WIDTH_DP.dp)
             .fillMaxHeight()
             .clip(RoundedCornerShape(8.dp))
             .background(colors.chipBackground)
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = indication,
+                enabled = enabled,
+                onClick = onClick
+            )
             .padding(horizontal = 6.dp),
         contentAlignment = Alignment.Center
     ) {

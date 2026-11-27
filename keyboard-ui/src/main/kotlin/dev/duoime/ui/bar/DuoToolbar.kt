@@ -2,9 +2,11 @@
 // Copyright (c) 2026 DuoIME Contributors
 package dev.duoime.ui.bar
 
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -22,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,8 +44,10 @@ import dev.duoime.core.model.QuickPin
 import dev.duoime.core.protocol.ExtensionToolbarButton
 import dev.duoime.ui.R
 import dev.duoime.ui.theme.DuoColorTokens
+import dev.duoime.ui.theme.DuoThemePreset
 import dev.duoime.ui.theme.LocalDuoColors
 import dev.duoime.ui.theme.LocalDuoDimensions
+import dev.duoime.ui.theme.LocalDuoThemePreset
 
 /**
  * Default priority pins rendered in [DuoToolbar] after host [ExtensionToolbarButton]s.
@@ -329,13 +334,19 @@ private fun SchemePillHalf(
         selected -> colors.chipSelectedText
         else -> colors.chipText
     }
+    val indication = if (LocalDuoThemePreset.current == DuoThemePreset.EINK) null else LocalIndication.current
     Box(
         modifier = Modifier
             .defaultMinSize(minWidth = 32.dp)
             .fillMaxHeight()
             .clip(RoundedCornerShape(6.dp))
             .background(bg)
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = indication,
+                enabled = enabled,
+                onClick = onClick
+            )
             .padding(horizontal = 8.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -359,6 +370,7 @@ private fun EngineIssueChip(tag: String, colors: DuoColorTokens, onDismiss: () -
         fontSize = fontSizeSp.sp,
         fontWeight = FontWeight.SemiBold
     )
+    val indication = if (LocalDuoThemePreset.current == DuoThemePreset.EINK) null else LocalIndication.current
     Row(
         modifier = Modifier
             .fillMaxHeight()
@@ -366,7 +378,11 @@ private fun EngineIssueChip(tag: String, colors: DuoColorTokens, onDismiss: () -
             .background(colors.warningBackground)
             .widthIn(max = 148.dp)
             .semantics { contentDescription = "Dismiss engine warning: $tag" }
-            .clickable(onClick = onDismiss)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = indication,
+                onClick = onDismiss
+            )
             .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -401,13 +417,19 @@ private fun ToolbarChip(
         selected -> colors.chipSelectedText
         else -> colors.chipText
     }
+    val indication = if (LocalDuoThemePreset.current == DuoThemePreset.EINK) null else LocalIndication.current
     Box(
         modifier = Modifier
             .defaultMinSize(minWidth = 44.dp)
             .fillMaxHeight()
             .clip(RoundedCornerShape(8.dp))
             .background(bg)
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = indication,
+                enabled = enabled,
+                onClick = onClick
+            )
             .padding(horizontal = 10.dp),
         contentAlignment = Alignment.Center
     ) {

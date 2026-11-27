@@ -14,6 +14,7 @@ import dev.duoime.core.policy.PlacementDecision
 import dev.duoime.core.policy.PlacementReason
 import dev.duoime.ui.feedback.KeyFeedbackOptions
 import dev.duoime.ui.feedback.KeySoundStyle
+import dev.duoime.ui.theme.DuoThemePreset
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
@@ -96,14 +97,21 @@ class FeedbackSettingsTest {
             resolveLiveSettingsAction(base, base.copy(swapToSameScreen = true))
         )
 
-        // (c) Height, darkTheme, pairedPeer, manualPin, perAppInline -> RELEVANT_ENVIRONMENT_CHANGED
+        // (c) Height, themePreset, pairedPeer, manualPin, perAppInline -> RELEVANT_ENVIRONMENT_CHANGED
         assertEquals(
             LiveSettingsPlacementAction.RELEVANT_ENVIRONMENT_CHANGED,
             resolveLiveSettingsAction(base, base.copy(heightFraction = 0.90f))
         )
         assertEquals(
             LiveSettingsPlacementAction.RELEVANT_ENVIRONMENT_CHANGED,
-            resolveLiveSettingsAction(base, base.copy(darkTheme = false))
+            resolveLiveSettingsAction(base, base.copy(themePreset = DuoThemePreset.LIGHT))
+        )
+        assertEquals(
+            LiveSettingsPlacementAction.RELEVANT_ENVIRONMENT_CHANGED,
+            resolveLiveSettingsAction(
+                base.copy(themePreset = DuoThemePreset.LIGHT),
+                base.copy(themePreset = DuoThemePreset.EINK)
+            )
         )
         assertEquals(
             LiveSettingsPlacementAction.RELEVANT_ENVIRONMENT_CHANGED,
@@ -136,13 +144,13 @@ class FeedbackSettingsTest {
             val surface = object : OverlaySurface {
                 override val isShowing: Boolean get() = tracker.isShowing
                 override val attachedDisplayId: Int get() = tracker.attachedDisplayId
-                override fun isShowingOn(displayId: Int, heightFraction: Float, darkTheme: Boolean): Boolean =
-                    tracker.shouldSkipShow(displayId, heightFraction, darkTheme, windowVisible)
+                override fun isShowingOn(displayId: Int, heightFraction: Float, themePreset: DuoThemePreset): Boolean =
+                    tracker.shouldSkipShow(displayId, heightFraction, themePreset, windowVisible)
 
-                override fun show(targetDisplayId: Int, heightFraction: Float, darkTheme: Boolean): Boolean {
-                    if (isShowingOn(targetDisplayId, heightFraction, darkTheme)) return true
+                override fun show(targetDisplayId: Int, heightFraction: Float, themePreset: DuoThemePreset): Boolean {
+                    if (isShowingOn(targetDisplayId, heightFraction, themePreset)) return true
                     showCalls++
-                    tracker.beginShow(targetDisplayId, heightFraction, darkTheme)
+                    tracker.beginShow(targetDisplayId, heightFraction, themePreset)
                     tracker.probeWindowVisibility(windowVisible)
                     return true
                 }
@@ -174,7 +182,7 @@ class FeedbackSettingsTest {
                             apiLevel = 34,
                             heightFraction = currentSettings.heightFraction
                         ),
-                        darkTheme = currentSettings.darkTheme
+                        themePreset = currentSettings.themePreset
                     )
                 },
                 onOverlayApplied = {},
@@ -221,14 +229,19 @@ class FeedbackSettingsTest {
             assertEquals(hidesBeforeSwapBack, hideCalls)
             assertEquals(0.90f, tracker.lastHeightFraction, 0.0001f)
 
-            applyDelta(currentSettings.copy(darkTheme = false))
+            applyDelta(currentSettings.copy(themePreset = DuoThemePreset.LIGHT))
             assertEquals(showsBeforeSwapBack + 3, showCalls)
             assertEquals(hidesBeforeSwapBack, hideCalls)
-            assertFalse(tracker.lastDarkTheme)
+            assertEquals(DuoThemePreset.LIGHT, tracker.lastThemePreset)
+
+            applyDelta(currentSettings.copy(themePreset = DuoThemePreset.EINK))
+            assertEquals(showsBeforeSwapBack + 4, showCalls)
+            assertEquals(hidesBeforeSwapBack, hideCalls)
+            assertEquals(DuoThemePreset.EINK, tracker.lastThemePreset)
 
             // Feedback-only change triggers zero placement/overlay calls
             applyDelta(currentSettings.copy(soundEnabled = true, soundStyle = KeySoundStyle.KALIMBA_MUSIC_BOX))
-            assertEquals(showsBeforeSwapBack + 3, showCalls)
+            assertEquals(showsBeforeSwapBack + 4, showCalls)
             assertEquals(hidesBeforeSwapBack, hideCalls)
         }
 }
