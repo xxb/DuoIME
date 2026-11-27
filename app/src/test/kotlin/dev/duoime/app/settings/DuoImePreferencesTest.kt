@@ -195,4 +195,33 @@ class DuoImePreferencesTest {
             DuoImePreferences(enBacking).load().toKeyboardPrefs()
         )
     }
+
+    @Test
+    fun preSyncingSettingsBeforeUpdateKeyboardPrefsSuppressesSelfEchoUnderSynchronousObserve() {
+        val backing = InMemorySharedPreferences()
+        val prefs = DuoImePreferences(backing)
+        var settingsState = prefs.load()
+        val echoedPrefs = mutableListOf<KeyboardPrefs>()
+
+        val handle = prefs.observe { observed ->
+            val previous = settingsState
+            if (observed == previous) return@observe
+            settingsState = observed
+            if (observed.toKeyboardPrefs() != previous.toKeyboardPrefs()) {
+                echoedPrefs.add(observed.toKeyboardPrefs())
+            }
+        }
+
+        // Controller-originated update: pre-sync settingsState before writing SharedPreferences -> zero echo
+        val controllerTarget = KeyboardPrefs(language = Language.ENGLISH, chineseScheme = ChineseScheme.PINYIN_T9)
+        settingsState = settingsState.withKeyboardPrefs(controllerTarget)
+        prefs.updateKeyboardPrefs(controllerTarget)
+        assertTrue("Self-originated prefs save must not echo back into controller", echoedPrefs.isEmpty())
+
+        // External Settings UI update (e.g. MainActivity toggling number row) still propagates cleanly
+        val externalUpdated = prefs.load().copy(includeNumberRow = true)
+        prefs.save(externalUpdated)
+        assertEquals(listOf(externalUpdated.toKeyboardPrefs()), echoedPrefs)
+        handle.close()
+    }
 }

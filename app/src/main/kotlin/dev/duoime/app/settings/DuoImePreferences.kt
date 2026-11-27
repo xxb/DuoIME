@@ -44,6 +44,13 @@ data class DuoImeSettings(
         includeNumberRow = includeNumberRow
     )
 
+    fun withKeyboardPrefs(keyboardPrefs: KeyboardPrefs): DuoImeSettings = copy(
+        preferredLanguage = keyboardPrefs.language,
+        chineseScheme = keyboardPrefs.chineseScheme,
+        chineseVariant = keyboardPrefs.variant,
+        includeNumberRow = keyboardPrefs.includeNumberRow
+    )
+
     fun toFeedbackOptions(): KeyFeedbackOptions = KeyFeedbackOptions(
         hapticEnabled = hapticEnabled,
         hapticStrength = KeyFeedbackOptions.clampHapticStrength(hapticStrength),
@@ -150,12 +157,7 @@ class DuoImePreferences internal constructor(
 
     fun updateKeyboardPrefs(keyboardPrefs: KeyboardPrefs): DuoImeSettings {
         val current = load()
-        val updated = current.copy(
-            preferredLanguage = keyboardPrefs.language,
-            chineseScheme = keyboardPrefs.chineseScheme,
-            chineseVariant = keyboardPrefs.variant,
-            includeNumberRow = keyboardPrefs.includeNumberRow
-        )
+        val updated = current.withKeyboardPrefs(keyboardPrefs)
         if (updated == current && !prefs.contains(KEY_LEGACY_INPUT_MODE)) {
             return current
         }

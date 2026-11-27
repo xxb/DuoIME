@@ -63,6 +63,7 @@ import dev.duoime.app.settings.DuoImeSettings
 import dev.duoime.app.settings.LiveSettingsPlacementAction
 import dev.duoime.app.settings.resolveLiveSettingsAction
 import dev.duoime.core.engine.InputSink
+import dev.duoime.core.model.KeyboardPrefs
 import dev.duoime.core.policy.DisplayPlacementInput
 import dev.duoime.core.policy.PlacementDecision
 import dev.duoime.core.policy.PlacementReason
@@ -153,7 +154,7 @@ class DuoImeService : InputMethodService() {
                 onDismissRequested = { hideAllKeyboardSurfaces() },
                 onSwitchImeRequested = { showImePicker() },
                 onHeightFractionChanged = { fraction -> handleHeightChanged(fraction) },
-                onPrefsChanged = { updatedPrefs -> preferences.updateKeyboardPrefs(updatedPrefs) },
+                onPrefsChanged = { updatedPrefs -> handleKeyboardPrefsChanged(updatedPrefs) },
                 onFeedbackKey = { key -> feedbackController.onKeyPress(key, cachedFeedbackOptions) },
                 onRepeatFeedbackKey = { key -> feedbackController.onKeyRepeat(key, cachedFeedbackOptions) }
             )
@@ -434,6 +435,14 @@ class DuoImeService : InputMethodService() {
 
     private fun handleHeightChanged(fraction: Float) {
         preferences.updateHeightFraction(fraction)
+    }
+
+    private fun handleKeyboardPrefsChanged(updatedPrefs: KeyboardPrefs) {
+        val current = settingsFlow.value
+        if (current.toKeyboardPrefs() != updatedPrefs) {
+            settingsFlow.value = current.withKeyboardPrefs(updatedPrefs)
+        }
+        preferences.updateKeyboardPrefs(updatedPrefs)
     }
 
     private fun hideAllKeyboardSurfaces() {
