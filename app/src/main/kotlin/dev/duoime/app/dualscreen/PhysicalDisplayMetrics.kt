@@ -59,6 +59,25 @@ object PhysicalDisplayMetrics {
         return (((xdpi + ydpi) * 0.5f * pixelScale) / BASELINE_DPI).coerceIn(MIN_DENSITY, MAX_DENSITY)
     }
 
+    @Suppress("LongParameterList")
+    internal fun resolveFromModeSize(
+        logicalDensity: Float,
+        xdpi: Float,
+        ydpi: Float,
+        currentWidthPx: Int,
+        currentHeightPx: Int,
+        modePhysicalWidthPx: Int?,
+        modePhysicalHeightPx: Int?
+    ): Float = computePhysicalDensity(
+        logicalDensity = logicalDensity,
+        xdpi = xdpi,
+        ydpi = ydpi,
+        currentWidthPx = currentWidthPx,
+        currentHeightPx = currentHeightPx,
+        physicalWidthPx = modePhysicalWidthPx ?: 0,
+        physicalHeightPx = modePhysicalHeightPx ?: 0
+    )
+
     fun resolvePhysicalDensity(
         display: Display?,
         displayMetrics: DisplayMetrics,
@@ -66,14 +85,14 @@ object PhysicalDisplayMetrics {
         currentHeightPx: Int
     ): Float {
         val mode = runCatching { display?.mode }.getOrNull()
-        return computePhysicalDensity(
+        return resolveFromModeSize(
             logicalDensity = displayMetrics.density,
             xdpi = displayMetrics.xdpi,
             ydpi = displayMetrics.ydpi,
             currentWidthPx = currentWidthPx,
             currentHeightPx = currentHeightPx,
-            physicalWidthPx = mode?.physicalWidth ?: 0,
-            physicalHeightPx = mode?.physicalHeight ?: 0
+            modePhysicalWidthPx = mode?.physicalWidth,
+            modePhysicalHeightPx = mode?.physicalHeight
         )
     }
 }

@@ -154,4 +154,32 @@ class PhysicalDisplayMetricsTest {
             0.0001f
         )
     }
+
+    @Test
+    fun resolveFromModeSizeHandlesMissingModeAndActiveWmSizeModeCleanly() {
+        // Missing Display.Mode (null physical dimensions) defaults pixelScale to 1.0f while
+        // preserving xdpi/ydpi physical-DPI anchoring under wm density override.
+        val missingModeDensity = PhysicalDisplayMetrics.resolveFromModeSize(
+            logicalDensity = 213f / 160f,
+            xdpi = 320f,
+            ydpi = 320f,
+            currentWidthPx = 1280,
+            currentHeightPx = 720,
+            modePhysicalWidthPx = null,
+            modePhysicalHeightPx = null
+        )
+        assertEquals(2.0f, missingModeDensity, 0.0001f)
+
+        // Present Display.Mode activates orientation-invariant wm size compensation
+        val withModeDensity = PhysicalDisplayMetrics.resolveFromModeSize(
+            logicalDensity = 2.0f,
+            xdpi = 400f,
+            ydpi = 400f,
+            currentWidthPx = 1280,
+            currentHeightPx = 720,
+            modePhysicalWidthPx = 1920,
+            modePhysicalHeightPx = 1080
+        )
+        assertEquals((400f * (2f / 3f)) / 160f, withModeDensity, 0.001f)
+    }
 }

@@ -5,8 +5,12 @@
 package dev.duoime.ui
 
 import androidx.compose.ui.unit.dp
+import dev.duoime.core.layout.BuiltInLayouts
+import dev.duoime.core.layout.LayoutSpec
 import dev.duoime.ui.bar.CandidateBarLayout
+import dev.duoime.ui.grid.KeyGridGeometry
 import dev.duoime.ui.theme.DuoDefaultDimensions
+import dev.duoime.ui.theme.DuoDimensionTokens
 import dev.duoime.ui.theme.resolveAdaptiveDimensions
 import kotlin.math.abs
 import org.junit.Assert.assertEquals
@@ -46,71 +50,96 @@ class DuoKeyboardUiSmokeTest {
     }
 
     @Test
-    fun resolveAdaptiveDimensionsMatchesKeyRowHeightAndEnforcesFloorsAndCaps() {
-        // 260dp compact inline: hits 52dp / 50dp floors
-        val compact260 = resolveAdaptiveDimensions(availableHeightDp = 260f, keyRowCount = 4, hasSyllableRail = false)
-        assertEquals(DuoDefaultDimensions.toolbarHeight, compact260.toolbarHeight)
-        assertEquals(compact260.toolbarHeight, compact260.candidateBarHeight)
-        assertEquals(DuoDefaultDimensions.syllableBarHeight, compact260.syllableBarHeight)
-        assertEquals(19f, compact260.candidateFontSp, 0.01f)
-        assertEquals(17f, compact260.barButtonFontSp, 0.01f)
-        assertEquals(15f, compact260.preeditFontSp, 0.01f)
-        assertEquals(13f, compact260.toolbarFontSp, 0.01f)
-        assertEquals(16f, compact260.syllableFontSp, 0.01f)
+    fun resolveAdaptiveDimensionsMatchesRealKeyGridRowHeightAndEnforcesCompactFloorsAndCaps() {
+        val qwerty4 = BuiltInLayouts.qwerty(includeNumberRow = false)
+        val qwerty5 = BuiltInLayouts.qwerty(includeNumberRow = true)
+        val t9 = BuiltInLayouts.t9()
 
-        // 360dp 4-row: header height matches the resulting key row height cleanly
-        val mid360FourRow = resolveAdaptiveDimensions(
-            availableHeightDp = 360f,
-            keyRowCount = 4,
-            hasSyllableRail = false
-        )
-        assertEquals(mid360FourRow.toolbarHeight, mid360FourRow.candidateBarHeight)
-        assertTrue(mid360FourRow.toolbarHeight > 52.dp && mid360FourRow.toolbarHeight < 76.dp)
-        val gridHeight360 = 360f - 1f - DuoDefaultDimensions.gridVerticalPadding.value * 2f -
-            mid360FourRow.toolbarHeight.value
-        val keyRowHeight360 = gridHeight360 / 4f
+        fun measureRenderedRowHeight(
+            availableHeightDp: Float,
+            layout: LayoutSpec,
+            hasSyllableRail: Boolean,
+            resolved: DuoDimensionTokens
+        ): Float {
+            assertEquals(resolved.toolbarHeight, resolved.candidateBarHeight)
+            val syllableTotal = if (hasSyllableRail) resolved.syllableBarHeight.value + 1f else 0f
+            val gridHeight = availableHeightDp -
+                resolved.candidateBarHeight.value -
+                1f -
+                syllableTotal -
+                resolved.gridVerticalPadding.value * 2f
+            val hitMap = KeyGridGeometry.computeHitMap(
+                layout = layout,
+                widthPx = 360f,
+                heightPx = gridHeight,
+                horizontalGapPx = resolved.keyHorizontalGap.value,
+                verticalGapPx = resolved.keyVerticalGap.value
+            )
+            return hitMap.bottom(0) - hitMap.top(0)
+        }
+
+        // Exact header == rendered key row height (< 0.05dp) across 360dp (4-row, 5-row, T9), 432dp 5-row, 320dp T9
+        val r360Four = resolveAdaptiveDimensions(360f, qwerty4.rows.size, hasSyllableRail = false)
+        val row360Four = measureRenderedRowHeight(360f, qwerty4, hasSyllableRail = false, r360Four)
         assertTrue(
-            "Header height (${mid360FourRow.toolbarHeight.value}) should closely match key row ($keyRowHeight360)",
-            abs(mid360FourRow.toolbarHeight.value - keyRowHeight360) < 0.5f
+            "360dp 4-row header (${r360Four.candidateBarHeight.value}) vs key row ($row360Four)",
+            abs(r360Four.candidateBarHeight.value - row360Four) < 0.05f
         )
 
-        // 360dp 5-row (number row) scales below 4-row while staying >= 52dp floor
-        val mid360FiveRow = resolveAdaptiveDimensions(
-            availableHeightDp = 360f,
-            keyRowCount = 5,
-            hasSyllableRail = false
+        val r360Five = resolveAdaptiveDimensions(360f, qwerty5.rows.size, hasSyllableRail = false)
+        val row360Five = measureRenderedRowHeight(360f, qwerty5, hasSyllableRail = false, r360Five)
+        assertTrue(
+            "360dp 5-row header (${r360Five.candidateBarHeight.value}) vs key row ($row360Five)",
+            abs(r360Five.candidateBarHeight.value - row360Five) < 0.05f
         )
-        assertEquals(mid360FiveRow.toolbarHeight, mid360FiveRow.candidateBarHeight)
-        assertTrue(mid360FiveRow.toolbarHeight >= 52.dp)
-        assertTrue(mid360FiveRow.toolbarHeight < mid360FourRow.toolbarHeight)
+        assertTrue(r360Five.candidateBarHeight < r360Four.candidateBarHeight)
 
-        // 432dp 4-row (tall overlay): caps at 76dp header / 64dp syllable with proportional typography
-        val tall432 = resolveAdaptiveDimensions(availableHeightDp = 432f, keyRowCount = 4, hasSyllableRail = false)
-        assertEquals(76.dp, tall432.toolbarHeight)
-        assertEquals(tall432.toolbarHeight, tall432.candidateBarHeight)
-        assertEquals(64.dp, tall432.syllableBarHeight)
-        assertEquals(25f, tall432.candidateFontSp, 0.01f)
-        assertEquals(22f, tall432.barButtonFontSp, 0.01f)
-        assertEquals(19f, tall432.preeditFontSp, 0.01f)
-        assertEquals(18f, tall432.toolbarFontSp, 0.01f)
+        val r360T9 = resolveAdaptiveDimensions(360f, t9.rows.size, hasSyllableRail = true)
+        val row360T9 = measureRenderedRowHeight(360f, t9, hasSyllableRail = true, r360T9)
+        assertTrue(
+            "360dp T9 header (${r360T9.candidateBarHeight.value}) vs key row ($row360T9)",
+            abs(r360T9.candidateBarHeight.value - row360T9) < 0.05f
+        )
 
-        // T9 mode (hasSyllableRail = true) accounts for extra rail + divider while maintaining floors
-        val t9At360 = resolveAdaptiveDimensions(availableHeightDp = 360f, keyRowCount = 4, hasSyllableRail = true)
-        assertEquals(t9At360.toolbarHeight, t9At360.candidateBarHeight)
-        assertTrue(t9At360.toolbarHeight >= 52.dp)
-        assertTrue(t9At360.syllableBarHeight >= 50.dp)
-        assertTrue(t9At360.toolbarHeight < mid360FourRow.toolbarHeight)
-        assertTrue(t9At360.syllableBarHeight <= t9At360.toolbarHeight)
+        val r432Five = resolveAdaptiveDimensions(432f, qwerty5.rows.size, hasSyllableRail = false)
+        val row432Five = measureRenderedRowHeight(432f, qwerty5, hasSyllableRail = false, r432Five)
+        assertTrue(
+            "432dp 5-row header (${r432Five.candidateBarHeight.value}) vs key row ($row432Five)",
+            abs(r432Five.candidateBarHeight.value - row432Five) < 0.05f
+        )
 
-        // 900dp giant screen: strictly capped at 76dp / 64dp and font bounds
-        val giant900 = resolveAdaptiveDimensions(availableHeightDp = 900f, keyRowCount = 4, hasSyllableRail = true)
-        assertEquals(76.dp, giant900.toolbarHeight)
-        assertEquals(76.dp, giant900.candidateBarHeight)
-        assertEquals(64.dp, giant900.syllableBarHeight)
-        assertTrue(giant900.candidateFontSp in 19f..25f)
-        assertTrue(giant900.barButtonFontSp in 17f..22f)
-        assertTrue(giant900.preeditFontSp in 15f..19f)
-        assertTrue(giant900.toolbarFontSp in 13f..18f)
-        assertTrue(giant900.syllableFontSp in 16f..21f)
+        // 320dp T9: BOTH header and rendered key rows >= 48dp and exactly matched
+        val r320T9 = resolveAdaptiveDimensions(320f, t9.rows.size, hasSyllableRail = true)
+        val row320T9 = measureRenderedRowHeight(320f, t9, hasSyllableRail = true, r320T9)
+        assertTrue(
+            "320dp T9 header (${r320T9.candidateBarHeight.value}) vs key row ($row320T9)",
+            abs(r320T9.candidateBarHeight.value - row320T9) < 0.05f
+        )
+        assertTrue("320dp T9 header must be >= 48dp", r320T9.candidateBarHeight >= 48.dp)
+        assertTrue("320dp T9 key row must be >= 48dp, got $row320T9", row320T9 >= 48f)
+
+        // 260dp T9: relaxes smoothly to 40dp header / 34dp rail without crushing key rows (>= 38dp)
+        val r260T9 = resolveAdaptiveDimensions(260f, t9.rows.size, hasSyllableRail = true)
+        val row260T9 = measureRenderedRowHeight(260f, t9, hasSyllableRail = true, r260T9)
+        assertEquals(40.dp, r260T9.toolbarHeight)
+        assertEquals(40.dp, r260T9.candidateBarHeight)
+        assertEquals(34.dp, r260T9.syllableBarHeight)
+        assertTrue("260dp T9 key row must stay >= 38dp, got $row260T9", row260T9 >= 38f)
+        assertEquals(16f, r260T9.candidateFontSp, 0.01f)
+        assertEquals(15f, r260T9.barButtonFontSp, 0.01f)
+        assertEquals(13f, r260T9.preeditFontSp, 0.01f)
+        assertEquals(12f, r260T9.toolbarFontSp, 0.01f)
+        assertEquals(14f, r260T9.syllableFontSp, 0.01f)
+
+        // 900dp giant screen: strictly capped at 76dp / 64dp and proportional typography upper bounds
+        val r900T9 = resolveAdaptiveDimensions(900f, t9.rows.size, hasSyllableRail = true)
+        assertEquals(76.dp, r900T9.toolbarHeight)
+        assertEquals(76.dp, r900T9.candidateBarHeight)
+        assertEquals(64.dp, r900T9.syllableBarHeight)
+        assertTrue(r900T9.candidateFontSp in 16f..25f)
+        assertTrue(r900T9.barButtonFontSp in 15f..22f)
+        assertTrue(r900T9.preeditFontSp in 13f..19f)
+        assertTrue(r900T9.toolbarFontSp in 12f..18f)
+        assertTrue(r900T9.syllableFontSp in 14f..21f)
     }
 }

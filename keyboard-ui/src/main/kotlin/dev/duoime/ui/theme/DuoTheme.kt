@@ -50,29 +50,32 @@ data class DuoDimensionTokens(
     val syllableBarHeight: Dp = 50.dp
 ) {
     val candidateFontSp: Float
-        get() = (candidateBarHeight.value * 0.34f).coerceIn(19f, 25f)
+        get() = (candidateBarHeight.value * 0.35f).coerceIn(16f, 25f)
 
     val barButtonFontSp: Float
-        get() = (candidateBarHeight.value * 0.30f).coerceIn(17f, 22f)
+        get() = (candidateBarHeight.value * 0.30f).coerceIn(15f, 22f)
 
     val preeditFontSp: Float
-        get() = (candidateBarHeight.value * 0.25f).coerceIn(15f, 19f)
+        get() = (candidateBarHeight.value * 0.25f).coerceIn(13f, 19f)
 
     val toolbarFontSp: Float
-        get() = (toolbarHeight.value * 0.25f).coerceIn(13f, 18f)
+        get() = (toolbarHeight.value * 0.25f).coerceIn(12f, 18f)
 
     val syllableFontSp: Float
-        get() = (syllableBarHeight.value * 0.32f).coerceIn(16f, 21f)
+        get() = (syllableBarHeight.value * 0.32f).coerceIn(14f, 21f)
 }
 
+private const val MIN_ADAPTIVE_HEADER_HEIGHT_DP: Float = 40f
+private const val MIN_ADAPTIVE_SYLLABLE_HEIGHT_DP: Float = 34f
 private const val MAX_ADAPTIVE_HEADER_HEIGHT_DP: Float = 76f
 private const val MAX_ADAPTIVE_SYLLABLE_HEIGHT_DP: Float = 64f
 private const val ADAPTIVE_SYLLABLE_ROW_RATIO: Float = 0.85f
 
 /**
  * Scales the top header ([DuoDimensionTokens.toolbarHeight] == [DuoDimensionTokens.candidateBarHeight])
- * and T9 [DuoDimensionTokens.syllableBarHeight] proportionally to the key row height inside
- * [availableHeightDp], clamped above the `52.dp` / `50.dp` ergonomic floors and below `76.dp` / `64.dp`.
+ * and T9 [DuoDimensionTokens.syllableBarHeight] proportionally to the rendered key row height inside
+ * [availableHeightDp] (accounting for dividers, grid padding, and inter-row `keyVerticalGap`),
+ * clamped within `40..76.dp` (header) and `34..64.dp` (syllable rail).
  */
 fun resolveAdaptiveDimensions(
     availableHeightDp: Float,
@@ -81,16 +84,18 @@ fun resolveAdaptiveDimensions(
     base: DuoDimensionTokens = DuoDefaultDimensions
 ): DuoDimensionTokens {
     val safeHeight = if (availableHeightDp.isFinite()) availableHeightDp else 0f
-    val overheadDp = 1f + (if (hasSyllableRail) 1f else 0f) + base.gridVerticalPadding.value * 2f
-    val rowUnits = keyRowCount.coerceAtLeast(1).toFloat() +
+    val safeRows = keyRowCount.coerceAtLeast(1)
+    val overheadDp = 1f +
+        (if (hasSyllableRail) 1f else 0f) +
+        base.gridVerticalPadding.value * 2f +
+        base.keyVerticalGap.value * (safeRows - 1)
+    val rowUnits = safeRows.toFloat() +
         1f +
         (if (hasSyllableRail) ADAPTIVE_SYLLABLE_ROW_RATIO else 0f)
     val targetRowDp = (safeHeight - overheadDp).coerceAtLeast(1f) / rowUnits
-    val headerMax = maxOf(base.toolbarHeight.value, MAX_ADAPTIVE_HEADER_HEIGHT_DP)
-    val syllableMax = maxOf(base.syllableBarHeight.value, MAX_ADAPTIVE_SYLLABLE_HEIGHT_DP)
-    val headerHeight = targetRowDp.coerceIn(base.toolbarHeight.value, headerMax).dp
+    val headerHeight = targetRowDp.coerceIn(MIN_ADAPTIVE_HEADER_HEIGHT_DP, MAX_ADAPTIVE_HEADER_HEIGHT_DP).dp
     val syllableHeight = (targetRowDp * ADAPTIVE_SYLLABLE_ROW_RATIO)
-        .coerceIn(base.syllableBarHeight.value, syllableMax)
+        .coerceIn(MIN_ADAPTIVE_SYLLABLE_HEIGHT_DP, MAX_ADAPTIVE_SYLLABLE_HEIGHT_DP)
         .dp
     return base.copy(
         toolbarHeight = headerHeight,
