@@ -128,11 +128,14 @@ if command -v ninja >/dev/null 2>&1; then
     CMAKE_GENERATOR_ARGS=(-G Ninja)
 fi
 
-LLVM_STRIP="$(find "${NDK_DIR}/toolchains/llvm/prebuilt" -maxdepth 3 -type f -name llvm-strip 2>/dev/null | head -n 1 || true)"
-LLVM_READELF="$(find "${NDK_DIR}/toolchains/llvm/prebuilt" -maxdepth 3 -type f -name llvm-readelf 2>/dev/null | head -n 1 || true)"
-if [[ -z "$LLVM_STRIP" ]]; then
-    echo "ERROR: llvm-strip not found under NDK prebuilt toolchain: ${NDK_DIR}" >&2
+LLVM_STRIP="$(find "${NDK_DIR}/toolchains/llvm/prebuilt" -maxdepth 3 \( -type f -o -type l \) -name llvm-strip 2>/dev/null | head -n 1 || true)"
+LLVM_READELF="$(find "${NDK_DIR}/toolchains/llvm/prebuilt" -maxdepth 3 \( -type f -o -type l \) -name llvm-readelf 2>/dev/null | head -n 1 || true)"
+if [[ -z "$LLVM_STRIP" || ! -x "$LLVM_STRIP" ]]; then
+    echo "ERROR: executable llvm-strip not found under NDK prebuilt toolchain: ${NDK_DIR}" >&2
     exit 1
+fi
+if [[ -n "$LLVM_READELF" && ! -x "$LLVM_READELF" ]]; then
+    LLVM_READELF=""
 fi
 
 SRC_DIR="${WORK_DIR}/src"
