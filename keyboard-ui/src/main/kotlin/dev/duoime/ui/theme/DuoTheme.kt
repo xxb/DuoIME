@@ -76,6 +76,13 @@ private const val ADAPTIVE_SYLLABLE_ROW_RATIO: Float = 0.85f
  * and T9 [DuoDimensionTokens.syllableBarHeight] proportionally to the rendered key row height inside
  * [availableHeightDp] (accounting for dividers, grid padding, and inter-row `keyVerticalGap`),
  * clamped within `40..76.dp` (header) and `34..64.dp` (syllable rail).
+ *
+ * Compact-mode trade-off: unbounded [DuoDefaultDimensions] (`52/52/50.dp`) and standard `>= 360.dp`
+ * layouts preserve `>= 48.dp` inner header touch targets (with T9's `0.85x` syllable rail staying
+ * near `48.dp` and reaching `>= 48.dp` inner height on taller surfaces), whereas compact T9 heights
+ * (`< 320.dp`) relax smoothly down to `40.dp` header (`36.dp` inner chip height) and `34.dp` syllable
+ * rail (`32.dp` inner chip height) so `KeyGridGeometry` key rows degrade gracefully to `38.5.dp`
+ * (at `260.dp`) rather than collapsing.
  */
 fun resolveAdaptiveDimensions(
     availableHeightDp: Float,

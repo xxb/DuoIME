@@ -85,12 +85,20 @@ class DuoKeyboardUiSmokeTest {
             "360dp 4-row header (${r360Four.candidateBarHeight.value}) vs key row ($row360Four)",
             abs(r360Four.candidateBarHeight.value - row360Four) < 0.05f
         )
+        assertTrue(
+            "360dp 4-row inner candidate bar hit height must be >= 48dp",
+            r360Four.candidateBarHeight.value - CandidateBarLayout.OUTER_VERTICAL_PADDING_DP * 2f >= 48f
+        )
 
         val r360Five = resolveAdaptiveDimensions(360f, qwerty5.rows.size, hasSyllableRail = false)
         val row360Five = measureRenderedRowHeight(360f, qwerty5, hasSyllableRail = false, r360Five)
         assertTrue(
             "360dp 5-row header (${r360Five.candidateBarHeight.value}) vs key row ($row360Five)",
             abs(r360Five.candidateBarHeight.value - row360Five) < 0.05f
+        )
+        assertTrue(
+            "360dp 5-row inner candidate bar hit height must be >= 48dp",
+            r360Five.candidateBarHeight.value - CandidateBarLayout.OUTER_VERTICAL_PADDING_DP * 2f >= 48f
         )
         assertTrue(r360Five.candidateBarHeight < r360Four.candidateBarHeight)
 
@@ -118,13 +126,23 @@ class DuoKeyboardUiSmokeTest {
         assertTrue("320dp T9 header must be >= 48dp", r320T9.candidateBarHeight >= 48.dp)
         assertTrue("320dp T9 key row must be >= 48dp, got $row320T9", row320T9 >= 48f)
 
-        // 260dp T9: relaxes smoothly to 40dp header / 34dp rail without crushing key rows (>= 38dp)
+        // 260dp T9 compact mode: relaxes to 40dp header (36dp inner) / 34dp rail (32dp inner) and 38.5dp key rows
         val r260T9 = resolveAdaptiveDimensions(260f, t9.rows.size, hasSyllableRail = true)
         val row260T9 = measureRenderedRowHeight(260f, t9, hasSyllableRail = true, r260T9)
         assertEquals(40.dp, r260T9.toolbarHeight)
         assertEquals(40.dp, r260T9.candidateBarHeight)
         assertEquals(34.dp, r260T9.syllableBarHeight)
-        assertTrue("260dp T9 key row must stay >= 38dp, got $row260T9", row260T9 >= 38f)
+        assertEquals(38.5f, row260T9, 0.05f)
+        assertEquals(
+            36f,
+            r260T9.candidateBarHeight.value - CandidateBarLayout.OUTER_VERTICAL_PADDING_DP * 2f,
+            0.01f
+        )
+        assertEquals(
+            32f,
+            r260T9.syllableBarHeight.value - CandidateBarLayout.SYLLABLE_VERTICAL_PADDING_DP * 2f,
+            0.01f
+        )
         assertEquals(16f, r260T9.candidateFontSp, 0.01f)
         assertEquals(15f, r260T9.barButtonFontSp, 0.01f)
         assertEquals(13f, r260T9.preeditFontSp, 0.01f)
