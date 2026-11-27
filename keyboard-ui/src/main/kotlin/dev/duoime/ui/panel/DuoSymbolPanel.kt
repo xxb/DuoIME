@@ -303,7 +303,7 @@ private fun SymbolBottomActionBar(
     }
 }
 
-private class RepeatableButtonDispatch(
+internal class RepeatableButtonDispatch(
     val onActionState: State<(KeyAction) -> Unit>,
     val onKeyPressDownState: State<(FeedbackKey) -> Unit>
 )
@@ -402,11 +402,11 @@ private suspend fun PointerInputScope.handleRepeatableButtonPointers(
     }
 }
 
-private fun isInsideBounds(change: PointerInputChange, width: Float, height: Float): Boolean =
+internal fun isInsideBounds(change: PointerInputChange, width: Float, height: Float): Boolean =
     change.position.x in 0f..width && change.position.y in 0f..height
 
 @Suppress("LongParameterList")
-private fun processRepeatablePointerChange(
+internal fun processRepeatablePointerChange(
     change: PointerInputChange,
     activePointerId: Long?,
     inside: Boolean,
