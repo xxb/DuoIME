@@ -558,5 +558,43 @@ class DuoImeEmbedSdkTest {
         imeState.close()
     }
 
+    @Test
+    fun duoImeStateCloseFlushesComposingSpanAndDetachesSinkIdempotently() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val controller = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { LiteInputEngine.createDefault() }
+        )
+        val imeState = DuoImeState(controller)
+        advanceUntilIdle()
+
+        val bridge = RecordingEmbedBridge()
+        val sink = EmbedInputConnectionSink(connectionProvider = { bridge })
+        val editorCtx = EmbedEditorInfoMapper.buildEditorContext(
+            packageName = "dev.example.embed",
+            inputType = EmbedEditorInfoMapper.TYPE_CLASS_TEXT,
+            imeOptions = EditorContext.IME_ACTION_DONE
+        )
+        imeState.attachSessionSink(sink = sink, context = editorCtx)
+        controller.dispatchKeyAction(KeyAction.Engine('n'.code))
+        runCurrent()
+
+        assertTrue(imeState.isInputSessionActive.value)
+        assertTrue(sink.hasActiveComposing)
+        assertTrue(imeState.uiState.value.snapshot.isComposing)
+
+        // Direct close() without prior detachSessionSink must flush composing span & detach cleanly
+        imeState.close()
+        assertFalse(imeState.isInputSessionActive.value)
+        assertNull(imeState.activeSink)
+        assertFalse(sink.hasActiveComposing)
+        assertEquals(1, bridge.calls.count { it == "finish" })
+
+        // Repeated close() is idempotent and must not emit a duplicate finishComposingText
+        imeState.close()
+        assertEquals(1, bridge.calls.count { it == "finish" })
+    }
+
     private fun List<dev.duoime.core.layout.KeyRowSpec>.flattenKeys() = flatMap { it.keys }
 }

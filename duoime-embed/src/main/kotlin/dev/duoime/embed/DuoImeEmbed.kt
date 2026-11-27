@@ -42,7 +42,10 @@ fun DuoImeKeyboard(
 ) {
     DisposableEffect(controller, sink) {
         controller.attachSink(sink)
-        onDispose { controller.detachSink(sink) }
+        onDispose {
+            (sink as? EmbedInputConnectionSink)?.finishComposingOnDisconnect()
+            controller.detachSink(sink)
+        }
     }
     DuoImeKeyboardContent(
         controller = controller,
@@ -67,7 +70,10 @@ fun DuoImeKeyboard(
     if (sink != null) {
         DisposableEffect(state.controller, sink) {
             state.controller.attachSink(sink)
-            onDispose { state.controller.detachSink(sink) }
+            onDispose {
+                (sink as? EmbedInputConnectionSink)?.finishComposingOnDisconnect()
+                state.controller.detachSink(sink)
+            }
         }
     }
     val preDispatch = remember(state) { { state.syncSessionSelectionIfComposing() } }

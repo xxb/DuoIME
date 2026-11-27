@@ -154,14 +154,17 @@ object DisplayClassifier {
     }
 
     /**
-     * Returns `true` when at least two active non-virtual displays are currently available,
-     * enabling the dual-screen `[换屏]` capability in `HostChrome`.
+     * Returns `true` when at least two distinct active [DisplayKind.BUILT_IN] displays are
+     * currently available, matching `DisplayPlacementPolicy.resolve` eligibility for the
+     * dual-screen `[换屏]` capability in `HostChrome`.
      */
     fun hasEligiblePeerDisplay(displays: List<RawDisplayInfo>, pairedPeerDisplayId: Int? = null): Boolean =
         hasEligiblePeerDisplay(classifyDisplays(displays, pairedPeerDisplayId))
 
     fun hasEligiblePeerDisplay(candidates: List<DisplayCandidate>): Boolean =
-        candidates.count { it.isOn && it.kind != DisplayKind.VIRTUAL } >= 2
+        candidates.filter { it.isOn && it.kind == DisplayKind.BUILT_IN }
+            .distinctBy { it.displayId }
+            .size >= 2
 
     internal fun parseTypeFromDescription(description: String): Int? {
         if (description.isBlank()) return null

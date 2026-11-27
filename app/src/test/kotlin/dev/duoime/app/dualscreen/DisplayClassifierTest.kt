@@ -273,11 +273,14 @@ class DisplayClassifierTest {
     }
 
     @Test
-    fun hasEligiblePeerDisplayRequiresAtLeastTwoActiveNonVirtualDisplays() {
+    fun hasEligiblePeerDisplayRequiresAtLeastTwoDistinctActiveBuiltInDisplays() {
         // Single active display -> false
         assertFalse(DisplayClassifier.hasEligiblePeerDisplay(listOf(retroidDisplay0())))
 
-        // Two active built-in displays -> true
+        // Duplicate built-in display ID -> false
+        assertFalse(DisplayClassifier.hasEligiblePeerDisplay(listOf(retroidDisplay0(), retroidDisplay0())))
+
+        // Two distinct active built-in displays -> true
         assertTrue(DisplayClassifier.hasEligiblePeerDisplay(listOf(retroidDisplay0(), retroidDisplay2())))
 
         // Second display OFF -> false
@@ -295,5 +298,24 @@ class DisplayClassifierTest {
             reflectedType = DisplayClassifier.TYPE_VIRTUAL
         )
         assertFalse(DisplayClassifier.hasEligiblePeerDisplay(listOf(retroidDisplay0(), virtual)))
+
+        // Default BUILT_IN + EXTERNAL display -> false (DisplayPlacementPolicy excludes EXTERNAL)
+        val external = RawDisplayInfo(
+            displayId = 7,
+            flags = DisplayClassifier.FLAG_PRESENTATION,
+            state = DisplayClassifier.STATE_ON,
+            reflectedType = DisplayClassifier.TYPE_EXTERNAL
+        )
+        assertFalse(DisplayClassifier.hasEligiblePeerDisplay(listOf(retroidDisplay0(), external)))
+
+        // Default BUILT_IN + unpaired PRESENTATION_ONLY display -> false
+        val presentationOnly = RawDisplayInfo(
+            displayId = 8,
+            flags = DisplayClassifier.FLAG_PRESENTATION,
+            state = DisplayClassifier.STATE_ON,
+            reflectedType = null,
+            description = "Display id 8: wireless display"
+        )
+        assertFalse(DisplayClassifier.hasEligiblePeerDisplay(listOf(retroidDisplay0(), presentationOnly)))
     }
 }

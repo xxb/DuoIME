@@ -7,6 +7,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import dev.duoime.core.engine.InputSink
 import dev.duoime.core.model.EditorContext
 import java.util.concurrent.atomic.AtomicReference
@@ -63,7 +64,11 @@ class DuoImeState(val controller: KeyboardController) {
     }
 
     fun close() {
-        activeSinkRef.set(null)
+        val sink = activeSinkRef.getAndSet(null)
+        (sink as? EmbedInputConnectionSink)?.finishComposingOnDisconnect()
+        if (sink != null) {
+            controller.detachSink(sink)
+        }
         _isInputSessionActive.value = false
         controller.close()
     }
@@ -72,6 +77,10 @@ class DuoImeState(val controller: KeyboardController) {
 /**
  * Remembers and manages the lifecycle of a [DuoImeState] backed by [KeyboardController], tearing
  * down the actor cleanly when leaving composition.
+ *
+ * [config] sets the initial actor configuration at first composition, while [hostCallbacks] is
+ * forwarded live via [rememberUpdatedState] so recomposing with updated lambdas takes effect
+ * immediately without recreating the controller.
  */
 @Composable
 fun rememberDuoImeState(
@@ -79,12 +88,23 @@ fun rememberDuoImeState(
     hostCallbacks: KeyboardHostCallbacks = KeyboardHostCallbacks()
 ): DuoImeState {
     val scope = rememberCoroutineScope()
+    val currentHostCallbacks = rememberUpdatedState(hostCallbacks)
     val state = remember(scope) {
         DuoImeState(
             controller = KeyboardController(
                 scope = scope,
                 config = config,
-                hostCallbacks = hostCallbacks
+                hostCallbacks = KeyboardHostCallbacks(
+                    onSwapScreenRequested = { currentHostCallbacks.value.onSwapScreenRequested() },
+                    onSwitchImeRequested = { currentHostCallbacks.value.onSwitchImeRequested() },
+                    onDismissRequested = { currentHostCallbacks.value.onDismissRequested() },
+                    onHeightFractionChanged = { fraction ->
+                        currentHostCallbacks.value.onHeightFractionChanged(fraction)
+                    },
+                    onPrefsChanged = { prefs -> currentHostCallbacks.value.onPrefsChanged(prefs) },
+                    onFeedbackKey = { key -> currentHostCallbacks.value.onFeedbackKey(key) },
+                    onRepeatFeedbackKey = { key -> currentHostCallbacks.value.onRepeatFeedbackKey(key) }
+                )
             )
         )
     }

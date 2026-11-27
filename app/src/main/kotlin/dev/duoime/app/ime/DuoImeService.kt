@@ -341,7 +341,9 @@ class DuoImeService : InputMethodService() {
         val pageForward = resolveHardwareCandidatePageDirection(
             keyCode = keyCode,
             isComposing = uiState.snapshot.isComposing,
-            activePanel = uiState.derived.panel
+            activePanel = uiState.derived.panel,
+            hasPrevPage = uiState.snapshot.hasPrevPage,
+            hasNextPage = uiState.snapshot.hasNextPage
         )
         if (pageForward != null) {
             controller.pageCandidates(pageForward)
@@ -676,17 +678,20 @@ class DuoImeService : InputMethodService() {
 
 /**
  * Pure-JVM hardware candidate paging resolver for handheld shoulder buttons (`L1`/`R1`) and
- * physical `PageUp`/`PageDown` keys: active ONLY while composing outside `KeyboardPanel.SYMBOL`.
+ * physical `PageUp`/`PageDown` keys: active ONLY while composing outside `KeyboardPanel.SYMBOL`
+ * and only when a page exists in the requested direction (`hasPrevPage` / `hasNextPage`).
  */
 internal fun resolveHardwareCandidatePageDirection(
     keyCode: Int,
     isComposing: Boolean,
-    activePanel: KeyboardPanel
+    activePanel: KeyboardPanel,
+    hasPrevPage: Boolean = true,
+    hasNextPage: Boolean = true
 ): Boolean? {
     if (!isComposing || activePanel == KeyboardPanel.SYMBOL) return null
     return when (keyCode) {
-        KeyEvent.KEYCODE_BUTTON_L1, KeyEvent.KEYCODE_PAGE_UP -> false
-        KeyEvent.KEYCODE_BUTTON_R1, KeyEvent.KEYCODE_PAGE_DOWN -> true
+        KeyEvent.KEYCODE_BUTTON_L1, KeyEvent.KEYCODE_PAGE_UP -> if (hasPrevPage) false else null
+        KeyEvent.KEYCODE_BUTTON_R1, KeyEvent.KEYCODE_PAGE_DOWN -> if (hasNextPage) true else null
         else -> null
     }
 }
