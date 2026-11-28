@@ -25,6 +25,7 @@ import dev.duoime.core.model.SymbolTabId
 import dev.duoime.core.protocol.ExtensionConfig
 import dev.duoime.engine.lite.LiteInputEngine
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -835,6 +836,34 @@ class KeyboardControllerOrthogonalStateTest {
         assertTrue(
             "Expected CancellationException after close, got $postCloseErr",
             postCloseErr is CancellationException
+        )
+
+        // Closing controller mid-handleRunWithEngine (while suspended in sink sync) must still cancel awaiting caller
+        var closeOnSinkDispatch = false
+        lateinit var midCloseController: KeyboardController
+        val closingSinkDispatcher = object : CoroutineDispatcher() {
+            override fun dispatch(context: kotlin.coroutines.CoroutineContext, block: Runnable) {
+                if (closeOnSinkDispatch) {
+                    closeOnSinkDispatch = false
+                    midCloseController.close()
+                }
+                dispatcher.dispatch(context, block)
+            }
+        }
+        midCloseController = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = closingSinkDispatcher),
+            engineFactory = { LiteInputEngine.createDefault() }
+        )
+        midCloseController.attachSink(RecordingSink())
+        advanceUntilIdle()
+        closeOnSinkDispatch = true
+        val inFlight = async { midCloseController.withActiveEngine { "ran_action" } }
+        advanceUntilIdle()
+        val inFlightErr = runCatching { inFlight.await() }.exceptionOrNull()
+        assertTrue(
+            "In-flight withActiveEngine must cancel instead of hanging when closed mid-sync, got $inFlightErr",
+            inFlightErr is CancellationException
         )
         controller.close()
     }

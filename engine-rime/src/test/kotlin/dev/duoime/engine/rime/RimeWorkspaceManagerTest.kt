@@ -401,5 +401,42 @@ class RimeWorkspaceManagerTest {
             tempFolder.newFolder("garbage_custom_stage")
         )
         assertEquals(RimeImportFailureReason.INVALID_YAML, (garbageCustom as RimeStagingResult.Failure).reason)
+
+        // Multi-line single- and double-quoted scalars are valid YAML; unclosed EOF quote is rejected
+        val multilineQuotedSchema = """
+            schema:
+              schema_id: multi_quote
+              name: "Multi
+                Line # not a comment
+                Schema"
+              description: 'It''s valid across
+                multiple lines'
+        """.trimIndent() + "\n"
+        val multilineStaged = RimeWorkspaceManager.stageEntries(
+            sequenceOf(entry("multi_quote.schema.yaml", multilineQuotedSchema)),
+            tempFolder.newFolder("multiline_quote_stage")
+        )
+        assertTrue(
+            "Expected multi-line quoted YAML to pass, got $multilineStaged",
+            multilineStaged is RimeStagingResult.Success
+        )
+
+        val unclosedMultiline = RimeWorkspaceManager.stageEntries(
+            sequenceOf(
+                entry("bad_quote.schema.yaml", "schema:\n  schema_id: bad\n  description: \"never closed\n  line2\n")
+            ),
+            tempFolder.newFolder("unclosed_quote_stage")
+        )
+        assertEquals(RimeImportFailureReason.INVALID_YAML, (unclosedMultiline as RimeStagingResult.Failure).reason)
+
+        // Importing an override/patch for a built-in *_incognito schema is rejected fail-closed
+        val protectedPatch = RimeWorkspaceManager.stageEntries(
+            sequenceOf(
+                entry("rime_ice.schema.yaml", sampleSchemaYaml("rime_ice", "雾凇拼音")),
+                entry("duoime_pinyin_26_incognito.custom.yaml", "patch:\n  translator/enable_user_dict: true\n")
+            ),
+            tempFolder.newFolder("protected_incognito_stage")
+        )
+        assertEquals(RimeImportFailureReason.UNSAFE_PATH, (protectedPatch as RimeStagingResult.Failure).reason)
     }
 }

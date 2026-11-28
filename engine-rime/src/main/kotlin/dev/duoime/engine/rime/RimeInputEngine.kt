@@ -419,7 +419,13 @@ public class RimeInputEngine internal constructor(
             return applyLogicalSchemaLocked(EngineSchemas.ENGLISH)
         }
         val availableIds = bridge.getSchemaList().map { it.first }.toSet()
-        val primary = resolveNativeSchemaTarget(logicalSchemaId, effectiveIncognito(), availableIds)
+        val trustedIncognitoIds = trustedBuiltInIncognitoIdsLocked()
+        val primary = resolveNativeSchemaTarget(
+            canonicalId = logicalSchemaId,
+            incognito = effectiveIncognito(),
+            availableIds = availableIds,
+            trustedIncognitoIds = trustedIncognitoIds
+        )
         if (primary !is NativeSchemaResolution.NotFound) {
             return applyResolvedSchemaLocked(logicalSchemaId, primary)
         }
@@ -435,7 +441,12 @@ public class RimeInputEngine internal constructor(
         }
         for (candidate in fallbacks) {
             if (candidate == logicalSchemaId) continue
-            val resolution = resolveNativeSchemaTarget(candidate, effectiveIncognito(), availableIds)
+            val resolution = resolveNativeSchemaTarget(
+                canonicalId = candidate,
+                incognito = effectiveIncognito(),
+                availableIds = availableIds,
+                trustedIncognitoIds = trustedIncognitoIds
+            )
             if (resolution !is NativeSchemaResolution.NotFound) {
                 return applyResolvedSchemaLocked(candidate, resolution)
             }
@@ -453,11 +464,32 @@ public class RimeInputEngine internal constructor(
             return true
         }
         val availableIds = bridge.getSchemaList().map { it.first }.toSet()
-        val resolution = resolveNativeSchemaTarget(canonicalId, effectiveIncognito(), availableIds)
+        val resolution = resolveNativeSchemaTarget(
+            canonicalId = canonicalId,
+            incognito = effectiveIncognito(),
+            availableIds = availableIds,
+            trustedIncognitoIds = trustedBuiltInIncognitoIdsLocked()
+        )
         if (resolution is NativeSchemaResolution.NotFound) {
             return false
         }
         return applyResolvedSchemaLocked(canonicalId, resolution)
+    }
+
+    private fun trustedBuiltInIncognitoIdsLocked(): Set<String> {
+        val userDir = paths.userDir
+        if (!userDir.isDirectory) return RimeEngineMetadata.BUILT_IN_INCOGNITO_SCHEMA_IDS
+        val userFileNames = userDir.listFiles()
+            ?.asSequence()
+            ?.filter { it.isFile }
+            ?.map { it.name.lowercase() }
+            ?.toSet()
+            .orEmpty()
+        return RimeEngineMetadata.BUILT_IN_INCOGNITO_SCHEMA_IDS.filterTo(LinkedHashSet()) { id ->
+            "$id.schema.yaml" !in userFileNames &&
+                "$id.custom.yaml" !in userFileNames &&
+                "$id.yaml" !in userFileNames
+        }
     }
 
     private fun applyResolvedSchemaLocked(canonicalId: String, resolution: NativeSchemaResolution): Boolean {
@@ -607,20 +639,19 @@ public class RimeInputEngine internal constructor(
          * reported by `librime`'s `RimeGetSchemaList()` (because `RimeSelectSchema` always returns
          * `true` even for nonexistent schemas).
          *
-         * In incognito mode, guarantees fail-closed non-learning execution: tries `${id}_incognito`,
-         * else `duoime_pinyin_26_incognito`, else first `*_incognito`, else [FailClosedAscii].
+         * In incognito mode, guarantees fail-closed non-learning execution by trusting ONLY
+         * verified built-in incognito companion schemas in [trustedIncognitoIds] (never untrusted
+         * user-imported `*_incognito` schemas whose YAML could still write userdb), falling back
+         * cleanly to `duoime_pinyin_26_incognito`, another trusted built-in incognito schema, or
+         * [FailClosedAscii].
          */
         internal fun resolveNativeSchemaTarget(
             canonicalId: String,
             incognito: Boolean,
-            availableIds: Set<String>
+            availableIds: Set<String>,
+            trustedIncognitoIds: Set<String> = RimeEngineMetadata.BUILT_IN_INCOGNITO_SCHEMA_IDS
         ): NativeSchemaResolution {
-            val baseId = when (canonicalId) {
-                EngineSchemas.PINYIN_26 -> RimeEngineMetadata.SCHEMA_PINYIN_26
-                EngineSchemas.T9_PINYIN -> RimeEngineMetadata.SCHEMA_T9_PINYIN
-                EngineSchemas.DOUBLE_PINYIN_FLYPY -> RimeEngineMetadata.SCHEMA_FLYPY
-                else -> canonicalId
-            }
+            val baseId = resolveBaseNativeSchemaId(canonicalId)
             if (!incognito) {
                 return if (baseId in availableIds) {
                     NativeSchemaResolution.Select(baseId)
@@ -628,20 +659,36 @@ public class RimeInputEngine internal constructor(
                     NativeSchemaResolution.NotFound
                 }
             }
+            return resolveIncognitoSchemaTarget(baseId, availableIds, trustedIncognitoIds)
+        }
+
+        private fun resolveBaseNativeSchemaId(canonicalId: String): String = when (canonicalId) {
+            EngineSchemas.PINYIN_26 -> RimeEngineMetadata.SCHEMA_PINYIN_26
+            EngineSchemas.T9_PINYIN -> RimeEngineMetadata.SCHEMA_T9_PINYIN
+            EngineSchemas.DOUBLE_PINYIN_FLYPY -> RimeEngineMetadata.SCHEMA_FLYPY
+            else -> canonicalId
+        }
+
+        private fun resolveIncognitoSchemaTarget(
+            baseId: String,
+            availableIds: Set<String>,
+            trustedIncognitoIds: Set<String>
+        ): NativeSchemaResolution {
             val companion = "$baseId${RimeEngineMetadata.INCOGNITO_SUFFIX}"
-            if (companion in availableIds) {
+            val isBuiltIn = baseId in RimeEngineMetadata.BUILT_IN_SCHEMA_IDS
+            if (isBuiltIn && companion in trustedIncognitoIds && companion in availableIds) {
                 return NativeSchemaResolution.Select(companion)
             }
-            if (baseId !in availableIds) {
+            if (baseId !in availableIds && !(isBuiltIn && companion in availableIds)) {
                 return NativeSchemaResolution.NotFound
             }
             val defaultIncognito = "${RimeEngineMetadata.SCHEMA_PINYIN_26}${RimeEngineMetadata.INCOGNITO_SUFFIX}"
-            if (defaultIncognito in availableIds) {
-                return NativeSchemaResolution.Select(defaultIncognito)
+            val fallback = when {
+                defaultIncognito in trustedIncognitoIds && defaultIncognito in availableIds -> defaultIncognito
+                else -> trustedIncognitoIds.firstOrNull { it in availableIds }
             }
-            val anyIncognito = availableIds.firstOrNull { it.endsWith(RimeEngineMetadata.INCOGNITO_SUFFIX) }
-            return if (anyIncognito != null) {
-                NativeSchemaResolution.Select(anyIncognito)
+            return if (fallback != null) {
+                NativeSchemaResolution.Select(fallback)
             } else {
                 NativeSchemaResolution.FailClosedAscii
             }

@@ -490,13 +490,19 @@ class KeyboardController(
     }
 
     private suspend fun handleRunWithEngine(engine: InputEngine, event: ControllerEvent.RunWithEngine) {
-        val outcome = runEngineActionSafely(engine, event) ?: return
-        candidateWindow.reset()
-        val afterSnap = engine.state.value
-        syncSinkComposingSafely(sinkDispatcher, afterSnap)
-        lastSelectedSchemaId = afterSnap.schemaId.ifEmpty { null }
-        publishState(engine)
-        completeRunWithEngine(event, outcome)
+        try {
+            val outcome = runEngineActionSafely(engine, event) ?: return
+            candidateWindow.reset()
+            val afterSnap = engine.state.value
+            syncSinkComposingSafely(sinkDispatcher, afterSnap)
+            lastSelectedSchemaId = afterSnap.schemaId.ifEmpty { null }
+            publishState(engine)
+            completeRunWithEngine(event, outcome)
+        } finally {
+            if (!event.result.isCompleted) {
+                event.result.cancel(CancellationException("KeyboardController closed during engine action"))
+            }
+        }
     }
 
     private suspend fun handleNavCommand(engine: InputEngine, command: NavCommand) {

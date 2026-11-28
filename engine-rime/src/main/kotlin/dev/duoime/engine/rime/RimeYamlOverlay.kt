@@ -272,10 +272,22 @@ internal object RimeYamlOverlay {
         var blockScalarIndent = -1
         var squareDepth = 0
         var curlyDepth = 0
+        var openQuote: Char? = null
 
         for ((idx, rawLine) in text.lineSequence().withIndex()) {
             val lineNum = idx + 1
             val line = rawLine.trimEnd('\r')
+            if (openQuote != null) {
+                val scan = scanYamlLineSyntax(line, squareDepth, curlyDepth, openQuote)
+                if (scan.error != null) {
+                    return "${scan.error} (${file.name}:$lineNum)"
+                }
+                squareDepth = scan.squareDepth
+                curlyDepth = scan.curlyDepth
+                openQuote = scan.openQuote
+                if (scan.sawMappingKey) sawMappingKey = true
+                continue
+            }
             if (line.isEmpty()) continue
             val indent = countLeadingIndent(line)
             if (indent < 0) {
@@ -292,16 +304,20 @@ internal object RimeYamlOverlay {
                 blockScalarIndent = -1
             }
 
-            val scan = scanYamlLineSyntax(trimmed, squareDepth, curlyDepth)
+            val scan = scanYamlLineSyntax(trimmed, squareDepth, curlyDepth, startQuote = null)
             if (scan.error != null) {
                 return "${scan.error} (${file.name}:$lineNum)"
             }
             squareDepth = scan.squareDepth
             curlyDepth = scan.curlyDepth
+            openQuote = scan.openQuote
             if (scan.sawMappingKey) sawMappingKey = true
-            if (scan.startsBlockScalar) blockScalarIndent = indent
+            if (scan.startsBlockScalar && openQuote == null) blockScalarIndent = indent
         }
 
+        if (openQuote != null) {
+            return "Unclosed $openQuote string in ${file.name}"
+        }
         if (squareDepth != 0 || curlyDepth != 0) {
             return "Unbalanced YAML flow brackets in ${file.name}"
         }
@@ -318,29 +334,30 @@ internal object RimeYamlOverlay {
     private data class LineScanResult(
         val squareDepth: Int,
         val curlyDepth: Int,
+        val openQuote: Char?,
         val sawMappingKey: Boolean,
         val startsBlockScalar: Boolean,
         val error: String? = null
     )
 
     @Suppress("CyclomaticComplexMethod", "NestedBlockDepth")
-    private fun scanYamlLineSyntax(trimmed: String, startSquare: Int, startCurly: Int): LineScanResult {
+    private fun scanYamlLineSyntax(text: String, startSquare: Int, startCurly: Int, startQuote: Char?): LineScanResult {
         var square = startSquare
         var curly = startCurly
-        var quote: Char? = null
+        var quote = startQuote
         var sawMappingKey = false
-        var effectiveEnd = trimmed.length
+        var effectiveEnd = text.length
 
         var i = 0
-        while (i < trimmed.length) {
-            val ch = trimmed[i]
-            val prev = if (i > 0) trimmed[i - 1] else ' '
+        while (i < text.length) {
+            val ch = text[i]
+            val prev = if (i > 0) text[i - 1] else ' '
             if (quote != null) {
-                if (quote == '"' && ch == '\\' && i + 1 < trimmed.length) {
+                if (quote == '"' && ch == '\\' && i + 1 < text.length) {
                     i += 2
                     continue
                 }
-                if (quote == '\'' && ch == '\'' && i + 1 < trimmed.length && trimmed[i + 1] == '\'') {
+                if (quote == '\'' && ch == '\'' && i + 1 < text.length && text[i + 1] == '\'') {
                     i += 2
                     continue
                 }
@@ -359,7 +376,7 @@ internal object RimeYamlOverlay {
                 i++
                 continue
             }
-            if (ch == ':' && i > 0 && (i + 1 == trimmed.length || trimmed[i + 1].isWhitespace())) {
+            if (ch == ':' && i > 0 && (i + 1 == text.length || text[i + 1].isWhitespace())) {
                 sawMappingKey = true
             }
             val inFlow = square > 0 || curly > 0
@@ -374,21 +391,18 @@ internal object RimeYamlOverlay {
             } else if ((ch == ']' && square == 0 && prev != '\\' && inFlow) ||
                 (ch == '}' && curly == 0 && prev != '\\' && inFlow)
             ) {
-                return LineScanResult(square, curly, sawMappingKey, false, "Unexpected closing '$ch'")
+                return LineScanResult(square, curly, quote, sawMappingKey, false, "Unexpected closing '$ch'")
             }
             i++
         }
 
-        if (quote != null) {
-            return LineScanResult(square, curly, sawMappingKey, false, "Unclosed $quote string")
-        }
-        val codePart = trimmed.substring(0, effectiveEnd).trimEnd()
-        val startsBlockScalar = sawMappingKey &&
+        val codePart = text.substring(0, effectiveEnd).trimEnd()
+        val startsBlockScalar = quote == null && sawMappingKey &&
             (
                 codePart.endsWith(": |") || codePart.endsWith(": |-") || codePart.endsWith(": |+") ||
                     codePart.endsWith(": >") || codePart.endsWith(": >-") || codePart.endsWith(": >+")
                 )
-        return LineScanResult(square, curly, sawMappingKey, startsBlockScalar)
+        return LineScanResult(square, curly, quote, sawMappingKey, startsBlockScalar)
     }
 
     private fun countLeadingIndent(line: String): Int {

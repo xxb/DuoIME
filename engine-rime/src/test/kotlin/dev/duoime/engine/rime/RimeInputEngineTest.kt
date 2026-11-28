@@ -805,44 +805,54 @@ class RimeInputEngineTest {
     }
 
     @Test
-    fun failClosedCustomSchemaIncognitoChecksSchemaListAndFallsBackAcrossAllTiers() {
-        // Tier 1: Custom schema has its own *_incognito companion -> selects custom_incognito
+    fun failClosedCustomSchemaIncognitoTrustsOnlyUnpatchedBuiltInIncognitoSchemas() {
+        val paths = testPaths()
         val bridge = FakeRimeNativeBridge().apply {
             availableSchemas = FakeRimeNativeBridge.defaultStarterSchemas() + listOf(
                 "my_custom" to "My Custom",
-                "my_custom_incognito" to "My Custom (Incognito)",
+                "my_custom_incognito" to "My Custom (Untrusted Incognito)",
                 "rime_ice" to "雾凇拼音"
             )
         }
-        val engine = createEngine(bridge)
+        val engine = createEngine(bridge, paths = paths)
         assertFalse(
             "Nonexistent schema must be rejected via getSchemaList check",
             engine.selectSchema("phantom_schema")
         )
+
+        // Tier 1: Untrusted user-imported *_incognito companion is NEVER selected; fails closed to
+        // trusted built-in duoime_pinyin_26_incognito while preserving logicalSchemaId
         assertTrue(engine.selectSchema("my_custom"))
         engine.setOption(EngineOptions.INCOGNITO, true)
-        assertEquals("my_custom_incognito", bridge.selectedSchemas.last())
+        assertEquals("duoime_pinyin_26_incognito", bridge.selectedSchemas.last())
         assertEquals("my_custom", engine.state.value.schemaId)
+
+        // Turning off incognito restores my_custom
+        engine.setOption(EngineOptions.INCOGNITO, false)
+        assertEquals("my_custom", bridge.selectedSchemas.last())
 
         // Tier 2: Custom schema without *_incognito falls back to duoime_pinyin_26_incognito
         assertTrue(engine.selectSchema("rime_ice"))
+        engine.setOption(EngineOptions.INCOGNITO, true)
         assertEquals("duoime_pinyin_26_incognito", bridge.selectedSchemas.last())
         assertEquals("rime_ice", engine.state.value.schemaId)
 
-        // Tier 3: When duoime_pinyin_26_incognito is absent, uses first *_incognito companion
+        // Tier 3: If userDir patches duoime_pinyin_26_incognito.custom.yaml, runtime refuses to trust it
+        // and falls back to another unpatched built-in incognito schema (duoime_t9_incognito)
+        val patchFile = File(paths.userDir, "duoime_pinyin_26_incognito.custom.yaml")
+        patchFile.writeText("patch:\n  translator/enable_user_dict: true\n")
+        engine.setOption(EngineOptions.INCOGNITO, false)
+        engine.setOption(EngineOptions.INCOGNITO, true)
+        assertEquals("duoime_t9_incognito", bridge.selectedSchemas.last())
+        assertEquals("rime_ice", engine.state.value.schemaId)
+        assertTrue(patchFile.delete())
+
+        // Tier 4: When ONLY untrusted user *_incognito exists (zero trusted built-in incognito schemas),
+        // fail closed to ASCII_MODE=true / English pass-through, preserving logicalSchemaId!
         bridge.availableSchemas = listOf(
             "rime_ice" to "雾凇拼音",
-            "other_incognito" to "Other Incognito"
+            "other_incognito" to "Untrusted Incognito"
         )
-        engine.setOption(EngineOptions.INCOGNITO, false)
-        assertEquals("rime_ice", bridge.selectedSchemas.last())
-        engine.setOption(EngineOptions.INCOGNITO, true)
-        assertEquals("other_incognito", bridge.selectedSchemas.last())
-        assertEquals("rime_ice", engine.state.value.schemaId)
-
-        // Tier 4: Zero *_incognito schemas -> fail closed to ASCII_MODE=true / English pass-through,
-        // preserving logicalSchemaId so disabling incognito restores rime_ice!
-        bridge.availableSchemas = listOf("rime_ice" to "雾凇拼音")
         engine.setOption(EngineOptions.INCOGNITO, false)
         assertEquals("rime_ice", bridge.selectedSchemas.last())
         engine.setOption(EngineOptions.INCOGNITO, true)

@@ -169,17 +169,26 @@ public object RimeWorkspaceManager {
         if (fileCount == 0) {
             return RimeStagingResult.Failure(RimeImportFailureReason.EMPTY_ARCHIVE, "No importable files found")
         }
+        return finalizeStagedDirectory(stageDir, fileCount, totalBytes)
+    }
 
+    private fun finalizeStagedDirectory(stageDir: File, fileCount: Int, totalBytes: Long): RimeStagingResult {
         unwrapSingleTopDirectory(stageDir)
         stripStaleBuildDirectory(stageDir)
 
+        val protectedOverride = findProtectedIncognitoOverride(stageDir)
+        if (protectedOverride != null) {
+            return RimeStagingResult.Failure(
+                RimeImportFailureReason.UNSAFE_PATH,
+                "Cannot override protected built-in incognito schema: $protectedOverride"
+            )
+        }
         if (!containsAnyYamlFile(stageDir)) {
             return RimeStagingResult.Failure(
                 RimeImportFailureReason.NO_YAML_FILES,
                 "Import contains no Rime .yaml configuration files"
             )
         }
-
         val yamlError = RimeYamlOverlay.validateStagedYamlFiles(stageDir)
         if (yamlError != null) {
             return RimeStagingResult.Failure(RimeImportFailureReason.INVALID_YAML, yamlError)
@@ -645,6 +654,18 @@ public object RimeWorkspaceManager {
         if (buildDir.exists()) {
             buildDir.deleteRecursively()
         }
+    }
+
+    private fun findProtectedIncognitoOverride(stageDir: File): String? {
+        val topFiles = stageDir.listFiles()?.filter { it.isFile }.orEmpty()
+        for (file in topFiles) {
+            val lower = file.name.lowercase()
+            val matchesProtected = RimeEngineMetadata.BUILT_IN_INCOGNITO_SCHEMA_IDS.any { id ->
+                lower == "$id.schema.yaml" || lower == "$id.custom.yaml" || lower == "$id.yaml"
+            }
+            if (matchesProtected) return file.name
+        }
+        return null
     }
 
     private fun containsAnyYamlFile(dir: File): Boolean = dir.walkTopDown().any { file ->
