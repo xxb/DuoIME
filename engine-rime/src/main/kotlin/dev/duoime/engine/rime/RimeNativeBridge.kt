@@ -139,40 +139,46 @@ internal class RefCountedRimeBridge(
     private val lock = Any()
     private var activeInstances: Int = 0
     private var activeWorkspaceKey: String? = null
+    private var exclusiveLease: Boolean = false
 
     internal val activeInstanceCount: Int
         get() = synchronized(lock) { activeInstances }
 
-    override fun acquireRuntime(paths: RimeWorkspacePaths, distributionVersion: String): Boolean = synchronized(lock) {
-        raw.ensureLoaded()
-        val key = workspaceKey(paths)
-        if (activeInstances == 0) {
-            val ok = raw.nativeInitialize(
-                sharedDataDir = paths.sharedDir.absolutePath,
-                userDataDir = paths.userDir.absolutePath,
-                prebuiltDataDir = paths.prebuiltDir.absolutePath,
-                stagingDir = paths.stagingDir.absolutePath,
-                distributionVersion = distributionVersion
-            )
-            if (!ok) {
-                return false
-            }
-            activeInstances = 1
-            activeWorkspaceKey = key
-            true
-        } else {
-            check(activeWorkspaceKey == key) {
-                "Cannot initialize second Rime workspace while another session is active"
-            }
-            activeInstances++
-            true
-        }
-    }
+    override fun acquireRuntime(paths: RimeWorkspacePaths, distributionVersion: String): Boolean =
+        acquireLocked(paths, distributionVersion, exclusive = false)
 
     override fun acquireExclusiveRuntime(paths: RimeWorkspacePaths, distributionVersion: String): Boolean =
+        acquireLocked(paths, distributionVersion, exclusive = true)
+
+    private fun acquireLocked(paths: RimeWorkspacePaths, distributionVersion: String, exclusive: Boolean): Boolean =
         synchronized(lock) {
-            if (activeInstances != 0) return false
-            acquireRuntime(paths, distributionVersion)
+            raw.ensureLoaded()
+            if (activeInstances > 0 && (exclusive || exclusiveLease)) {
+                return false
+            }
+            val key = workspaceKey(paths)
+            if (activeInstances == 0) {
+                val ok = raw.nativeInitialize(
+                    sharedDataDir = paths.sharedDir.absolutePath,
+                    userDataDir = paths.userDir.absolutePath,
+                    prebuiltDataDir = paths.prebuiltDir.absolutePath,
+                    stagingDir = paths.stagingDir.absolutePath,
+                    distributionVersion = distributionVersion
+                )
+                if (!ok) {
+                    return false
+                }
+                activeInstances = 1
+                activeWorkspaceKey = key
+                exclusiveLease = exclusive
+                true
+            } else {
+                check(activeWorkspaceKey == key) {
+                    "Cannot initialize second Rime workspace while another session is active"
+                }
+                activeInstances++
+                true
+            }
         }
 
     override fun releaseRuntime() {
@@ -181,6 +187,7 @@ internal class RefCountedRimeBridge(
             activeInstances--
             if (activeInstances == 0) {
                 activeWorkspaceKey = null
+                exclusiveLease = false
                 raw.nativeFinalize()
             }
         }

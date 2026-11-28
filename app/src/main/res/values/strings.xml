@@ -77,7 +77,7 @@
     <string name="rime_feedback_failed">Rime operation failed: %1$s</string>
     <string name="rime_feedback_failed_rolled_back">Rime operation failed (%1$s); previous workspace was restored.</string>
     <string name="rime_license_dialog_title">Third-Party Rime Schema Notice</string>
-    <string name="rime_license_dialog_body">DuoIME ships strictly permissive BSD/MIT/Apache/BSL components. Any Rime schemas or dictionaries you import (such as GPL or LGPL community packs) remain user-supplied external data stored privately on this device with zero internet access and cloud backup disabled.</string>
+    <string name="rime_license_dialog_body">DuoIME ships strictly permissive BSD/MIT/Apache/BSL components. Imported third-party Rime packs (such as GPL or LGPL community schemas) may include dictionaries and Lua scripts (librime-lua) that execute strictly offline inside DuoIME\'s private sandbox with zero internet/storage permissions and cloud backup disabled. Import Rime packs only from trusted sources.</string>
     <string name="rime_license_dialog_confirm">Choose Files</string>
     <string name="rime_reset_dialog_title">Reset Rime Workspace?</string>
     <string name="rime_reset_dialog_body">This removes imported custom Rime schemas and configuration files from DuoIME app storage and restores the built-in starter schemas.</string>

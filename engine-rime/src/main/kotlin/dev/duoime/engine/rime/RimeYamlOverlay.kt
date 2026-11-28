@@ -189,22 +189,78 @@ internal object RimeYamlOverlay {
         return 0
     }
 
+    private val FLOW_SCHEMA_ENTRY_REGEX: Regex = Regex("""schema\s*:\s*([^,}\]]+)""")
+
     internal fun extractDefaultYamlSchemaList(content: String): Set<String> {
         val result = LinkedHashSet<String>()
         var inSchemaList = false
+        var flowDepth = 0
         for (rawLine in content.removePrefix(UTF8_BOM).lineSequence()) {
             val line = rawLine.trimEnd('\r')
             val trimmed = line.trim()
             if (trimmed.isEmpty() || trimmed.startsWith('#')) continue
-            val isTopLevel = !line[0].isWhitespace()
-            if (isTopLevel) {
-                inSchemaList = trimmed.startsWith("schema_list:")
+            if (flowDepth > 0) {
+                flowDepth = advanceFlowSchemaList(trimmed, flowDepth, result)
+                if (flowDepth == 0) inSchemaList = false
                 continue
             }
-            if (!inSchemaList) continue
-            parseSchemaListItem(trimmed)?.let { result.add(it) }
+            if (!line[0].isWhitespace()) {
+                val (entered, nextFlow) = handleSchemaListHeader(trimmed, result)
+                inSchemaList = entered
+                flowDepth = nextFlow
+                continue
+            }
+            if (inSchemaList) {
+                parseSchemaListItem(trimmed)?.let { result.add(it) }
+            }
         }
         return result
+    }
+
+    private fun handleSchemaListHeader(trimmed: String, out: MutableSet<String>): Pair<Boolean, Int> {
+        if (!trimmed.startsWith("schema_list:")) return false to 0
+        val inlineRest = trimmed.substringAfter("schema_list:").trim()
+        if (!inlineRest.startsWith('[')) return true to 0
+        val remainingFlow = advanceFlowSchemaList(inlineRest, 0, out)
+        return (remainingFlow > 0) to remainingFlow
+    }
+
+    private fun advanceFlowSchemaList(segment: String, currentDepth: Int, out: MutableSet<String>): Int {
+        collectFlowSchemaListItems(segment, out)
+        return (currentDepth + countFlowBracketDelta(segment)).coerceAtLeast(0)
+    }
+
+    private fun collectFlowSchemaListItems(segment: String, out: MutableSet<String>) {
+        for (match in FLOW_SCHEMA_ENTRY_REGEX.findAll(segment)) {
+            val value = stripYamlQuotesAndComment(match.groupValues[1])
+            if (value.isNotEmpty()) {
+                out.add(value)
+            }
+        }
+    }
+
+    private fun countFlowBracketDelta(segment: String): Int {
+        val stripped = stripQuotedAndCommentText(segment)
+        var delta = 0
+        for (ch in stripped) {
+            if (ch == '[') delta++ else if (ch == ']') delta--
+        }
+        return delta
+    }
+
+    private fun stripQuotedAndCommentText(segment: String): String = buildString(segment.length) {
+        var i = 0
+        while (i < segment.length) {
+            val ch = segment[i]
+            if (ch == '#' && (i == 0 || segment[i - 1].isWhitespace())) break
+            if (ch == '"' || ch == '\'') {
+                val relClose = findClosingQuote(segment.substring(i), ch)
+                i = if (relClose > 0) i + relClose + 1 else segment.length
+                continue
+            }
+            append(ch)
+            i++
+        }
     }
 
     internal fun parseSchemaYaml(file: File): ParsedSchemaYaml? {

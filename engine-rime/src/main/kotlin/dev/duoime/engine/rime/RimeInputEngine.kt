@@ -45,6 +45,8 @@ public class RimeInputEngine internal constructor(
 ) : InputEngine {
 
     private var sessionId: Long = 0L
+
+    @Volatile
     private var closed: Boolean = false
     private var logicalSchemaId: String = canonicalLogicalSchema(initialConfig.schemaId)
     private var lastChineseLogicalSchemaId: String =
@@ -58,6 +60,9 @@ public class RimeInputEngine internal constructor(
 
     private val _state = MutableStateFlow(EngineSnapshot.EMPTY)
     public override val state: StateFlow<EngineSnapshot> = _state.asStateFlow()
+
+    public override val isClosed: Boolean
+        get() = closed
 
     public val rimeVersion: String
 
@@ -479,16 +484,18 @@ public class RimeInputEngine internal constructor(
     private fun trustedBuiltInIncognitoIdsLocked(): Set<String> {
         val userDir = paths.userDir
         if (!userDir.isDirectory) return RimeEngineMetadata.BUILT_IN_INCOGNITO_SCHEMA_IDS
-        val userFileNames = userDir.listFiles()
-            ?.asSequence()
-            ?.filter { it.isFile }
-            ?.map { it.name.lowercase() }
-            ?.toSet()
-            .orEmpty()
+        val userFiles = userDir.listFiles()?.filter { it.isFile }.orEmpty()
+        val userFileNames = userFiles.mapTo(HashSet()) { it.name.lowercase() }
+        val declaredSchemaIds = userFiles
+            .filter { it.name.endsWith(".schema.yaml", ignoreCase = true) }
+            .mapNotNull { RimeYamlOverlay.parseSchemaYaml(it)?.id?.lowercase() }
+            .toSet()
         return RimeEngineMetadata.BUILT_IN_INCOGNITO_SCHEMA_IDS.filterTo(LinkedHashSet()) { id ->
-            "$id.schema.yaml" !in userFileNames &&
-                "$id.custom.yaml" !in userFileNames &&
-                "$id.yaml" !in userFileNames
+            val lower = id.lowercase()
+            lower !in declaredSchemaIds &&
+                "$lower.schema.yaml" !in userFileNames &&
+                "$lower.custom.yaml" !in userFileNames &&
+                "$lower.yaml" !in userFileNames
         }
     }
 

@@ -355,5 +355,22 @@ class RimeBridgeAndWorkspaceTest {
         assertEquals("Refcount must remain unchanged at 1", 1, bridge.activeInstanceCount)
         bridge.releaseRuntime()
         assertEquals(0, bridge.activeInstanceCount)
+
+        // Exclusive lease blocks concurrent acquireRuntime until releaseRuntime() clears the lease
+        assertTrue(bridge.acquireExclusiveRuntime(paths, "0.1.0"))
+        assertEquals(1, bridge.activeInstanceCount)
+        assertFalse(
+            "Concurrent acquireRuntime must be blocked while exclusiveLease is active",
+            bridge.acquireRuntime(paths, "0.1.0")
+        )
+        assertEquals(1, bridge.activeInstanceCount)
+        bridge.releaseRuntime()
+        assertEquals(0, bridge.activeInstanceCount)
+        assertTrue(
+            "acquireRuntime succeeds again once exclusiveLease is released",
+            bridge.acquireRuntime(paths, "0.1.0")
+        )
+        bridge.releaseRuntime()
+        assertEquals(0, bridge.activeInstanceCount)
     }
 }

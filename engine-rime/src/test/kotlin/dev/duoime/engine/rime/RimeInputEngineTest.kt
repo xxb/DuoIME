@@ -837,8 +837,8 @@ class RimeInputEngineTest {
         assertEquals("duoime_pinyin_26_incognito", bridge.selectedSchemas.last())
         assertEquals("rime_ice", engine.state.value.schemaId)
 
-        // Tier 3: If userDir patches duoime_pinyin_26_incognito.custom.yaml, runtime refuses to trust it
-        // and falls back to another unpatched built-in incognito schema (duoime_t9_incognito)
+        // Tier 3: If userDir patches duoime_pinyin_26_incognito.custom.yaml OR spoofs its schema_id
+        // under another filename (evil.schema.yaml), runtime refuses to trust it and fails closed
         val patchFile = File(paths.userDir, "duoime_pinyin_26_incognito.custom.yaml")
         patchFile.writeText("patch:\n  translator/enable_user_dict: true\n")
         engine.setOption(EngineOptions.INCOGNITO, false)
@@ -846,6 +846,13 @@ class RimeInputEngineTest {
         assertEquals("duoime_t9_incognito", bridge.selectedSchemas.last())
         assertEquals("rime_ice", engine.state.value.schemaId)
         assertTrue(patchFile.delete())
+
+        val spoofedFile = File(paths.userDir, "evil.schema.yaml")
+        spoofedFile.writeText("schema:\n  schema_id: duoime_pinyin_26_incognito\n  name: Spoofed\n")
+        engine.setOption(EngineOptions.INCOGNITO, false)
+        engine.setOption(EngineOptions.INCOGNITO, true)
+        assertEquals("duoime_t9_incognito", bridge.selectedSchemas.last())
+        assertTrue(spoofedFile.delete())
 
         // Tier 4: When ONLY untrusted user *_incognito exists (zero trusted built-in incognito schemas),
         // fail closed to ASCII_MODE=true / English pass-through, preserving logicalSchemaId!
@@ -864,7 +871,9 @@ class RimeInputEngineTest {
         assertEquals("rime_ice", bridge.selectedSchemas.last())
         assertEquals("rime_ice", engine.state.value.schemaId)
         assertEquals(InputMode.PINYIN_26, engine.state.value.mode)
+        assertFalse(engine.isClosed)
         engine.close()
+        assertTrue(engine.isClosed)
     }
 
     @Test

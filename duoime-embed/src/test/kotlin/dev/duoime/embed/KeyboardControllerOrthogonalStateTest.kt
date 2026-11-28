@@ -865,6 +865,59 @@ class KeyboardControllerOrthogonalStateTest {
             "In-flight withActiveEngine must cancel instead of hanging when closed mid-sync, got $inFlightErr",
             inFlightErr is CancellationException
         )
+
+        // When withActiveEngine closes the active engine (isClosed == true), controller swaps cleanly
+        // to fallbackEngineFactory and surfaces EngineIssue(PERSISTENT, "Fallback: EngineClosed")
+        val closableEngine = object : InputEngine {
+            private val _state = MutableStateFlow(EngineSnapshot(schemaId = EngineSchemas.PINYIN_26))
+            override val state: StateFlow<EngineSnapshot> = _state
+            override var isClosed: Boolean = false
+                private set
+
+            override fun onKey(event: EngineKeyEvent): KeyProcessResult = KeyProcessResult.PassThrough
+
+            override fun selectCandidate(indexOnPage: Int): KeyProcessResult = KeyProcessResult.PassThrough
+
+            override fun page(forward: Boolean): Boolean = false
+
+            override fun setOption(name: String, on: Boolean) = Unit
+
+            override fun selectSchema(id: String): Boolean = true
+
+            override fun reset() = Unit
+
+            override fun close() {
+                isClosed = true
+            }
+        }
+        val recoveringController = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { closableEngine },
+            fallbackEngineFactory = { LiteInputEngine.createDefault() }
+        )
+        advanceUntilIdle()
+        assertFalse(recoveringController.uiState.value.isUsingFallbackEngine)
+
+        val closeErr = runCatching {
+            recoveringController.withActiveEngine<Unit> { eng ->
+                eng.close()
+                error("session restore failed")
+            }
+        }.exceptionOrNull()
+        assertTrue("Expected caller exception to propagate, got $closeErr", closeErr is IllegalStateException)
+        val recoveredState = recoveringController.uiState.value
+        assertTrue(
+            "Controller must recover onto fallback engine when active engine closed",
+            recoveredState.isUsingFallbackEngine
+        )
+        assertEquals(EngineIssue(EngineIssueKind.PERSISTENT, "Fallback: EngineClosed"), recoveredState.engineIssue)
+        // Fallback LiteInputEngine can type Chinese normally
+        typeEngineChars(recoveringController, "nihao")
+        advanceUntilIdle()
+        assertTrue(recoveringController.uiState.value.snapshot.isComposing)
+        assertEquals("你好", recoveringController.uiState.value.snapshot.candidates.firstOrNull()?.text)
+        recoveringController.close()
         controller.close()
     }
 }

@@ -77,7 +77,7 @@
     <string name="rime_feedback_failed">Rime 操作失败：%1$s</string>
     <string name="rime_feedback_failed_rolled_back">Rime 操作失败（%1$s），已自动回滚到原有配置。</string>
     <string name="rime_license_dialog_title">第三方 Rime 方案说明</string>
-    <string name="rime_license_dialog_body">DuoIME 仅内置宽松许可（BSD/MIT/Apache/BSL）组件。您自行导入的第三方 Rime 方案或词库（例如 GPL/LGPL 社区方案）仅作为用户外部数据保存在本机应用私有目录中，全程零网络权限且禁用云备份。</string>
+    <string name="rime_license_dialog_body">DuoIME 仅内置宽松许可（BSD/MIT/Apache/BSL）组件。您自行导入的第三方 Rime 方案包（如 GPL/LGPL 社区方案）可能包含词库与 Lua 脚本（librime-lua），这些脚本仅在本机应用私有沙箱内离线运行，全程零网络/存储权限且禁用云备份。请仅从可信来源导入 Rime 方案包。</string>
     <string name="rime_license_dialog_confirm">选择文件</string>
     <string name="rime_reset_dialog_title">重置 Rime 配置？</string>
     <string name="rime_reset_dialog_body">此操作将清除 DuoIME 私有目录中导入的自定义 Rime 方案与配置，并恢复内置初始方案。</string>

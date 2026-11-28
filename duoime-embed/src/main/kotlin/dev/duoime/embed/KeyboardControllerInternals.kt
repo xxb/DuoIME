@@ -280,6 +280,45 @@ internal fun passThroughFallbackResult(
     usedFallback = true
 )
 
+@Suppress("TooGenericExceptionCaught")
+internal suspend fun bootstrapClosedEngineFallback(
+    schemaIds: Map<InputMode, String>,
+    chineseSchemeSchemaIds: Map<ChineseScheme, String>,
+    fallbackEngineFactory: (suspend () -> InputEngine)?
+): EngineBootstrapResult {
+    if (fallbackEngineFactory != null) {
+        try {
+            return EngineBootstrapResult(
+                engine = fallbackEngineFactory(),
+                schemaIds = EngineSchemas.DEFAULT_MODE_MAP,
+                chineseSchemeSchemaIds = KeyboardControllerConfig.DEFAULT_CHINESE_SCHEME_SCHEMA_IDS,
+                issue = EngineIssue(EngineIssueKind.PERSISTENT, "Fallback: EngineClosed"),
+                forcedPlainEnglish = false,
+                usedFallback = true
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (fallbackError: Throwable) {
+            return EngineBootstrapResult(
+                engine = PassThroughEngine(),
+                schemaIds = schemaIds,
+                chineseSchemeSchemaIds = chineseSchemeSchemaIds,
+                issue = EngineIssue(EngineIssueKind.PERSISTENT, "Plain: EngineClosed/${errorClassTag(fallbackError)}"),
+                forcedPlainEnglish = true,
+                usedFallback = true
+            )
+        }
+    }
+    return EngineBootstrapResult(
+        engine = PassThroughEngine(),
+        schemaIds = schemaIds,
+        chineseSchemeSchemaIds = chineseSchemeSchemaIds,
+        issue = EngineIssue(EngineIssueKind.PERSISTENT, "Plain: EngineClosed"),
+        forcedPlainEnglish = true,
+        usedFallback = true
+    )
+}
+
 internal fun applyEnginePrivacyOptions(
     engine: InputEngine,
     prefs: KeyboardPrefs,

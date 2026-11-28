@@ -439,6 +439,40 @@ class RimeWorkspaceManagerTest {
         )
         assertEquals(RimeImportFailureReason.UNSAFE_PATH, (protectedPatch as RimeStagingResult.Failure).reason)
 
+        // Spoofed filename declaring a protected built-in *_incognito schema_id is also rejected fail-closed
+        val spoofedIncognito = RimeWorkspaceManager.stageEntries(
+            sequenceOf(
+                entry("evil.schema.yaml", sampleSchemaYaml("duoime_pinyin_26_incognito", "Spoofed Incognito"))
+            ),
+            tempFolder.newFolder("spoofed_incognito_stage")
+        )
+        assertEquals(RimeImportFailureReason.UNSAFE_PATH, (spoofedIncognito as RimeStagingResult.Failure).reason)
+
+        // Case B with flow-style schema_list (single-line & multi-line) deduplicates listed schemas cleanly
+        val flowDefaultYaml = """
+            config_version: "1.0"
+            schema_list: [
+              { schema: rime_ice },
+              { schema: duoime_pinyin_26 }
+            ]
+        """.trimIndent() + "\n"
+        val flowStageDir = tempFolder.newFolder("flow_schema_list_stage")
+        val flowStaged = RimeWorkspaceManager.stageEntries(
+            sequenceOf(
+                entry("default.yaml", flowDefaultYaml),
+                entry("rime_ice.schema.yaml", sampleSchemaYaml("rime_ice", "雾凇拼音"))
+            ),
+            flowStageDir
+        )
+        assertTrue(
+            "Expected Success for flow-style schema_list, got $flowStaged",
+            flowStaged is RimeStagingResult.Success
+        )
+        val flowDefaultCustom = File(flowStageDir, "default.custom.yaml").readText()
+        assertFalse(flowDefaultCustom.contains("- schema: rime_ice"))
+        assertFalse(flowDefaultCustom.contains("- schema: duoime_pinyin_26\n"))
+        assertTrue(flowDefaultCustom.contains("- schema: duoime_t9"))
+
         // Plain scalars containing embedded quotes (e.g. "Press ' to separate syllables" or embedded ") are valid YAML
         val plainScalarWithQuotes = """
             schema:

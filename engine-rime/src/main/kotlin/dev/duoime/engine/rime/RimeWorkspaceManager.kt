@@ -100,6 +100,9 @@ public object RimeWorkspaceManager {
         "desktop.ini"
     )
 
+    // `.lua` is intentionally permitted for `librime-lua` schema scripts (e.g. rime-ice / wanxiang /
+    // moran) running offline inside DuoIME's zero-INTERNET app-private sandbox, while native
+    // binaries, JVM/Android packages, and OS shell scripts remain blocked.
     private val FORBIDDEN_EXTENSIONS: Set<String> = setOf(
         "so", "a", "o", "dex", "odex", "vdex", "art", "apk", "jar", "class",
         "exe", "dll", "dylib", "sh", "bat", "cmd", "ps1", "elf", "com", "msi", "vbs", "js"
@@ -669,13 +672,20 @@ public object RimeWorkspaceManager {
     }
 
     private fun findProtectedIncognitoOverride(stageDir: File): String? {
+        val protectedIds = RimeEngineMetadata.BUILT_IN_INCOGNITO_SCHEMA_IDS.mapTo(HashSet()) { it.lowercase() }
         val topFiles = stageDir.listFiles()?.filter { it.isFile }.orEmpty()
         for (file in topFiles) {
             val lower = file.name.lowercase()
-            val matchesProtected = RimeEngineMetadata.BUILT_IN_INCOGNITO_SCHEMA_IDS.any { id ->
+            val matchesProtectedName = protectedIds.any { id ->
                 lower == "$id.schema.yaml" || lower == "$id.custom.yaml" || lower == "$id.yaml"
             }
-            if (matchesProtected) return file.name
+            if (matchesProtectedName) return file.name
+            if (lower.endsWith(".schema.yaml")) {
+                val parsedId = RimeYamlOverlay.parseSchemaYaml(file)?.id?.lowercase()
+                if (parsedId != null && parsedId in protectedIds) {
+                    return "${file.name} (schema_id: $parsedId)"
+                }
+            }
         }
         return null
     }

@@ -64,6 +64,10 @@ data class EngineKeyEvent(
 interface InputEngine : AutoCloseable {
     val state: StateFlow<EngineSnapshot>
 
+    /** Returns `true` once this engine has closed and can no longer process input events. */
+    val isClosed: Boolean
+        get() = false
+
     fun onKey(event: EngineKeyEvent): KeyProcessResult
 
     fun selectCandidate(indexOnPage: Int): KeyProcessResult

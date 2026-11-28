@@ -268,10 +268,6 @@ internal class RimeWorkspaceCoordinatorEngine(
         }
     }
 
-    fun clearFeedback() {
-        _uiState.value = _uiState.value.copy(feedback = null)
-    }
-
     private fun finishFailure(
         reason: RimeImportFailureReason,
         detail: String,
@@ -350,8 +346,6 @@ internal object RimeWorkspaceCoordinator {
     fun selectSchema(context: Context, schemaId: String) {
         DuoImePreferences(context.applicationContext).updateRimeSchemaSelection(schemaId)
     }
-
-    fun clearFeedback() = engine.clearFeedback()
 
     private class AndroidRimeWorkspaceHost(
         private val appContext: Context

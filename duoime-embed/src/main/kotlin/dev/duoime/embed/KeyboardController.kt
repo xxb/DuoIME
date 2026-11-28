@@ -69,6 +69,7 @@ class KeyboardController(
 
     private var activeSchemaIds: Map<InputMode, String> = config.modeSchemaIds
     private var activeChineseSchemeSchemaIds: Map<ChineseScheme, String> = config.chineseSchemeSchemaIds
+    private var currentFallbackEngineFactory: (suspend () -> InputEngine)? = fallbackEngineFactory
     private var engineIssue: EngineIssue? = null
     private var isUsingFallbackEngine: Boolean = false
     private var prefs: KeyboardPrefs = config.initialPrefs
@@ -101,11 +102,16 @@ class KeyboardController(
                 var activeEngine = applyInitialBootSafely(boot)
                 currentEngine = activeEngine
                 for (event in eventChannel) {
-                    if (event is ControllerEvent.ReloadEngine) {
-                        activeEngine = handleReloadEngine(activeEngine, event)
-                        currentEngine = activeEngine
-                    } else {
-                        processEventSafely(activeEngine, event)
+                    when (event) {
+                        is ControllerEvent.ReloadEngine -> {
+                            activeEngine = handleReloadEngine(activeEngine, event)
+                            currentEngine = activeEngine
+                        }
+                        is ControllerEvent.RunWithEngine -> {
+                            activeEngine = handleRunWithEngine(activeEngine, event)
+                            currentEngine = activeEngine
+                        }
+                        else -> processEventSafely(activeEngine, event)
                     }
                 }
             } finally {
@@ -282,6 +288,7 @@ class KeyboardController(
         )
         return try {
             val nextEngine = applyBootstrappedEngine(boot)
+            currentFallbackEngineFactory = event.fallbackEngineFactory
             if (nextEngine !== previousEngine) {
                 withContext(NonCancellable) { closeEngineSafely(previousEngine) }
             }
@@ -374,7 +381,6 @@ class KeyboardController(
                 publishState(engine)
             }
             is ControllerEvent.UpdateSchemaMappings -> handleUpdateSchemaMappings(engine, event)
-            is ControllerEvent.RunWithEngine -> handleRunWithEngine(engine, event)
             else -> Unit
         }
     }
@@ -489,15 +495,27 @@ class KeyboardController(
         publishState(engine)
     }
 
-    private suspend fun handleRunWithEngine(engine: InputEngine, event: ControllerEvent.RunWithEngine) {
+    private suspend fun handleRunWithEngine(engine: InputEngine, event: ControllerEvent.RunWithEngine): InputEngine {
+        var active = engine
         try {
-            val outcome = runEngineActionSafely(engine, event) ?: return
+            val outcome = runEngineActionSafely(engine, event) ?: return active
             candidateWindow.reset()
-            val afterSnap = engine.state.value
-            syncSinkComposingSafely(sinkDispatcher, afterSnap)
-            lastSelectedSchemaId = afterSnap.schemaId.ifEmpty { null }
-            publishState(engine)
+            if (engine.isClosed) {
+                clearSinkComposingSafely(sinkDispatcher)
+                val boot = bootstrapClosedEngineFallback(
+                    activeSchemaIds,
+                    activeChineseSchemeSchemaIds,
+                    currentFallbackEngineFactory
+                )
+                active = applyInitialBootSafely(boot)
+            } else {
+                val afterSnap = engine.state.value
+                syncSinkComposingSafely(sinkDispatcher, afterSnap)
+                lastSelectedSchemaId = afterSnap.schemaId.ifEmpty { null }
+                publishState(engine)
+            }
             completeRunWithEngine(event, outcome)
+            return active
         } finally {
             if (!event.result.isCompleted) {
                 event.result.cancel(CancellationException("KeyboardController closed during engine action"))
@@ -635,28 +653,27 @@ class KeyboardController(
         val result = engine.selectCandidate(indexOnPage)
         val snap = engine.state.value
         candidateWindow.syncWithSnapshot(snap, forceReset = true)
-        if (result !is KeyProcessResult.PassThrough) {
-            sinkDispatcher.applyEngineResult(result, snap)
-        }
-        publishState(engine)
+        applyCandidateResultAndPublish(engine, result, snap)
     }
 
     private suspend fun handleSelectWindowCandidate(engine: InputEngine, globalIndex: Int) {
         val result = candidateWindow.selectWindowCandidate(engine, globalIndex)
-        val snap = engine.state.value
-        if (result !is KeyProcessResult.PassThrough) {
-            sinkDispatcher.applyEngineResult(result, snap)
-        }
+        applyCandidateResultAndPublish(engine, result, engine.state.value)
+    }
+
+    private suspend fun applyCandidateResultAndPublish(
+        engine: InputEngine,
+        result: KeyProcessResult,
+        snap: EngineSnapshot
+    ) {
+        if (result !is KeyProcessResult.PassThrough) sinkDispatcher.applyEngineResult(result, snap)
         publishState(engine)
     }
 
     private suspend fun handleExtensionButton(engine: InputEngine, button: ExtensionToolbarButton) {
         when (button.actionType) {
             ExtensionActionType.SEND_TEXT -> handleDirectText(engine, button.value)
-            ExtensionActionType.SEND_KEY -> {
-                val keyCode = button.value.toIntOrNull() ?: return
-                withSink { it.sendKey(keyCode) }
-            }
+            ExtensionActionType.SEND_KEY -> button.value.toIntOrNull()?.let { code -> withSink { it.sendKey(code) } }
             ExtensionActionType.HOST_COMMAND -> withSink { it.sendHostCommand(button.id, button.value) }
         }
     }
@@ -664,9 +681,7 @@ class KeyboardController(
     private suspend fun cycleHeightPreset(engine: InputEngine) {
         heightFraction = nextHeightPresetFraction(heightFraction, HEIGHT_PRESETS)
         publishState(engine)
-        withContext(config.sinkDispatcher) {
-            hostCallbacks.onHeightFractionChanged(heightFraction)
-        }
+        withContext(config.sinkDispatcher) { hostCallbacks.onHeightFractionChanged(heightFraction) }
     }
 
     private fun syncEngineSchemaIfChanged(engine: InputEngine, derived: DerivedKeyboardState) {
@@ -677,9 +692,7 @@ class KeyboardController(
 
     private suspend inline fun withSink(crossinline block: (InputSink) -> Unit) {
         val sink = activeSinkRef.get() ?: return
-        withContext(config.sinkDispatcher) {
-            block(sink)
-        }
+        withContext(config.sinkDispatcher) { block(sink) }
     }
 
     private fun resolveMemoryKey(context: EditorContext): String? =
@@ -688,13 +701,8 @@ class KeyboardController(
     private fun effectiveConstraints(base: InputConstraints = constraints): InputConstraints =
         applyHostPolicyDefaults(base, editorContext, hostLangKeyPlacement, hostInitialSymbolTab, hostToolbarMode)
 
-    private fun currentDerived(): DerivedKeyboardState = deriveKeyboardState(
-        prefs = prefs,
-        session = session,
-        constraints = effectiveConstraints(),
-        modeSchemaIds = activeSchemaIds,
-        chineseSchemeSchemaIds = activeChineseSchemeSchemaIds
-    )
+    private fun currentDerived(): DerivedKeyboardState =
+        deriveKeyboardState(prefs, session, effectiveConstraints(), activeSchemaIds, activeChineseSchemeSchemaIds)
 
     private fun publishState(engine: InputEngine) {
         val snap = engine.state.value
@@ -704,13 +712,7 @@ class KeyboardController(
 
     private fun buildUiState(isEngineReady: Boolean, snapshot: EngineSnapshot): KeyboardUiState {
         val effective = effectiveConstraints()
-        val derived = deriveKeyboardState(
-            prefs = prefs,
-            session = session,
-            constraints = effective,
-            modeSchemaIds = activeSchemaIds,
-            chineseSchemeSchemaIds = activeChineseSchemeSchemaIds
-        )
+        val derived = deriveKeyboardState(prefs, session, effective, activeSchemaIds, activeChineseSchemeSchemaIds)
         return KeyboardUiState(
             isEngineReady = isEngineReady,
             engineIssue = engineIssue,
