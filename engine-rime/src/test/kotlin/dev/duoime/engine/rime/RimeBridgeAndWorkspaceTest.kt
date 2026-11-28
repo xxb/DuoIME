@@ -228,6 +228,7 @@ class RimeBridgeAndWorkspaceTest {
             )
         )
         val paths = RimeWorkspaceInstaller.installFromSource(sourceV1, root)
+        assertTrue(paths.assetsUpdated)
         assertTrue(File(paths.sharedDir, "default.yaml").isFile)
         assertTrue(File(paths.sharedDir, "opencc/duoime_s2t.txt").isFile)
         assertTrue(File(paths.userDir, "user.yaml").isFile)
@@ -238,16 +239,27 @@ class RimeBridgeAndWorkspaceTest {
         val customUserFile = File(paths.userDir, "custom_user.yaml")
         customUserFile.writeText("custom: true\n")
 
-        // Second install with same fingerprint skips copying asset files
+        // Once stagingDir/default.yaml exists, same fingerprint skips copying & reports assetsUpdated=false
+        val stagedDefaultYaml = File(paths.stagingDir, "default.yaml")
+        stagedDefaultYaml.writeText("deployed: true\n")
         val opensBeforeSecond = sourceV1.openCount
-        RimeWorkspaceInstaller.installFromSource(sourceV1, root)
+        val secondPaths = RimeWorkspaceInstaller.installFromSource(sourceV1, root)
+        assertFalse(secondPaths.assetsUpdated)
         assertEquals(
             "Only manifest fingerprint should be read when up-to-date",
             opensBeforeSecond + 1,
             sourceV1.openCount
         )
 
-        // Updated manifest triggers clean re-extraction while preserving userDir
+        // If stagingDir/default.yaml is missing, assetsUpdated=true triggers deploy even without recopying
+        assertTrue(stagedDefaultYaml.delete())
+        val opensBeforeMissingStaging = sourceV1.openCount
+        val missingStagingPaths = RimeWorkspaceInstaller.installFromSource(sourceV1, root)
+        assertTrue(missingStagingPaths.assetsUpdated)
+        assertEquals(opensBeforeMissingStaging + 1, sourceV1.openCount)
+
+        // Updated manifest triggers clean re-extraction & assetsUpdated=true even when staging default.yaml exists
+        stagedDefaultYaml.writeText("deployed: true\n")
         val sourceV2 = MemoryAssetSource(
             mapOf(
                 "default.yaml" to "config_version: '2.0'\n".toByteArray(),
@@ -257,7 +269,8 @@ class RimeBridgeAndWorkspaceTest {
                 "starter_manifest.json" to "{\"schema_version\":1,\"v\":2}\n".toByteArray()
             )
         )
-        RimeWorkspaceInstaller.installFromSource(sourceV2, root)
+        val v2Paths = RimeWorkspaceInstaller.installFromSource(sourceV2, root)
+        assertTrue(v2Paths.assetsUpdated)
         assertEquals("config_version: '2.0'\n", File(paths.sharedDir, "default.yaml").readText())
         assertEquals("custom: true\n", customUserFile.readText())
     }

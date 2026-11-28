@@ -66,8 +66,11 @@ public class RimeInputEngine internal constructor(
             }
             var createdSession = 0L
             try {
+                if (paths.assetsUpdated || !File(paths.stagingDir, DEFAULT_YAML_FILE).isFile) {
+                    check(bridge.deployWorkspace()) { "Failed to deploy Rime starter workspace" }
+                }
                 createdSession = bridge.createSession()
-                check(createdSession > 0L) { "librime createSession returned 0" }
+                check(createdSession != 0L) { "librime createSession returned 0" }
                 sessionId = createdSession
                 check(applyLogicalSchemaLocked(logicalSchemaId)) {
                     "Failed to select initial Rime schema: $logicalSchemaId"
@@ -75,7 +78,7 @@ public class RimeInputEngine internal constructor(
                 publishSnapshotLocked()
                 bridge.getVersion()
             } catch (err: Throwable) {
-                if (createdSession > 0L) {
+                if (createdSession != 0L) {
                     runCatching { bridge.destroySession(createdSession) }
                 }
                 sessionId = 0L
@@ -86,7 +89,7 @@ public class RimeInputEngine internal constructor(
     }
 
     public override fun onKey(event: EngineKeyEvent): KeyProcessResult = invokeNative {
-        if (closed || sessionId <= 0L) return@invokeNative KeyProcessResult.PassThrough
+        if (closed || sessionId == 0L) return@invokeNative KeyProcessResult.PassThrough
         if ((event.mask and KeyCodes.MASK_RELEASE) != 0) {
             return@invokeNative KeyProcessResult.Consumed
         }
@@ -106,7 +109,7 @@ public class RimeInputEngine internal constructor(
     }
 
     public override fun selectCandidate(indexOnPage: Int): KeyProcessResult = invokeNative {
-        if (closed || sessionId <= 0L || indexOnPage < 0) {
+        if (closed || sessionId == 0L || indexOnPage < 0) {
             return@invokeNative KeyProcessResult.PassThrough
         }
         if (!bridge.selectCandidateOnCurrentPage(sessionId, indexOnPage)) {
@@ -122,7 +125,7 @@ public class RimeInputEngine internal constructor(
     }
 
     public override fun selectSyllable(index: Int): Boolean = invokeNative {
-        if (closed || sessionId <= 0L || !isDuoImeT9SchemaActive() ||
+        if (closed || sessionId == 0L || !isDuoImeT9SchemaActive() ||
             !t9Coordinator.isActive || !t9Coordinator.canReplayCleanly
         ) {
             return@invokeNative false
@@ -136,7 +139,7 @@ public class RimeInputEngine internal constructor(
     }
 
     public override fun unlockSyllablesFrom(index: Int): Boolean = invokeNative {
-        if (closed || sessionId <= 0L || !isDuoImeT9SchemaActive() ||
+        if (closed || sessionId == 0L || !isDuoImeT9SchemaActive() ||
             !t9Coordinator.isActive || !t9Coordinator.canReplayCleanly
         ) {
             return@invokeNative false
@@ -150,7 +153,7 @@ public class RimeInputEngine internal constructor(
     }
 
     public override fun page(forward: Boolean): Boolean = invokeNative {
-        if (closed || sessionId <= 0L || logicalSchemaId == EngineSchemas.ENGLISH) {
+        if (closed || sessionId == 0L || logicalSchemaId == EngineSchemas.ENGLISH) {
             return@invokeNative false
         }
         val beforeSnap = _state.value
@@ -165,7 +168,7 @@ public class RimeInputEngine internal constructor(
     }
 
     public override fun setOption(name: String, on: Boolean): Unit = invokeNative {
-        if (closed || sessionId <= 0L) return@invokeNative
+        if (closed || sessionId == 0L) return@invokeNative
         when (name.trim().lowercase()) {
             EngineOptions.TRADITIONALIZATION -> {
                 traditional = on
@@ -199,7 +202,7 @@ public class RimeInputEngine internal constructor(
     }
 
     public override fun selectSchema(id: String): Boolean = invokeNative {
-        if (closed || sessionId <= 0L) return@invokeNative false
+        if (closed || sessionId == 0L) return@invokeNative false
         val canonical = canonicalLogicalSchema(id)
         val ok = applyLogicalSchemaLocked(canonical)
         publishSnapshotLocked()
@@ -207,7 +210,7 @@ public class RimeInputEngine internal constructor(
     }
 
     public override fun reset(): Unit = invokeNative {
-        if (closed || sessionId <= 0L) return@invokeNative
+        if (closed || sessionId == 0L) return@invokeNative
         t9Coordinator.clear()
         bridge.clearComposition(sessionId)
         publishSnapshotLocked()
@@ -217,7 +220,7 @@ public class RimeInputEngine internal constructor(
      * Triggers a synchronous Rime workspace re-deploy (for M2-2 schema reload / user import).
      */
     public fun deployWorkspace(): Boolean = invokeNative {
-        if (closed || sessionId <= 0L) return@invokeNative false
+        if (closed || sessionId == 0L) return@invokeNative false
         t9Coordinator.clear()
         bridge.clearComposition(sessionId)
         val ok = bridge.deployWorkspace()
@@ -232,7 +235,7 @@ public class RimeInputEngine internal constructor(
         val sid = sessionId
         sessionId = 0L
         t9Coordinator.clear()
-        if (sid > 0L) {
+        if (sid != 0L) {
             runCatching { bridge.destroySession(sid) }
         }
         runCatching { bridge.releaseRuntime() }
@@ -416,6 +419,7 @@ public class RimeInputEngine internal constructor(
     private fun <T> invokeNative(block: () -> T): T = runNative { block() } as T
 
     public companion object {
+        private const val DEFAULT_YAML_FILE: String = "default.yaml"
         private const val OPTION_TRADITIONALIZATION: String = EngineOptions.TRADITIONALIZATION
         private const val PASSTHROUGH_MODIFIER_MASK: Int =
             KeyCodes.MASK_CONTROL or KeyCodes.MASK_ALT or KeyCodes.MASK_SUPER

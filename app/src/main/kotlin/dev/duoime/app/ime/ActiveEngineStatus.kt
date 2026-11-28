@@ -3,6 +3,7 @@
 package dev.duoime.app.ime
 
 import android.content.Context
+import android.util.Log
 import dev.duoime.app.settings.DuoImeSettings
 import dev.duoime.app.settings.EngineBackend
 import dev.duoime.core.engine.EngineSchemas
@@ -13,6 +14,7 @@ import dev.duoime.embed.KeyboardController
 import dev.duoime.embed.KeyboardUiState
 import dev.duoime.engine.rime.RimeInputEngine
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -110,7 +112,8 @@ internal data class EngineBootstrapPlan(
  */
 internal class DuoImeEngineSessionFactory internal constructor(
     private val rimeEngineCreator: (DuoImeSettings) -> RimeInputEngine,
-    private val statusSink: (ActiveEngineStatus) -> Unit = DuoImeEngineStatusRegistry::update
+    private val statusSink: (ActiveEngineStatus) -> Unit = DuoImeEngineStatusRegistry::update,
+    private val onRimeFailure: (Throwable) -> Unit = {}
 ) {
     constructor(
         appContext: Context,
@@ -126,7 +129,10 @@ internal class DuoImeEngineSessionFactory internal constructor(
                 initialIncognito = settings.alwaysIncognito
             )
         },
-        statusSink = statusSink
+        statusSink = statusSink,
+        onRimeFailure = { err ->
+            Log.w(LOG_TAG, "Rime bootstrap failed (${err::class.simpleName}): ${err.message.orEmpty()}")
+        }
     )
 
     private val generation = AtomicLong(0L)
@@ -151,7 +157,7 @@ internal class DuoImeEngineSessionFactory internal constructor(
         return when (backend) {
             EngineBackend.RIME -> EngineBootstrapPlan(
                 primaryFactory = {
-                    val engine = rimeEngineCreator(settings)
+                    val engine = createRimeEngineLoggingFailures(settings)
                     publishIfLatest(
                         gen = gen,
                         status = ActiveEngineStatus(
@@ -211,6 +217,16 @@ internal class DuoImeEngineSessionFactory internal constructor(
         }
     }
 
+    @Suppress("TooGenericExceptionCaught")
+    private fun createRimeEngineLoggingFailures(settings: DuoImeSettings): RimeInputEngine = try {
+        rimeEngineCreator(settings)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (err: Throwable) {
+        onRimeFailure(err)
+        throw err
+    }
+
     private fun publishIfLatest(gen: Long, status: ActiveEngineStatus) {
         if (generation.get() == gen) {
             currentStatus = status
@@ -219,5 +235,6 @@ internal class DuoImeEngineSessionFactory internal constructor(
     }
 }
 
+private const val LOG_TAG: String = "DuoImeEngine"
 internal const val TAG_FALLBACK_LITE: String = "Fallback: RimeUnavailable"
 internal const val TAG_FALLBACK_PASSTHROUGH_PREFIX: String = "Plain:"

@@ -15,7 +15,8 @@ public data class RimeWorkspacePaths(
     public val sharedDir: File,
     public val userDir: File,
     public val prebuiltDir: File,
-    public val stagingDir: File
+    public val stagingDir: File,
+    public val assetsUpdated: Boolean = false
 )
 
 internal interface RimeAssetSource {
@@ -95,11 +96,14 @@ public object RimeWorkspaceInstaller {
             userYaml.writeText("# DuoIME Rime user state\nvar: {}\n", Charsets.UTF_8)
         }
 
+        val needsDeploy = !isUpToDate || !File(stagingDir, DEFAULT_YAML_FILE).isFile
+
         return RimeWorkspacePaths(
             sharedDir = sharedDir,
             userDir = userDir,
             prebuiltDir = prebuiltDir,
-            stagingDir = stagingDir
+            stagingDir = stagingDir,
+            assetsUpdated = needsDeploy
         )
     }
 

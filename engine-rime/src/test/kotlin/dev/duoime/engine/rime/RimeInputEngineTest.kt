@@ -19,7 +19,8 @@ import org.junit.Test
 class RimeInputEngineTest {
 
     private class FakeRimeNativeBridge(
-        private val failAcquire: Boolean = false
+        private val failAcquire: Boolean = false,
+        private val failDeploy: Boolean = false
     ) : RimeNativeBridge {
         var acquireCount: Int = 0
         var releaseCount: Int = 0
@@ -75,7 +76,7 @@ class RimeInputEngineTest {
 
         override fun deployWorkspace(): Boolean {
             deployCount++
-            return true
+            return !failDeploy
         }
 
         override fun createSession(): Long = nextSession++
@@ -237,14 +238,19 @@ class RimeInputEngineTest {
         }
     }
 
-    private fun testPaths(): RimeWorkspacePaths {
+    private fun testPaths(assetsUpdated: Boolean = false, withStagingDefaultYaml: Boolean = true): RimeWorkspacePaths {
         val root = Files.createTempDirectory("duoime-rime-engine-test").toFile()
         root.deleteOnExit()
+        val stagingDir = File(root, "user/build").apply { mkdirs() }
+        if (withStagingDefaultYaml) {
+            File(stagingDir, "default.yaml").writeText("deployed: true\n")
+        }
         return RimeWorkspacePaths(
             sharedDir = File(root, "shared"),
             userDir = File(root, "user"),
             prebuiltDir = File(root, "shared/build"),
-            stagingDir = File(root, "user/build")
+            stagingDir = stagingDir,
+            assetsUpdated = assetsUpdated
         )
     }
 
@@ -252,10 +258,11 @@ class RimeInputEngineTest {
         bridge: FakeRimeNativeBridge,
         initialSchemaId: String = EngineSchemas.PINYIN_26,
         initialVariant: ChineseVariant = ChineseVariant.SIMPLIFIED,
-        initialIncognito: Boolean = false
+        initialIncognito: Boolean = false,
+        paths: RimeWorkspacePaths = testPaths()
     ): RimeInputEngine = RimeInputEngine(
         bridge = bridge,
-        paths = testPaths(),
+        paths = paths,
         distributionVersion = "0.1.0",
         initialConfig = RimeInitialConfig(
             schemaId = initialSchemaId,
@@ -477,5 +484,82 @@ class RimeInputEngineTest {
         assertEquals(listOf(1L), bridge.destroyedSessions)
         assertEquals(1, bridge.acquireCount)
         assertEquals(1, bridge.releaseCount)
+    }
+
+    @Test
+    fun negativeArm64TaggedSessionIdWorksAcrossFullLifecycleAndFailureCleanup() {
+        val taggedSessionId = 0xb4000072a1c34000uL.toLong()
+        assertTrue("ARM64 Scudo tagged pointer must be negative as signed Long", taggedSessionId < 0L)
+
+        val bridge = FakeRimeNativeBridge().apply { nextSession = taggedSessionId }
+        val engine = createEngine(bridge)
+        typeChars(engine, "nihao")
+        assertTrue(engine.state.value.isComposing)
+        assertTrue(engine.page(forward = true))
+        assertTrue(engine.page(forward = false))
+        assertEquals(KeyProcessResult.CommitText("你好"), engine.selectCandidate(0))
+
+        assertTrue(engine.selectSchema(EngineSchemas.DOUBLE_PINYIN_FLYPY))
+        assertTrue(engine.selectSchema(EngineSchemas.T9_PINYIN))
+        typeChars(engine, "6262")
+        assertTrue(engine.selectSyllable(engine.state.value.syllables.indexOf("ma")))
+        assertTrue(engine.unlockSyllablesFrom(0))
+        engine.setOption(EngineOptions.TRADITIONALIZATION, true)
+        engine.reset()
+        assertTrue(engine.deployWorkspace())
+
+        engine.close()
+        assertEquals(listOf(taggedSessionId), bridge.destroyedSessions)
+        assertEquals(1, bridge.releaseCount)
+
+        // Initial schema selection failure with negative tagged ID must destroySession(taggedId) & release runtime
+        val failBridge = FakeRimeNativeBridge().apply { nextSession = taggedSessionId }
+        val err = runCatching {
+            createEngine(failBridge, initialSchemaId = "unsupported_schema")
+        }.exceptionOrNull()
+        assertTrue("Expected IllegalStateException, got $err", err is IllegalStateException)
+        assertEquals(listOf(taggedSessionId), failBridge.destroyedSessions)
+        assertEquals(1, failBridge.acquireCount)
+        assertEquals(1, failBridge.releaseCount)
+    }
+
+    @Test
+    fun initDeploysWorkspaceWhenAssetsUpdatedOrStagingDefaultYamlMissing() {
+        val upToDateBridge = FakeRimeNativeBridge()
+        createEngine(
+            bridge = upToDateBridge,
+            paths = testPaths(assetsUpdated = false, withStagingDefaultYaml = true)
+        ).close()
+        assertEquals(0, upToDateBridge.deployCount)
+
+        val updatedAssetsBridge = FakeRimeNativeBridge()
+        createEngine(
+            bridge = updatedAssetsBridge,
+            paths = testPaths(assetsUpdated = true, withStagingDefaultYaml = true)
+        ).close()
+        assertEquals(1, updatedAssetsBridge.deployCount)
+
+        val missingStagingBridge = FakeRimeNativeBridge()
+        createEngine(
+            bridge = missingStagingBridge,
+            paths = testPaths(assetsUpdated = false, withStagingDefaultYaml = false)
+        ).close()
+        assertEquals(1, missingStagingBridge.deployCount)
+
+        val failingDeployBridge = FakeRimeNativeBridge(failDeploy = true)
+        val deployErr = runCatching {
+            createEngine(
+                bridge = failingDeployBridge,
+                paths = testPaths(assetsUpdated = true, withStagingDefaultYaml = false)
+            )
+        }.exceptionOrNull()
+        assertTrue(
+            "Expected IllegalStateException on deploy failure, got $deployErr",
+            deployErr is IllegalStateException
+        )
+        assertEquals(1, failingDeployBridge.deployCount)
+        assertEquals(1, failingDeployBridge.acquireCount)
+        assertEquals(1, failingDeployBridge.releaseCount)
+        assertTrue(failingDeployBridge.destroyedSessions.isEmpty())
     }
 }

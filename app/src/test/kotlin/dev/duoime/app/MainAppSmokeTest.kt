@@ -20,6 +20,8 @@ import dev.duoime.embed.DuoImeEmbed
 import dev.duoime.embed.EngineIssue
 import dev.duoime.embed.EngineIssueKind
 import dev.duoime.embed.KeyboardUiState
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -130,5 +132,32 @@ class MainAppSmokeTest {
         } finally {
             DuoImeEngineStatusRegistry.update(prevGlobal)
         }
+    }
+
+    @Test
+    fun rimeBootstrapFailureInvokesFailureCallbackAndRethrows() = runTest {
+        val logged = mutableListOf<Throwable>()
+        val boom = IllegalStateException("librime createSession returned 0")
+        val factory = dev.duoime.app.ime.DuoImeEngineSessionFactory(
+            rimeEngineCreator = { throw boom },
+            statusSink = {},
+            onRimeFailure = { logged.add(it) }
+        )
+        val plan = factory.prepare(DuoImeSettings(engineBackend = EngineBackend.RIME))
+        val caught = runCatching { plan.primaryFactory() }.exceptionOrNull()
+        assertEquals(boom, caught)
+        assertEquals(listOf<Throwable>(boom), logged)
+
+        // CancellationException propagates without invoking failure logging callback
+        val cancelLogged = mutableListOf<Throwable>()
+        val cancelFactory = dev.duoime.app.ime.DuoImeEngineSessionFactory(
+            rimeEngineCreator = { throw CancellationException("cancelled") },
+            statusSink = {},
+            onRimeFailure = { cancelLogged.add(it) }
+        )
+        val cancelPlan = cancelFactory.prepare(DuoImeSettings(engineBackend = EngineBackend.RIME))
+        val cancelCaught = runCatching { cancelPlan.primaryFactory() }.exceptionOrNull()
+        assertTrue(cancelCaught is CancellationException)
+        assertTrue(cancelLogged.isEmpty())
     }
 }
