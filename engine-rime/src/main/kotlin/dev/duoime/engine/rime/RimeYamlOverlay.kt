@@ -28,21 +28,26 @@ internal object RimeYamlOverlay {
     private const val CUSTOM_YAML_SUFFIX: String = ".custom.yaml"
     private const val CUSTOM_VERSION_MARKER: String = ".custom."
 
+    private enum class MappingKeyPolicy {
+        REQUIRED,
+        REQUIRED_IF_NON_EMPTY
+    }
+
     fun validateStagedYamlFiles(stageDir: File): String? {
         val defaultYaml = File(stageDir, DEFAULT_YAML_FILE)
         if (defaultYaml.isFile) {
-            validateBasicYamlSyntax(defaultYaml, requireMappingKey = true)?.let { return it }
+            validateBasicYamlSyntax(defaultYaml, MappingKeyPolicy.REQUIRED)?.let { return it }
         }
         val customYamlFiles = stageDir.listFiles()
             ?.filter { it.isFile && it.name.endsWith(CUSTOM_YAML_SUFFIX, ignoreCase = true) }
             ?.sortedBy { it.name }
             .orEmpty()
         for (customFile in customYamlFiles) {
-            validateBasicYamlSyntax(customFile, requireMappingKey = true)?.let { return it }
+            validateBasicYamlSyntax(customFile, MappingKeyPolicy.REQUIRED_IF_NON_EMPTY)?.let { return it }
         }
         val schemaFiles = listTopLevelSchemaFiles(stageDir)
         for (schemaFile in schemaFiles) {
-            validateBasicYamlSyntax(schemaFile, requireMappingKey = true)?.let { return it }
+            validateBasicYamlSyntax(schemaFile, MappingKeyPolicy.REQUIRED)?.let { return it }
             val parsed = parseSchemaYaml(schemaFile)
                 ?: return "Invalid Rime schema YAML (missing schema.schema_id): ${schemaFile.name}"
             if (parsed.id.isBlank()) {
@@ -92,7 +97,7 @@ internal object RimeYamlOverlay {
         } else {
             // Case B: user supplied default.yaml without default.custom.yaml -> append missing starter
             // schemas (deduped against user's default.yaml schema_list) plus unreferenced custom schemas.
-            val existingInDefault = extractDefaultYamlSchemaList(defaultYaml.readText(Charsets.UTF_8))
+            val existingInDefault = extractDefaultYamlSchemaList(readUtf8StrippingBom(defaultYaml).orEmpty())
             buildList {
                 for (starter in RimeEngineMetadata.ALL_BUILT_IN_SCHEMA_IDS) {
                     if (starter !in existingInDefault) {
@@ -119,14 +124,16 @@ internal object RimeYamlOverlay {
 
     fun guardDefaultYamlConfigVersion(defaultYaml: File) {
         val rawText = defaultYaml.readText(Charsets.UTF_8)
-        val updated = ensureSafeConfigVersion(rawText)
+        val withoutBom = rawText.removePrefix(UTF8_BOM)
+        val updated = ensureSafeConfigVersion(withoutBom)
         if (updated != rawText) {
             defaultYaml.writeText(updated, Charsets.UTF_8)
         }
     }
 
     internal fun ensureSafeConfigVersion(content: String): String {
-        val normalized = content.replace("\r\n", "\n").replace('\r', '\n')
+        val clean = content.removePrefix(UTF8_BOM)
+        val normalized = clean.replace("\r\n", "\n").replace('\r', '\n')
         val lines = normalized.split('\n').toMutableList()
         var versionLineIdx = -1
         var existingValue: String? = null
@@ -140,15 +147,18 @@ internal object RimeYamlOverlay {
         }
         if (versionLineIdx >= 0) {
             if (!needsConfigVersionBump(existingValue)) {
-                return content
+                return clean
             }
             lines[versionLineIdx] = "config_version: \"$MIN_SAFE_CONFIG_VERSION\""
             return lines.joinToString("\n")
         }
         val insertIdx = lines.indexOfFirst { line ->
             val trimmed = line.trim()
-            trimmed.isNotEmpty() && !trimmed.startsWith('#')
-        }.let { if (it < 0) 0 else it }
+            trimmed.isNotEmpty() &&
+                !trimmed.startsWith('#') &&
+                trimmed != "---" &&
+                !trimmed.startsWith("%")
+        }.let { if (it < 0) lines.size else it }
         lines.add(insertIdx, "config_version: \"$MIN_SAFE_CONFIG_VERSION\"")
         return lines.joinToString("\n")
     }
@@ -182,7 +192,7 @@ internal object RimeYamlOverlay {
     internal fun extractDefaultYamlSchemaList(content: String): Set<String> {
         val result = LinkedHashSet<String>()
         var inSchemaList = false
-        for (rawLine in content.lineSequence()) {
+        for (rawLine in content.removePrefix(UTF8_BOM).lineSequence()) {
             val line = rawLine.trimEnd('\r')
             val trimmed = line.trim()
             if (trimmed.isEmpty() || trimmed.startsWith('#')) continue
@@ -199,7 +209,7 @@ internal object RimeYamlOverlay {
 
     internal fun parseSchemaYaml(file: File): ParsedSchemaYaml? {
         if (!file.isFile) return null
-        val content = runCatching { file.readText(Charsets.UTF_8) }.getOrNull() ?: return null
+        val content = readUtf8StrippingBom(file) ?: return null
         val (schemaId, schemaName) = extractSchemaHeaderFields(content)
         val resolvedId = schemaId?.takeIf { it.isNotEmpty() } ?: return null
         val resolvedName = schemaName?.takeIf { it.isNotEmpty() } ?: resolvedId
@@ -245,13 +255,19 @@ internal object RimeYamlOverlay {
         }
     }
 
+    private const val UTF8_BOM: String = "\uFEFF"
+
+    private fun readUtf8StrippingBom(file: File): String? =
+        runCatching { file.readText(Charsets.UTF_8).removePrefix(UTF8_BOM) }.getOrNull()
+
     @Suppress("CyclomaticComplexMethod", "NestedBlockDepth")
-    internal fun validateBasicYamlSyntax(file: File, requireMappingKey: Boolean): String? {
-        val text = runCatching { file.readText(Charsets.UTF_8) }.getOrNull()
+    private fun validateBasicYamlSyntax(file: File, mappingPolicy: MappingKeyPolicy): String? {
+        val text = readUtf8StrippingBom(file)
             ?: return "Unable to read UTF-8 YAML: ${file.name}"
         if (text.indexOf('\u0000') >= 0) {
             return "Binary NUL byte found in YAML: ${file.name}"
         }
+        var sawContentLine = false
         var sawMappingKey = false
         var blockScalarIndent = -1
         var squareDepth = 0
@@ -267,8 +283,10 @@ internal object RimeYamlOverlay {
             }
             val trimmed = line.substring(indent).trimEnd()
             if (trimmed.isEmpty() || trimmed.startsWith('#')) continue
+            if (indent == 0 && (trimmed == "---" || trimmed.startsWith("%"))) continue
             if (indent == 0 && trimmed == "...") break
 
+            sawContentLine = true
             if (blockScalarIndent >= 0) {
                 if (indent > blockScalarIndent) continue
                 blockScalarIndent = -1
@@ -287,7 +305,11 @@ internal object RimeYamlOverlay {
         if (squareDepth != 0 || curlyDepth != 0) {
             return "Unbalanced YAML flow brackets in ${file.name}"
         }
-        if (requireMappingKey && !sawMappingKey) {
+        val missingRequiredMapping = when (mappingPolicy) {
+            MappingKeyPolicy.REQUIRED -> !sawMappingKey
+            MappingKeyPolicy.REQUIRED_IF_NON_EMPTY -> sawContentLine && !sawMappingKey
+        }
+        if (missingRequiredMapping) {
             return "No YAML mapping keys found in ${file.name}"
         }
         return null

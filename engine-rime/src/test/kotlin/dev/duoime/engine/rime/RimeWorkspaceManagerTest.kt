@@ -352,4 +352,54 @@ class RimeWorkspaceManagerTest {
         assertFalse(RimeWorkspaceManager.hasCustomUserFiles(paths))
         assertTrue(File(paths.userDir, "user.yaml").isFile)
     }
+
+    @Test
+    fun yamlOverlayHandlesDocumentStartHeaderUtf8BomAndCommentOnlyCustomTemplates() {
+        val paths = createWorkspace()
+        val defaultWithDocStart = "\uFEFF%YAML 1.2\n---\n# User config\nschema_list:\n  - schema: rime_ice\n"
+        val bomSchemaYaml = "\uFEFF" + sampleSchemaYaml("rime_ice", "雾凇拼音")
+        val commentOnlyTemplate = "# Weasel desktop template\n# patch:\n#   style/font_point: 14\n"
+
+        val result = RimeWorkspaceManager.importEntries(
+            paths,
+            sequenceOf(
+                entry("default.yaml", defaultWithDocStart),
+                entry("rime_ice.schema.yaml", bomSchemaYaml),
+                entry("weasel.custom.yaml", commentOnlyTemplate)
+            )
+        ) {
+            listOf(
+                RimeSchemaInfo("duoime_pinyin_26", "DuoIME 26键拼音", isBuiltIn = true),
+                RimeSchemaInfo("rime_ice", "雾凇拼音", isBuiltIn = false)
+            )
+        }
+
+        assertTrue(
+            "Expected Success with BOM, --- header, and comment-only template, got $result",
+            result is RimeImportResult.Success
+        )
+        val writtenDefault = File(paths.userDir, "default.yaml").readText(Charsets.UTF_8)
+        assertFalse("UTF-8 BOM must be stripped from rewritten default.yaml", writtenDefault.startsWith("\uFEFF"))
+        val docStartIdx = writtenDefault.indexOf("---")
+        val versionIdx = writtenDefault.indexOf("config_version: \"1.0\"")
+        val schemaListIdx = writtenDefault.indexOf("schema_list:")
+        assertTrue(
+            "config_version must be inserted AFTER --- and BEFORE schema_list:\n$writtenDefault",
+            docStartIdx in 0 until versionIdx && versionIdx < schemaListIdx
+        )
+
+        // Disk schema discovery also handles UTF-8 BOM .schema.yaml cleanly
+        val discovered = RimeWorkspaceManager.discoverInstalledSchemasFromDisk(paths)
+        assertTrue(
+            "Expected BOM schema rime_ice in $discovered",
+            discovered.any { it.id == "rime_ice" && it.name == "雾凇拼音" }
+        )
+
+        // Non-comment garbage without mapping keys in *.custom.yaml is still rejected
+        val garbageCustom = RimeWorkspaceManager.stageEntries(
+            sequenceOf(entry("default.custom.yaml", "not a valid yaml mapping\n")),
+            tempFolder.newFolder("garbage_custom_stage")
+        )
+        assertEquals(RimeImportFailureReason.INVALID_YAML, (garbageCustom as RimeStagingResult.Failure).reason)
+    }
 }

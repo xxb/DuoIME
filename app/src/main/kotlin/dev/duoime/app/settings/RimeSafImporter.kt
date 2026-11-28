@@ -158,8 +158,10 @@ internal object RimeSafImporter {
             )
         val relPath = if (frame.prefix.isEmpty()) safeName else "${frame.prefix}/$safeName"
         if (child.isDirectory) {
+            if (RimeWorkspaceManager.isIgnoredImportDirectory(safeName)) return null
             return enqueueDirectoryChild(child.documentId, relPath, frame.depth + 1, state)
         }
+        if (RimeWorkspaceManager.isIgnoredImportFile(safeName)) return null
         if (state.outEntries.size >= RimeWorkspaceManager.MAX_IMPORT_FILES) {
             return RimeStagingResult.Failure(
                 RimeImportFailureReason.TOO_MANY_FILES,

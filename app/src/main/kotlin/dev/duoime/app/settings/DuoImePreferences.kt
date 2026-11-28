@@ -339,8 +339,7 @@ class DuoImePreferences internal constructor(
             val migrated = if (rawLegacyInputMode != null) migrateLegacyInputMode(rawLegacyInputMode) else null
             val language = parseEnumOrNull<Language>(rawLanguage) ?: migrated?.first ?: Language.CHINESE
             val scheme = parseEnumOrNull<ChineseScheme>(rawScheme) ?: migrated?.second ?: ChineseScheme.PINYIN_26
-            val variant = parseEnumOrNull<ChineseVariant>(rawVariant) ?: migrated?.second?.let { ChineseVariant.SIMPLIFIED }
-                ?: ChineseVariant.SIMPLIFIED
+            val variant = parseEnumOrNull<ChineseVariant>(rawVariant) ?: ChineseVariant.SIMPLIFIED
             return KeyboardPrefs(
                 language = language,
                 chineseScheme = scheme,

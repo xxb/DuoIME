@@ -360,6 +360,19 @@ public object RimeWorkspaceManager {
     }
 
     /**
+     * Returns `true` if a directory name (such as `.git` or `__MACOSX`) is ignored during Rime
+     * archive and SAF folder imports.
+     */
+    public fun isIgnoredImportDirectory(name: String): Boolean = name in IGNORED_DIR_SEGMENTS
+
+    /**
+     * Returns `true` if a file name (such as `.DS_Store`, `Thumbs.db`, or AppleDouble `._*`)
+     * is ignored during Rime archive and SAF folder imports.
+     */
+    public fun isIgnoredImportFile(name: String): Boolean =
+        name.lowercase() in IGNORED_FILE_NAMES || name.startsWith("._")
+
+    /**
      * Returns `true` if `paths.userDir` contains user-imported configuration/schema/dictionary
      * files beyond DuoIME's standard runtime state (`user.yaml`, `build/`, `*.userdb*`).
      */
@@ -526,12 +539,10 @@ public object RimeWorkspaceManager {
         if (segments.first().contains(':')) {
             return PathCheck.Unsafe("Drive prefix is not allowed: $rawPath")
         }
-        if (segments.any { it in IGNORED_DIR_SEGMENTS }) {
+        if (segments.any(::isIgnoredImportDirectory)) {
             return PathCheck.Skip
         }
-        val fileName = segments.last()
-        val lowerName = fileName.lowercase()
-        if (lowerName in IGNORED_FILE_NAMES || fileName.startsWith("._")) {
+        if (isIgnoredImportFile(segments.last())) {
             return PathCheck.Skip
         }
         return PathCheck.Accept(segments.joinToString("/"))

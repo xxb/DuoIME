@@ -147,6 +147,34 @@ class RimeSafImporterAndCoordinatorTest {
             File(tempFolder.root, "tree_stage_bad")
         )
         assertEquals(RimeImportFailureReason.UNSAFE_PATH, (unsafeResult as RimeStagingResult.Failure).reason)
+
+        // 4) Ignored dirs/files (.git, __MACOSX, .DS_Store, ._*) are skipped BEFORE MAX_IMPORT_FILES / MAX_TREE_DEPTH
+        val ignoredRepoSource = object : SafTreeNodeSource {
+            override fun listChildren(parentDocumentId: String): List<SafDocumentNode> = when (parentDocumentId) {
+                "root" -> listOf(
+                    SafDocumentNode("schema1", "rime_ice.schema.yaml", isDirectory = false),
+                    SafDocumentNode("ds_store", ".DS_Store", isDirectory = false),
+                    SafDocumentNode("apple_double", "._rime_ice.schema.yaml", isDirectory = false),
+                    SafDocumentNode("git_dir", ".git", isDirectory = true),
+                    SafDocumentNode("macosx_dir", "__MACOSX", isDirectory = true)
+                )
+                "git_dir", "macosx_dir" -> error("Ignored directory '$parentDocumentId' must never be traversed")
+                else -> emptyList()
+            }
+
+            override fun openStream(documentId: String): InputStream? = when (documentId) {
+                "schema1" -> ByteArrayInputStream(sampleSchema("rime_ice", "雾凇拼音").toByteArray(Charsets.UTF_8))
+                else -> error("Ignored file '$documentId' must never be opened")
+            }
+        }
+        val ignoredRepoStage = File(tempFolder.root, "tree_stage_ignored")
+        val ignoredRepoResult = RimeSafImporter.stageTreeNodes("root", ignoredRepoSource, ignoredRepoStage)
+        assertTrue(
+            "Expected Success skipping .git/__MACOSX/junk, got $ignoredRepoResult",
+            ignoredRepoResult is RimeStagingResult.Success
+        )
+        assertEquals(1, (ignoredRepoResult as RimeStagingResult.Success).fileCount)
+        assertEquals(listOf("rime_ice"), ignoredRepoResult.discoveredCustomSchemaIds)
     }
 
     @Test
