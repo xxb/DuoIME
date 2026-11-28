@@ -4,6 +4,7 @@ package dev.duoime.engine.rime
 
 import java.io.ByteArrayInputStream
 import java.io.File
+import java.io.IOException
 import java.io.InputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -636,6 +637,60 @@ class RimeWorkspaceManagerTest {
         )
         assertTrue("Healthy userDir must stay untouched when marker is already cleared", sentinelFile.isFile)
         assertFalse(File(paths.userDir, "partial.yaml").exists())
+    }
+
+    @Test
+    fun failedCrashRecoveryPreservesMarkerAndBackupForRetry() {
+        val paths = createWorkspace()
+        val workspaceRoot = paths.userDir.parentFile!!
+        val marker = File(workspaceRoot, RimeWorkspaceManager.WORKSPACE_TX_MARKER_FILE)
+        val backupDir = File(workspaceRoot, ".import_backup_4004").apply { mkdirs() }
+        File(backupDir, "user.yaml").writeText("var:\n  restored: retry_ok\n")
+        File(backupDir, "valuable_user.yaml").writeText("keep: retry\n")
+        marker.writeText("${backupDir.name}\n", Charsets.UTF_8)
+
+        val err = runCatching {
+            RimeWorkspaceManager.recoverInterruptedTransactionIfNeeded(
+                workspaceRoot = workspaceRoot,
+                userDir = paths.userDir,
+                stagingDir = paths.stagingDir
+            ) { _, _ -> throw IOException("simulated transient I/O failure") }
+        }.exceptionOrNull()
+
+        assertTrue("Expected IOException to propagate on failed restore, got $err", err is IOException)
+        assertTrue("Failed recovery must preserve transaction marker for retry", marker.isFile)
+        assertTrue("Failed recovery must preserve backup directory for retry", backupDir.isDirectory)
+
+        // Subsequent retry succeeds cleanly, restores backup, and clears marker
+        assertTrue(
+            RimeWorkspaceManager.recoverInterruptedTransactionIfNeeded(
+                workspaceRoot = workspaceRoot,
+                userDir = paths.userDir,
+                stagingDir = paths.stagingDir
+            )
+        )
+        assertFalse("Successful retry must delete transaction marker", marker.exists())
+        assertFalse("Successful retry must move backup into userDir", backupDir.exists())
+        assertTrue(File(paths.userDir, "valuable_user.yaml").isFile)
+        assertEquals(
+            "crash_recovery",
+            File(paths.stagingDir, RimeWorkspaceInstaller.DEPLOY_PENDING_FILE).readText(Charsets.UTF_8).trim()
+        )
+
+        // Failed commit marker clear returns false and retains backupDir without deleting it
+        val retainedBackup = File(workspaceRoot, ".import_backup_5005").apply { mkdirs() }
+        File(retainedBackup, "keep.yaml").writeText("keep: 1\n")
+        marker.writeText("${retainedBackup.name}\n", Charsets.UTF_8)
+        assertFalse(
+            RimeWorkspaceManager.commitAndCleanupBackup(workspaceRoot, retainedBackup) { false }
+        )
+        assertTrue("Backup must remain intact when marker clear fails", retainedBackup.isDirectory)
+        assertTrue("Marker remains present when clearMarker reports failure", marker.isFile)
+
+        // Successful commit marker clear removes marker FIRST and then cleans up backupDir
+        assertTrue(RimeWorkspaceManager.commitAndCleanupBackup(workspaceRoot, retainedBackup))
+        assertFalse(marker.exists())
+        assertFalse(retainedBackup.exists())
     }
 
     @Test

@@ -335,8 +335,13 @@ public object RimeWorkspaceManager {
                 detail = "Starter workspace re-deploy failed",
                 rolledBack = rolledBack
             )
+        } else if (!commitAndCleanupBackup(workspaceRoot, backupDir)) {
+            RimeImportResult.Failure(
+                reason = RimeImportFailureReason.IO_ERROR,
+                detail = "Failed to finalize workspace transaction marker after reset",
+                rolledBack = false
+            )
         } else {
-            commitAndCleanupBackup(workspaceRoot, backupDir)
             RimeImportResult.Success(
                 schemas = deployed,
                 importedCustomSchemaIds = emptyList(),
@@ -432,13 +437,17 @@ public object RimeWorkspaceManager {
      * directory is referenced, atomically restores it over `userDir`, prepares `stagingDir` for a
      * clean re-deploy, cleans up stale sibling stage directories, and deletes the marker.
      */
-    internal fun recoverInterruptedTransactionIfNeeded(workspaceRoot: File, userDir: File, stagingDir: File): Boolean =
-        WorkspaceTxRecovery.recoverInterruptedTransactionIfNeeded(
-            workspaceRoot = workspaceRoot,
-            userDir = userDir,
-            stagingDir = stagingDir,
-            moveDirectory = ::moveDirectory
-        )
+    internal fun recoverInterruptedTransactionIfNeeded(
+        workspaceRoot: File,
+        userDir: File,
+        stagingDir: File,
+        moveDirectory: (File, File) -> Unit = ::moveDirectory
+    ): Boolean = WorkspaceTxRecovery.recoverInterruptedTransactionIfNeeded(
+        workspaceRoot = workspaceRoot,
+        userDir = userDir,
+        stagingDir = stagingDir,
+        moveDirectory = moveDirectory
+    )
 
     private fun commitSwapAndDeploy(
         paths: RimeWorkspacePaths,
@@ -462,7 +471,13 @@ public object RimeWorkspaceManager {
             )
         }
 
-        commitAndCleanupBackup(paths.userDir.parentFile, backupDir)
+        if (!commitAndCleanupBackup(paths.userDir.parentFile, backupDir)) {
+            return RimeImportResult.Failure(
+                reason = RimeImportFailureReason.IO_ERROR,
+                detail = "Failed to finalize workspace transaction marker after import",
+                rolledBack = false
+            )
+        }
         val finalSchemas = deployedSchemas!!
         val deployedIds = finalSchemas.map { it.id }.toSet()
         val activeCustomIds = staged.discoveredCustomSchemaIds.filter { it in deployedIds }
@@ -548,12 +563,20 @@ public object RimeWorkspaceManager {
         return restored
     }
 
-    private fun commitAndCleanupBackup(workspaceRoot: File?, backupDir: File) {
+    internal fun commitAndCleanupBackup(
+        workspaceRoot: File?,
+        backupDir: File,
+        clearMarker: (File?) -> Boolean = WorkspaceTxRecovery::clearMarkerVerified
+    ): Boolean {
         // Commit on disk FIRST (clear & verify marker removal) before destructively deleting backupDir
         // so a crash mid-cleanup can never cause next startup to restore a half-deleted backup.
-        if (WorkspaceTxRecovery.clearMarkerVerified(workspaceRoot) && backupDir.exists()) {
+        if (!clearMarker(workspaceRoot)) {
+            return false
+        }
+        if (backupDir.exists()) {
             backupDir.deleteRecursively()
         }
+        return true
     }
 
     private fun moveDirectory(source: File, target: File) {
@@ -790,11 +813,19 @@ private object WorkspaceTxRecovery {
         if (workspaceRoot == null) return true
         val marker = File(workspaceRoot, RimeWorkspaceManager.WORKSPACE_TX_MARKER_FILE)
         if (!marker.exists()) return true
-        marker.deleteRecursively()
+        repeat(2) {
+            runCatching {
+                if (marker.isDirectory && !Files.isSymbolicLink(marker.toPath())) {
+                    marker.deleteRecursively()
+                } else {
+                    Files.deleteIfExists(marker.toPath())
+                }
+            }
+            if (!marker.exists()) return true
+        }
         return !marker.exists()
     }
 
-    @Suppress("TooGenericExceptionCaught")
     fun recoverInterruptedTransactionIfNeeded(
         workspaceRoot: File,
         userDir: File,
@@ -804,29 +835,35 @@ private object WorkspaceTxRecovery {
         if (activeTransactions > 0) return false
         val marker = File(workspaceRoot, RimeWorkspaceManager.WORKSPACE_TX_MARKER_FILE)
         if (!marker.exists()) return false
-
-        try {
-            val backupName = runCatching { marker.readText(Charsets.UTF_8).trim() }.getOrNull().orEmpty()
-            val backupDir = resolveValidatedBackupDir(workspaceRoot, backupName) ?: return false
-            if (userDir.exists()) {
-                userDir.deleteRecursively()
-            }
-            moveDirectory(backupDir, userDir)
-            if (stagingDir.exists()) {
-                stagingDir.deleteRecursively()
-            }
-            stagingDir.mkdirs()
-            File(stagingDir, RimeWorkspaceInstaller.DEPLOY_PENDING_FILE)
-                .writeText("crash_recovery\n", Charsets.UTF_8)
-            cleanupStaleStageDirs(workspaceRoot)
-            true
-        } catch (_: Throwable) {
-            false
-        } finally {
-            if (marker.exists()) {
-                marker.deleteRecursively()
-            }
+        if (!marker.isFile || Files.isSymbolicLink(marker.toPath())) {
+            marker.deleteRecursively()
+            return false
         }
+
+        // Propagate I/O errors during marker read or backup restore while preserving the marker so
+        // installation cannot proceed with an empty/corrupt userDir and next startup retries cleanly.
+        val backupName = marker.readText(Charsets.UTF_8).trim()
+        val backupDir = resolveValidatedBackupDir(workspaceRoot, backupName)
+        if (backupDir == null) {
+            marker.deleteRecursively()
+            return false
+        }
+
+        if (userDir.exists() && !userDir.deleteRecursively()) {
+            throw IOException("Failed to remove interrupted workspace directory: ${userDir.name}")
+        }
+        moveDirectory(backupDir, userDir)
+        if (stagingDir.exists() && !stagingDir.deleteRecursively()) {
+            throw IOException("Failed to clean staging directory during crash recovery")
+        }
+        if (!stagingDir.mkdirs() && !stagingDir.isDirectory) {
+            throw IOException("Failed to recreate staging directory during crash recovery")
+        }
+        File(stagingDir, RimeWorkspaceInstaller.DEPLOY_PENDING_FILE)
+            .writeText("crash_recovery\n", Charsets.UTF_8)
+        clearMarkerVerified(workspaceRoot)
+        cleanupStaleStageDirs(workspaceRoot)
+        true
     }
 
     private fun resolveValidatedBackupDir(workspaceRoot: File, backupName: String): File? {
