@@ -11,6 +11,7 @@ import dev.duoime.core.model.InputMode
 import dev.duoime.core.model.KeyProcessResult
 import java.io.File
 import java.nio.file.Files
+import kotlinx.coroutines.CancellationException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -27,7 +28,9 @@ class RimeInputEngineTest {
         var deployCount: Int = 0
         var nextSession: Long = 1L
         var failNextCreateSession: Boolean = false
+        var failNextSelectSchema: Boolean = false
         var throwOnNextDeploy: Boolean = false
+        var cancelOnNextDeploy: Boolean = false
         var throwOnNextCreateSession: Boolean = false
         var throwOnNextSelectSchema: Boolean = false
         val destroyedSessions = mutableListOf<Long>()
@@ -82,6 +85,10 @@ class RimeInputEngineTest {
         override fun deployWorkspace(): Boolean {
             deployCount++
             lifecycleEvents.add("deploy")
+            if (cancelOnNextDeploy) {
+                cancelOnNextDeploy = false
+                throw CancellationException("Simulated deploy cancellation")
+            }
             if (throwOnNextDeploy) {
                 throwOnNextDeploy = false
                 error("Simulated deploy failure")
@@ -223,6 +230,10 @@ class RimeInputEngineTest {
             if (throwOnNextSelectSchema) {
                 throwOnNextSelectSchema = false
                 error("Simulated selectSchema failure")
+            }
+            if (failNextSelectSchema) {
+                failNextSelectSchema = false
+                return false
             }
             if (schemaId == "unsupported_schema") return false
             currentSchema = schemaId
@@ -717,5 +728,38 @@ class RimeInputEngineTest {
         assertEquals(KeyProcessResult.CommitText("你好"), engine1.selectCandidate(0))
         engine1.close()
         assertEquals(0, overlapBridge.activeCount)
+
+        // 5) selectSchema returning false during deployWorkspace() fails closed via closeLocked()
+        val failSchemaBridge = FakeRimeNativeBridge()
+        val failSchemaEngine = createEngine(failSchemaBridge, initialSchemaId = EngineSchemas.T9_PINYIN)
+        failSchemaBridge.failNextSelectSchema = true
+        assertFalse(failSchemaEngine.deployWorkspace())
+        assertEquals(1, failSchemaBridge.releaseCount)
+        assertEquals(listOf(1L, 2L), failSchemaBridge.destroyedSessions)
+        assertFalse(failSchemaEngine.state.value.isComposing)
+        failSchemaEngine.close()
+        assertEquals(1, failSchemaBridge.releaseCount)
+
+        // 6) CancellationException during deployWorkspace() propagates immediately without recreating session
+        val cancelDeployBridge = FakeRimeNativeBridge()
+        val cancelDeployEngine = createEngine(cancelDeployBridge)
+        cancelDeployBridge.lifecycleEvents.clear()
+        cancelDeployBridge.cancelOnNextDeploy = true
+        val cancelErr = runCatching { cancelDeployEngine.deployWorkspace() }.exceptionOrNull()
+        assertTrue("Expected CancellationException, got $cancelErr", cancelErr is CancellationException)
+        assertEquals(listOf("destroy:1", "deploy"), cancelDeployBridge.lifecycleEvents)
+        assertEquals(1, cancelDeployBridge.releaseCount)
+
+        // 7) .deploy_pending marker persists across failed deploy and clears once deploy succeeds
+        val pendingPaths = testPaths(assetsUpdated = true, withStagingDefaultYaml = true)
+        val pendingMarker = File(pendingPaths.stagingDir, RimeWorkspaceInstaller.DEPLOY_PENDING_FILE)
+        pendingMarker.writeText("pending\n")
+        val failedPendingBridge = FakeRimeNativeBridge(failDeploy = true)
+        assertTrue(runCatching { createEngine(failedPendingBridge, paths = pendingPaths) }.isFailure)
+        assertTrue("Pending deploy marker must persist when deploy fails", pendingMarker.isFile)
+
+        val okPendingBridge = FakeRimeNativeBridge()
+        createEngine(okPendingBridge, paths = pendingPaths).close()
+        assertFalse("Pending deploy marker must clear once deploy succeeds", pendingMarker.exists())
     }
 }

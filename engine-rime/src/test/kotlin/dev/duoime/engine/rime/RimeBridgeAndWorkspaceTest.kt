@@ -254,9 +254,19 @@ class RimeBridgeAndWorkspaceTest {
         val customUserFile = File(paths.userDir, "custom_user.yaml")
         customUserFile.writeText("custom: true\n")
 
-        // Once stagingDir/default.yaml exists, same fingerprint skips copying & reports assetsUpdated=false
+        // Even with stagingDir/default.yaml present, pending deploy marker keeps assetsUpdated=true
+        // until markWorkspaceDeployed() clears it after a successful native deploy.
         val stagedDefaultYaml = File(paths.stagingDir, "default.yaml")
         stagedDefaultYaml.writeText("deployed: true\n")
+        assertTrue(File(paths.stagingDir, RimeWorkspaceInstaller.DEPLOY_PENDING_FILE).isFile)
+        val opensBeforePendingCheck = sourceV1.openCount
+        val stillPendingPaths = RimeWorkspaceInstaller.installFromSource(sourceV1, root)
+        assertTrue(stillPendingPaths.assetsUpdated)
+        assertEquals(opensBeforePendingCheck + 1, sourceV1.openCount)
+
+        // Marking deployed clears .deploy_pending; next install skips copying & reports assetsUpdated=false
+        RimeWorkspaceInstaller.markWorkspaceDeployed(paths)
+        assertFalse(File(paths.stagingDir, RimeWorkspaceInstaller.DEPLOY_PENDING_FILE).exists())
         val opensBeforeSecond = sourceV1.openCount
         val secondPaths = RimeWorkspaceInstaller.installFromSource(sourceV1, root)
         assertFalse(secondPaths.assetsUpdated)

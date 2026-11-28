@@ -14,6 +14,7 @@ import dev.duoime.core.model.EngineSnapshot
 import dev.duoime.core.model.InputMode
 import dev.duoime.core.model.KeyProcessResult
 import java.io.File
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -68,6 +69,7 @@ public class RimeInputEngine internal constructor(
             try {
                 if (paths.assetsUpdated || !File(paths.stagingDir, DEFAULT_YAML_FILE).isFile) {
                     check(bridge.deployWorkspace()) { "Failed to deploy Rime starter workspace" }
+                    RimeWorkspaceInstaller.markWorkspaceDeployed(paths)
                 }
                 createdSession = bridge.createSession()
                 check(createdSession != 0L) { "librime createSession failed (returned 0)" }
@@ -235,17 +237,12 @@ public class RimeInputEngine internal constructor(
         var sessionRestored = false
         try {
             val (deployed, deployError) = invokeBridgeDeploySafely()
-            val recreated = bridge.createSession()
-            if (recreated == 0L) {
-                if (deployError != null) throw deployError
-                return@invokeNative false
+            if (deployed) {
+                RimeWorkspaceInstaller.markWorkspaceDeployed(paths)
             }
-            sessionId = recreated
-            val schemaOk = applyLogicalSchemaLocked(logicalSchemaId)
-            publishSnapshotLocked()
-            sessionRestored = true
+            sessionRestored = restoreSessionAfterDeployLocked()
             if (deployError != null) throw deployError
-            deployed && schemaOk
+            deployed && sessionRestored
         } finally {
             if (!sessionRestored && !closed) {
                 closeLocked()
@@ -257,9 +254,20 @@ public class RimeInputEngine internal constructor(
         closeLocked()
     }
 
+    private fun restoreSessionAfterDeployLocked(): Boolean {
+        val recreated = bridge.createSession()
+        if (recreated == 0L) return false
+        sessionId = recreated
+        if (!applyLogicalSchemaLocked(logicalSchemaId)) return false
+        publishSnapshotLocked()
+        return true
+    }
+
     @Suppress("TooGenericExceptionCaught")
     private fun invokeBridgeDeploySafely(): Pair<Boolean, Throwable?> = try {
         bridge.deployWorkspace() to null
+    } catch (cancelled: CancellationException) {
+        throw cancelled
     } catch (err: Throwable) {
         false to err
     }

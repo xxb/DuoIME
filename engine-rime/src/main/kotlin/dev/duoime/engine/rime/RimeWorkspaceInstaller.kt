@@ -44,6 +44,7 @@ private class AndroidRimeAssetSource(
 public object RimeWorkspaceInstaller {
     private const val WORKSPACE_SUBDIR: String = "duoime/rime"
     private const val FINGERPRINT_FILE: String = ".starter_fingerprint"
+    internal const val DEPLOY_PENDING_FILE: String = ".deploy_pending"
     private const val STARTER_MANIFEST_FILE: String = "starter_manifest.json"
     private const val DEFAULT_YAML_FILE: String = "default.yaml"
     private const val STARTER_DICT_FILE: String = "duoime_pinyin.dict.yaml"
@@ -86,9 +87,11 @@ public object RimeWorkspaceInstaller {
             File(sharedDir, DEFAULT_YAML_FILE).isFile &&
             File(sharedDir, STARTER_DICT_FILE).isFile
 
+        val deployPendingFile = File(stagingDir, DEPLOY_PENDING_FILE)
         if (!isUpToDate) {
             extractAssetFiles(source, sharedDir, assetFiles)
             fingerprintFile.writeText("$expectedFingerprint\n", Charsets.UTF_8)
+            deployPendingFile.writeText("$expectedFingerprint\n", Charsets.UTF_8)
         }
 
         val userYaml = File(userDir, USER_YAML_FILE)
@@ -96,7 +99,9 @@ public object RimeWorkspaceInstaller {
             userYaml.writeText("# DuoIME Rime user state\nvar: {}\n", Charsets.UTF_8)
         }
 
-        val needsDeploy = !isUpToDate || !File(stagingDir, DEFAULT_YAML_FILE).isFile
+        val needsDeploy = !isUpToDate ||
+            deployPendingFile.isFile ||
+            !File(stagingDir, DEFAULT_YAML_FILE).isFile
 
         return RimeWorkspacePaths(
             sharedDir = sharedDir,
@@ -105,6 +110,13 @@ public object RimeWorkspaceInstaller {
             stagingDir = stagingDir,
             assetsUpdated = needsDeploy
         )
+    }
+
+    internal fun markWorkspaceDeployed(paths: RimeWorkspacePaths) {
+        val pendingFile = File(paths.stagingDir, DEPLOY_PENDING_FILE)
+        if (pendingFile.exists()) {
+            pendingFile.delete()
+        }
     }
 
     private fun extractAssetFiles(source: RimeAssetSource, sharedDir: File, assetFiles: List<String>) {
