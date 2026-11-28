@@ -849,21 +849,45 @@ private object WorkspaceTxRecovery {
             return false
         }
 
+        // Prepare staging (.deploy_pending written FIRST, stale build artifacts cleaned) BEFORE
+        // deleting userDir or consuming backupDir via moveDirectory(), so recovery remains
+        // retryable across every I/O or crash boundary and never leaves userDir with an incomplete
+        // build missing .deploy_pending.
+        val normUser = userDir.toPath().normalize()
+        val normStaging = stagingDir.toPath().normalize()
+        val preMoveStagingDir = if (normStaging.startsWith(normUser) && normStaging != normUser) {
+            backupDir.toPath().resolve(normUser.relativize(normStaging)).toFile()
+        } else {
+            stagingDir
+        }
+        prepareRecoveryStagingDir(preMoveStagingDir)
+
         if (userDir.exists() && !userDir.deleteRecursively()) {
             throw IOException("Failed to remove interrupted workspace directory: ${userDir.name}")
         }
         moveDirectory(backupDir, userDir)
-        if (stagingDir.exists() && !stagingDir.deleteRecursively()) {
-            throw IOException("Failed to clean staging directory during crash recovery")
-        }
-        if (!stagingDir.mkdirs() && !stagingDir.isDirectory) {
-            throw IOException("Failed to recreate staging directory during crash recovery")
-        }
-        File(stagingDir, RimeWorkspaceInstaller.DEPLOY_PENDING_FILE)
-            .writeText("crash_recovery\n", Charsets.UTF_8)
         clearMarkerVerified(workspaceRoot)
         cleanupStaleStageDirs(workspaceRoot)
         true
+    }
+
+    private fun prepareRecoveryStagingDir(targetStagingDir: File) {
+        if (targetStagingDir.exists() &&
+            (!targetStagingDir.isDirectory || Files.isSymbolicLink(targetStagingDir.toPath()))
+        ) {
+            Files.deleteIfExists(targetStagingDir.toPath())
+        }
+        if (!targetStagingDir.mkdirs() && !targetStagingDir.isDirectory) {
+            throw IOException("Failed to prepare staging directory during crash recovery")
+        }
+        File(targetStagingDir, RimeWorkspaceInstaller.DEPLOY_PENDING_FILE)
+            .writeText("crash_recovery\n", Charsets.UTF_8)
+        for (child in targetStagingDir.listFiles().orEmpty()) {
+            if (child.name == RimeWorkspaceInstaller.DEPLOY_PENDING_FILE) continue
+            if (!child.deleteRecursively()) {
+                throw IOException("Failed to clean staging artifact during crash recovery: ${child.name}")
+            }
+        }
     }
 
     private fun resolveValidatedBackupDir(workspaceRoot: File, backupName: String): File? {

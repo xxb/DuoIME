@@ -647,6 +647,9 @@ class RimeWorkspaceManagerTest {
         val backupDir = File(workspaceRoot, ".import_backup_4004").apply { mkdirs() }
         File(backupDir, "user.yaml").writeText("var:\n  restored: retry_ok\n")
         File(backupDir, "valuable_user.yaml").writeText("keep: retry\n")
+        val staleBackupBuild = File(backupDir, "build").apply { mkdirs() }
+        File(staleBackupBuild, "default.yaml").writeText("stale: true\n")
+        File(staleBackupBuild, "old.prism.bin").writeText("stale-bin")
         marker.writeText("${backupDir.name}\n", Charsets.UTF_8)
 
         val err = runCatching {
@@ -660,6 +663,16 @@ class RimeWorkspaceManagerTest {
         assertTrue("Expected IOException to propagate on failed restore, got $err", err is IOException)
         assertTrue("Failed recovery must preserve transaction marker for retry", marker.isFile)
         assertTrue("Failed recovery must preserve backup directory for retry", backupDir.isDirectory)
+        assertEquals(
+            "Pre-move staging prep must already persist .deploy_pending before backup is moved",
+            "crash_recovery",
+            File(staleBackupBuild, RimeWorkspaceInstaller.DEPLOY_PENDING_FILE).readText(Charsets.UTF_8).trim()
+        )
+        assertFalse(
+            "Stale compiled default.yaml must be removed before move",
+            File(staleBackupBuild, "default.yaml").exists()
+        )
+        assertFalse("Stale compiled bin must be removed before move", File(staleBackupBuild, "old.prism.bin").exists())
 
         // Subsequent retry succeeds cleanly, restores backup, and clears marker
         assertTrue(
@@ -672,6 +685,7 @@ class RimeWorkspaceManagerTest {
         assertFalse("Successful retry must delete transaction marker", marker.exists())
         assertFalse("Successful retry must move backup into userDir", backupDir.exists())
         assertTrue(File(paths.userDir, "valuable_user.yaml").isFile)
+        assertFalse(File(paths.stagingDir, "default.yaml").exists())
         assertEquals(
             "crash_recovery",
             File(paths.stagingDir, RimeWorkspaceInstaller.DEPLOY_PENDING_FILE).readText(Charsets.UTF_8).trim()
