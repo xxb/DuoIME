@@ -53,6 +53,7 @@ public class RimeInputEngine internal constructor(
     private var incognitoOption: Boolean = initialConfig.incognito
     private var disableUserDictOption: Boolean = false
     private var currentNativeSchemaId: String = ""
+    private var forcedIncognitoAscii: Boolean = false
     private val t9Coordinator = T9SyllableCoordinator()
 
     private val _state = MutableStateFlow(EngineSnapshot.EMPTY)
@@ -74,7 +75,7 @@ public class RimeInputEngine internal constructor(
                 createdSession = bridge.createSession()
                 check(createdSession != 0L) { "librime createSession failed (returned 0)" }
                 sessionId = createdSession
-                check(applyLogicalSchemaLocked(logicalSchemaId)) {
+                check(applyInitialOrFallbackSchemaLocked()) {
                     "Failed to select initial Rime schema: $logicalSchemaId"
                 }
                 publishSnapshotLocked()
@@ -98,7 +99,7 @@ public class RimeInputEngine internal constructor(
         if ((event.mask and PASSTHROUGH_MODIFIER_MASK) != 0) {
             return@invokeNative KeyProcessResult.PassThrough
         }
-        if (logicalSchemaId == EngineSchemas.ENGLISH) {
+        if (logicalSchemaId == EngineSchemas.ENGLISH || forcedIncognitoAscii) {
             return@invokeNative KeyProcessResult.PassThrough
         }
         val result = if (isDuoImeT9SchemaActive()) {
@@ -155,7 +156,7 @@ public class RimeInputEngine internal constructor(
     }
 
     public override fun page(forward: Boolean): Boolean = invokeNative {
-        if (closed || sessionId == 0L || logicalSchemaId == EngineSchemas.ENGLISH) {
+        if (closed || sessionId == 0L || logicalSchemaId == EngineSchemas.ENGLISH || forcedIncognitoAscii) {
             return@invokeNative false
         }
         val beforeSnap = _state.value
@@ -219,6 +220,56 @@ public class RimeInputEngine internal constructor(
     }
 
     /**
+     * Lists deployed schemas reported by `librime`. By default hides `*_incognito` companion
+     * schemas unless [includeIncognito] is `true`.
+     */
+    public fun listSchemas(includeIncognito: Boolean = false): List<RimeSchemaInfo> = invokeNative {
+        if (closed || sessionId == 0L) {
+            emptyList()
+        } else {
+            toRimeSchemaInfos(bridge.getSchemaList(), includeIncognito)
+        }
+    }
+
+    /**
+     * Executes an exclusive workspace mutation/deploy transaction on the dedicated native thread.
+     * Destroys the active native session BEFORE invoking [block] (required by `nativeDeployWorkspace`),
+     * and recreates the session + re-applies/falls back the schema + publishes state in `finally`.
+     */
+    public fun <T> runWorkspaceTransaction(block: (RimeWorkspacePaths, RimeWorkspaceDeployer) -> T): T = invokeNative {
+        check(!closed && sessionId != 0L) { "Cannot run workspace transaction on closed RimeInputEngine" }
+        t9Coordinator.clear()
+        val previousSession = sessionId
+        sessionId = 0L
+        runCatching { bridge.clearComposition(previousSession) }
+        runCatching { bridge.destroySession(previousSession) }
+
+        val deployer = RimeWorkspaceDeployer {
+            val deployed = bridge.deployWorkspace()
+            if (!deployed) {
+                null
+            } else {
+                RimeWorkspaceInstaller.markWorkspaceDeployed(paths)
+                toRimeSchemaInfos(bridge.getSchemaList(), includeIncognito = false)
+            }
+        }
+
+        var sessionRestored = false
+        try {
+            val (result, blockError) = invokeSafely { block(paths, deployer) }
+            sessionRestored = restoreSessionAfterDeployLocked()
+            if (blockError != null) throw blockError
+            check(sessionRestored) { "Failed to restore Rime session after workspace transaction" }
+            @Suppress("UNCHECKED_CAST")
+            result as T
+        } finally {
+            if (!sessionRestored && !closed) {
+                closeLocked()
+            }
+        }
+    }
+
+    /**
      * Triggers a synchronous Rime workspace re-deploy (for M2-2 schema reload / user import),
      * destroying the active native session prior to deploy and recreating it cleanly afterward so
      * no session handle remains bound to stale deployed tables.
@@ -236,13 +287,13 @@ public class RimeInputEngine internal constructor(
 
         var sessionRestored = false
         try {
-            val (deployed, deployError) = invokeBridgeDeploySafely()
-            if (deployed) {
+            val (deployed, deployError) = invokeSafely { bridge.deployWorkspace() }
+            if (deployed == true) {
                 RimeWorkspaceInstaller.markWorkspaceDeployed(paths)
             }
             sessionRestored = restoreSessionAfterDeployLocked()
             if (deployError != null) throw deployError
-            deployed && sessionRestored
+            deployed == true && sessionRestored
         } finally {
             if (!sessionRestored && !closed) {
                 closeLocked()
@@ -258,18 +309,18 @@ public class RimeInputEngine internal constructor(
         val recreated = bridge.createSession()
         if (recreated == 0L) return false
         sessionId = recreated
-        if (!applyLogicalSchemaLocked(logicalSchemaId)) return false
+        if (!applyInitialOrFallbackSchemaLocked()) return false
         publishSnapshotLocked()
         return true
     }
 
     @Suppress("TooGenericExceptionCaught")
-    private fun invokeBridgeDeploySafely(): Pair<Boolean, Throwable?> = try {
-        bridge.deployWorkspace() to null
+    private fun <T> invokeSafely(block: () -> T): Pair<T?, Throwable?> = try {
+        block() to null
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (err: Throwable) {
-        false to err
+        null to err
     }
 
     private fun closeLocked() {
@@ -363,25 +414,78 @@ public class RimeInputEngine internal constructor(
         }
     }
 
+    private fun applyInitialOrFallbackSchemaLocked(): Boolean {
+        if (logicalSchemaId == EngineSchemas.ENGLISH) {
+            return applyLogicalSchemaLocked(EngineSchemas.ENGLISH)
+        }
+        val availableIds = bridge.getSchemaList().map { it.first }.toSet()
+        val primary = resolveNativeSchemaTarget(logicalSchemaId, effectiveIncognito(), availableIds)
+        if (primary !is NativeSchemaResolution.NotFound) {
+            return applyResolvedSchemaLocked(logicalSchemaId, primary)
+        }
+        val fallbacks = buildList {
+            add(EngineSchemas.PINYIN_26)
+            add(EngineSchemas.T9_PINYIN)
+            add(EngineSchemas.DOUBLE_PINYIN_FLYPY)
+            for (id in availableIds) {
+                if (!id.endsWith(RimeEngineMetadata.INCOGNITO_SUFFIX)) {
+                    add(id)
+                }
+            }
+        }
+        for (candidate in fallbacks) {
+            if (candidate == logicalSchemaId) continue
+            val resolution = resolveNativeSchemaTarget(candidate, effectiveIncognito(), availableIds)
+            if (resolution !is NativeSchemaResolution.NotFound) {
+                return applyResolvedSchemaLocked(candidate, resolution)
+            }
+        }
+        return false
+    }
+
     private fun applyLogicalSchemaLocked(canonicalId: String): Boolean {
-        t9Coordinator.clear()
-        bridge.clearComposition(sessionId)
         if (canonicalId == EngineSchemas.ENGLISH) {
+            t9Coordinator.clear()
+            bridge.clearComposition(sessionId)
             logicalSchemaId = EngineSchemas.ENGLISH
+            forcedIncognitoAscii = false
             bridge.setOption(sessionId, EngineOptions.ASCII_MODE, true)
             return true
         }
-        val nativeTarget = resolveNativeSchemaId(canonicalId, effectiveIncognito())
-        val selected = bridge.selectSchema(sessionId, nativeTarget)
-        if (!selected) {
+        val availableIds = bridge.getSchemaList().map { it.first }.toSet()
+        val resolution = resolveNativeSchemaTarget(canonicalId, effectiveIncognito(), availableIds)
+        if (resolution is NativeSchemaResolution.NotFound) {
             return false
         }
-        logicalSchemaId = canonicalId
-        lastChineseLogicalSchemaId = canonicalId
-        currentNativeSchemaId = nativeTarget
-        bridge.setOption(sessionId, EngineOptions.ASCII_MODE, false)
-        bridge.setOption(sessionId, OPTION_TRADITIONALIZATION, traditional)
-        return true
+        return applyResolvedSchemaLocked(canonicalId, resolution)
+    }
+
+    private fun applyResolvedSchemaLocked(canonicalId: String, resolution: NativeSchemaResolution): Boolean {
+        t9Coordinator.clear()
+        bridge.clearComposition(sessionId)
+        return when (resolution) {
+            NativeSchemaResolution.NotFound -> false
+            NativeSchemaResolution.FailClosedAscii -> {
+                logicalSchemaId = canonicalId
+                lastChineseLogicalSchemaId = canonicalId
+                currentNativeSchemaId = ""
+                forcedIncognitoAscii = true
+                bridge.setOption(sessionId, EngineOptions.ASCII_MODE, true)
+                true
+            }
+            is NativeSchemaResolution.Select -> {
+                if (!bridge.selectSchema(sessionId, resolution.nativeSchemaId)) {
+                    return false
+                }
+                logicalSchemaId = canonicalId
+                lastChineseLogicalSchemaId = canonicalId
+                currentNativeSchemaId = resolution.nativeSchemaId
+                forcedIncognitoAscii = false
+                bridge.setOption(sessionId, EngineOptions.ASCII_MODE, false)
+                bridge.setOption(sessionId, OPTION_TRADITIONALIZATION, traditional)
+                true
+            }
+        }
     }
 
     private fun publishSnapshotLocked(preFetched: RimeNativeSnapshot? = null) {
@@ -389,7 +493,7 @@ public class RimeInputEngine internal constructor(
             _state.value = EngineSnapshot.EMPTY
             return
         }
-        if (logicalSchemaId == EngineSchemas.ENGLISH) {
+        if (logicalSchemaId == EngineSchemas.ENGLISH || forcedIncognitoAscii) {
             _state.value = EngineSnapshot(
                 mode = InputMode.ENGLISH,
                 variant = currentVariant(),
@@ -488,6 +592,59 @@ public class RimeInputEngine internal constructor(
                 else -> return logicalId
             }
             return if (incognito) "$base${RimeEngineMetadata.INCOGNITO_SUFFIX}" else base
+        }
+
+        internal sealed interface NativeSchemaResolution {
+            data class Select(val nativeSchemaId: String) : NativeSchemaResolution
+
+            data object FailClosedAscii : NativeSchemaResolution
+
+            data object NotFound : NativeSchemaResolution
+        }
+
+        /**
+         * Resolves the concrete native Rime schema ID against the actual deployed [availableIds]
+         * reported by `librime`'s `RimeGetSchemaList()` (because `RimeSelectSchema` always returns
+         * `true` even for nonexistent schemas).
+         *
+         * In incognito mode, guarantees fail-closed non-learning execution: tries `${id}_incognito`,
+         * else `duoime_pinyin_26_incognito`, else first `*_incognito`, else [FailClosedAscii].
+         */
+        internal fun resolveNativeSchemaTarget(
+            canonicalId: String,
+            incognito: Boolean,
+            availableIds: Set<String>
+        ): NativeSchemaResolution {
+            val baseId = when (canonicalId) {
+                EngineSchemas.PINYIN_26 -> RimeEngineMetadata.SCHEMA_PINYIN_26
+                EngineSchemas.T9_PINYIN -> RimeEngineMetadata.SCHEMA_T9_PINYIN
+                EngineSchemas.DOUBLE_PINYIN_FLYPY -> RimeEngineMetadata.SCHEMA_FLYPY
+                else -> canonicalId
+            }
+            if (!incognito) {
+                return if (baseId in availableIds) {
+                    NativeSchemaResolution.Select(baseId)
+                } else {
+                    NativeSchemaResolution.NotFound
+                }
+            }
+            val companion = "$baseId${RimeEngineMetadata.INCOGNITO_SUFFIX}"
+            if (companion in availableIds) {
+                return NativeSchemaResolution.Select(companion)
+            }
+            if (baseId !in availableIds) {
+                return NativeSchemaResolution.NotFound
+            }
+            val defaultIncognito = "${RimeEngineMetadata.SCHEMA_PINYIN_26}${RimeEngineMetadata.INCOGNITO_SUFFIX}"
+            if (defaultIncognito in availableIds) {
+                return NativeSchemaResolution.Select(defaultIncognito)
+            }
+            val anyIncognito = availableIds.firstOrNull { it.endsWith(RimeEngineMetadata.INCOGNITO_SUFFIX) }
+            return if (anyIncognito != null) {
+                NativeSchemaResolution.Select(anyIncognito)
+            } else {
+                NativeSchemaResolution.FailClosedAscii
+            }
         }
 
         /**

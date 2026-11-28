@@ -37,6 +37,7 @@ class RimeInputEngineTest {
         val selectedSchemas = mutableListOf<String>()
         val setOptionsLog = mutableListOf<Pair<String, Boolean>>()
         val lifecycleEvents = mutableListOf<String>()
+        var availableSchemas: List<Pair<String, String>> = defaultStarterSchemas()
 
         private var currentSchema: String = RimeEngineMetadata.SCHEMA_PINYIN_26
         private val options = mutableMapOf<String, Boolean>()
@@ -262,13 +263,20 @@ class RimeInputEngineTest {
 
         override fun commitComposition(sessionId: Long): Boolean = selectCandidateOnCurrentPage(sessionId, 0)
 
-        override fun getSchemaList(): List<Pair<String, String>> = listOf(
-            RimeEngineMetadata.SCHEMA_PINYIN_26 to "DuoIME 26键拼音",
-            RimeEngineMetadata.SCHEMA_T9_PINYIN to "DuoIME 9键拼音",
-            RimeEngineMetadata.SCHEMA_FLYPY to "DuoIME 小鹤双拼"
-        )
+        override fun getSchemaList(): List<Pair<String, String>> = availableSchemas
 
         override fun getVersion(): String = "1.18.0"
+
+        companion object {
+            fun defaultStarterSchemas(): List<Pair<String, String>> = listOf(
+                RimeEngineMetadata.SCHEMA_PINYIN_26 to "DuoIME 26键拼音",
+                RimeEngineMetadata.SCHEMA_T9_PINYIN to "DuoIME 9键拼音",
+                RimeEngineMetadata.SCHEMA_FLYPY to "DuoIME 小鹤双拼",
+                "${RimeEngineMetadata.SCHEMA_PINYIN_26}${RimeEngineMetadata.INCOGNITO_SUFFIX}" to "DuoIME 26键拼音 (无痕)",
+                "${RimeEngineMetadata.SCHEMA_T9_PINYIN}${RimeEngineMetadata.INCOGNITO_SUFFIX}" to "DuoIME 9键拼音 (无痕)",
+                "${RimeEngineMetadata.SCHEMA_FLYPY}${RimeEngineMetadata.INCOGNITO_SUFFIX}" to "DuoIME 小鹤双拼 (无痕)"
+            )
+        }
 
         private fun resolvePages(raw: String): List<List<String>> {
             if (raw.isEmpty()) return emptyList()
@@ -471,12 +479,24 @@ class RimeInputEngineTest {
         assertEquals("duoime_t9", bridge.selectedSchemas.last())
         assertEquals(EngineSchemas.T9_PINYIN, engine.state.value.schemaId)
 
-        // Custom M2-2 schema degrades gracefully with empty T9 rail
+        // Custom M2-2 schema degrades gracefully with empty T9 rail when deployed in getSchemaList()
+        bridge.availableSchemas = FakeRimeNativeBridge.defaultStarterSchemas() +
+            ("custom_user_schema" to "Custom User Schema")
         assertTrue(engine.selectSchema("custom_user_schema"))
         assertEquals("custom_user_schema", engine.state.value.schemaId)
         typeChars(engine, "6262")
         assertTrue(engine.state.value.syllables.isEmpty())
         assertTrue(engine.state.value.lockedSyllables.isEmpty())
+
+        // Enabling incognito on a custom schema without *_incognito fails closed to duoime_pinyin_26_incognito
+        // while preserving logical schemaId so disabling incognito restores custom_user_schema
+        engine.setOption(EngineOptions.INCOGNITO, true)
+        assertEquals("duoime_pinyin_26_incognito", bridge.selectedSchemas.last())
+        assertEquals("custom_user_schema", engine.state.value.schemaId)
+
+        engine.setOption(EngineOptions.INCOGNITO, false)
+        assertEquals("custom_user_schema", bridge.selectedSchemas.last())
+        assertEquals("custom_user_schema", engine.state.value.schemaId)
 
         engine.close()
     }
@@ -514,17 +534,25 @@ class RimeInputEngineTest {
 
     @Test
     fun unavailableInitialSchemaRejectsInitializationAndReleasesResources() {
-        val bridge = FakeRimeNativeBridge()
+        // When zero valid schemas exist in librime's schema list, init must fail closed and release resources
+        val bridge = FakeRimeNativeBridge().apply { availableSchemas = emptyList() }
         val error = runCatching {
             createEngine(bridge, initialSchemaId = "unsupported_schema")
         }.exceptionOrNull()
         assertTrue(
-            "Expected IllegalStateException when initial schema selection fails, got: $error",
+            "Expected IllegalStateException when no schemas are available, got: $error",
             error is IllegalStateException
         )
         assertEquals(listOf(1L), bridge.destroyedSessions)
         assertEquals(1, bridge.acquireCount)
         assertEquals(1, bridge.releaseCount)
+
+        // When a stale custom schema is requested while starter schemas exist, init falls back cleanly to PINYIN_26
+        val fallbackBridge = FakeRimeNativeBridge()
+        val fallbackEngine = createEngine(fallbackBridge, initialSchemaId = "removed_custom_schema")
+        assertEquals(EngineSchemas.PINYIN_26, fallbackEngine.state.value.schemaId)
+        assertEquals(RimeEngineMetadata.SCHEMA_PINYIN_26, fallbackBridge.selectedSchemas.last())
+        fallbackEngine.close()
     }
 
     @Test
@@ -555,7 +583,10 @@ class RimeInputEngineTest {
         assertEquals(1, bridge.releaseCount)
 
         // Initial schema selection failure with negative tagged ID must destroySession(taggedId) & release runtime
-        val failBridge = FakeRimeNativeBridge().apply { nextSession = taggedSessionId }
+        val failBridge = FakeRimeNativeBridge().apply {
+            nextSession = taggedSessionId
+            availableSchemas = emptyList()
+        }
         val err = runCatching {
             createEngine(failBridge, initialSchemaId = "unsupported_schema")
         }.exceptionOrNull()
@@ -761,5 +792,120 @@ class RimeInputEngineTest {
         val okPendingBridge = FakeRimeNativeBridge()
         createEngine(okPendingBridge, paths = pendingPaths).close()
         assertFalse("Pending deploy marker must clear once deploy succeeds", pendingMarker.exists())
+
+        // 8) Deferred PR #39 test: explicit RimeInputEngine.deployWorkspace() also clears .deploy_pending
+        val explicitPaths = testPaths(assetsUpdated = false, withStagingDefaultYaml = true)
+        val explicitBridge = FakeRimeNativeBridge()
+        val explicitEngine = createEngine(explicitBridge, paths = explicitPaths)
+        val explicitMarker = File(explicitPaths.stagingDir, RimeWorkspaceInstaller.DEPLOY_PENDING_FILE)
+        explicitMarker.writeText("manual\n")
+        assertTrue(explicitEngine.deployWorkspace())
+        assertFalse("Explicit deployWorkspace() must clear .deploy_pending on success", explicitMarker.exists())
+        explicitEngine.close()
+    }
+
+    @Test
+    fun failClosedCustomSchemaIncognitoChecksSchemaListAndFallsBackAcrossAllTiers() {
+        // Tier 1: Custom schema has its own *_incognito companion -> selects custom_incognito
+        val bridge = FakeRimeNativeBridge().apply {
+            availableSchemas = FakeRimeNativeBridge.defaultStarterSchemas() + listOf(
+                "my_custom" to "My Custom",
+                "my_custom_incognito" to "My Custom (Incognito)",
+                "rime_ice" to "雾凇拼音"
+            )
+        }
+        val engine = createEngine(bridge)
+        assertFalse(
+            "Nonexistent schema must be rejected via getSchemaList check",
+            engine.selectSchema("phantom_schema")
+        )
+        assertTrue(engine.selectSchema("my_custom"))
+        engine.setOption(EngineOptions.INCOGNITO, true)
+        assertEquals("my_custom_incognito", bridge.selectedSchemas.last())
+        assertEquals("my_custom", engine.state.value.schemaId)
+
+        // Tier 2: Custom schema without *_incognito falls back to duoime_pinyin_26_incognito
+        assertTrue(engine.selectSchema("rime_ice"))
+        assertEquals("duoime_pinyin_26_incognito", bridge.selectedSchemas.last())
+        assertEquals("rime_ice", engine.state.value.schemaId)
+
+        // Tier 3: When duoime_pinyin_26_incognito is absent, uses first *_incognito companion
+        bridge.availableSchemas = listOf(
+            "rime_ice" to "雾凇拼音",
+            "other_incognito" to "Other Incognito"
+        )
+        engine.setOption(EngineOptions.INCOGNITO, false)
+        assertEquals("rime_ice", bridge.selectedSchemas.last())
+        engine.setOption(EngineOptions.INCOGNITO, true)
+        assertEquals("other_incognito", bridge.selectedSchemas.last())
+        assertEquals("rime_ice", engine.state.value.schemaId)
+
+        // Tier 4: Zero *_incognito schemas -> fail closed to ASCII_MODE=true / English pass-through,
+        // preserving logicalSchemaId so disabling incognito restores rime_ice!
+        bridge.availableSchemas = listOf("rime_ice" to "雾凇拼音")
+        engine.setOption(EngineOptions.INCOGNITO, false)
+        assertEquals("rime_ice", bridge.selectedSchemas.last())
+        engine.setOption(EngineOptions.INCOGNITO, true)
+        assertEquals(InputMode.ENGLISH, engine.state.value.mode)
+        assertEquals(EngineSchemas.ENGLISH, engine.state.value.schemaId)
+        assertEquals(KeyProcessResult.PassThrough, engine.onKey(EngineKeyEvent.fromChar('a')))
+
+        engine.setOption(EngineOptions.INCOGNITO, false)
+        assertEquals("rime_ice", bridge.selectedSchemas.last())
+        assertEquals("rime_ice", engine.state.value.schemaId)
+        assertEquals(InputMode.PINYIN_26, engine.state.value.mode)
+        engine.close()
+    }
+
+    @Test
+    fun listSchemasAndRunWorkspaceTransactionEnforceExclusiveSessionDestructionAndFallbackRestore() {
+        val bridge = FakeRimeNativeBridge().apply {
+            availableSchemas = FakeRimeNativeBridge.defaultStarterSchemas() + ("rime_ice" to "雾凇拼音")
+        }
+        val paths = testPaths()
+        val engine = createEngine(bridge, initialSchemaId = "rime_ice", paths = paths)
+
+        // Default listSchemas hides *_incognito; includeIncognito=true exposes all
+        val visible = engine.listSchemas()
+        assertEquals(
+            listOf("duoime_pinyin_26", "duoime_t9", "duoime_flypy", "rime_ice"),
+            visible.map { it.id }
+        )
+        assertTrue(visible.first { it.id == "duoime_pinyin_26" }.isBuiltIn)
+        assertFalse(visible.first { it.id == "rime_ice" }.isBuiltIn)
+        assertEquals(7, engine.listSchemas(includeIncognito = true).size)
+
+        // runWorkspaceTransaction destroys session BEFORE running block, clears .deploy_pending,
+        // and falls back to PINYIN_26 cleanly if rime_ice was removed by the transaction
+        bridge.lifecycleEvents.clear()
+        val pendingFile = File(paths.stagingDir, RimeWorkspaceInstaller.DEPLOY_PENDING_FILE)
+        val deployedList = engine.runWorkspaceTransaction { txPaths, deployer ->
+            assertEquals(listOf("destroy:1"), bridge.lifecycleEvents)
+            RimeWorkspaceInstaller.prepareStagingForRedeploy(txPaths, "tx_reset")
+            assertTrue(pendingFile.isFile)
+            bridge.availableSchemas = FakeRimeNativeBridge.defaultStarterSchemas()
+            deployer.deployAndListSchemas()
+        }
+        assertEquals(3, deployedList?.size)
+        assertFalse(".deploy_pending must clear after deployer succeeds", pendingFile.exists())
+        assertEquals(
+            listOf("destroy:1", "deploy", "create:2", "selectSchema:2:${RimeEngineMetadata.SCHEMA_PINYIN_26}"),
+            bridge.lifecycleEvents
+        )
+        assertEquals(EngineSchemas.PINYIN_26, engine.state.value.schemaId)
+
+        // Exception thrown by transaction block still restores session & rethrows to caller
+        bridge.lifecycleEvents.clear()
+        val txErr = runCatching {
+            engine.runWorkspaceTransaction<Unit> { _, _ -> error("tx boom") }
+        }.exceptionOrNull()
+        assertTrue("Expected IllegalStateException, got $txErr", txErr is IllegalStateException)
+        assertEquals(0, bridge.releaseCount)
+        assertEquals(
+            listOf("destroy:2", "create:3", "selectSchema:3:${RimeEngineMetadata.SCHEMA_PINYIN_26}"),
+            bridge.lifecycleEvents
+        )
+        engine.close()
+        assertEquals(1, bridge.releaseCount)
     }
 }

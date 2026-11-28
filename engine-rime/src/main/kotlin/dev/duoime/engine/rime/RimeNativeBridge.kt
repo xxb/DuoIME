@@ -2,6 +2,8 @@
 // Copyright (c) 2026 DuoIME Contributors
 package dev.duoime.engine.rime
 
+import android.content.Context
+import java.io.File
 import java.util.concurrent.Callable
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -286,7 +288,7 @@ internal fun parseSchemaListArray(raw: Array<String>?): List<Pair<String, String
 /**
  * Single dedicated daemon thread confining all process-wide `librime` JNI calls to one OS thread.
  */
-internal object RimeNativeExecutor {
+public object RimeNativeExecutor {
     private val nativeThreadId = ThreadLocal<Boolean>()
     private val executor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread({
@@ -297,7 +299,7 @@ internal object RimeNativeExecutor {
         }
     }
 
-    fun <T> runBlocking(block: () -> T): T {
+    internal fun <T> runBlocking(block: () -> T): T {
         if (nativeThreadId.get() == true) {
             return block()
         }
@@ -305,6 +307,51 @@ internal object RimeNativeExecutor {
             executor.submit(Callable { block() }).get()
         } catch (err: java.util.concurrent.ExecutionException) {
             throw err.cause ?: err
+        }
+    }
+
+    /**
+     * Executes a Rime workspace transaction offline (when no [RimeInputEngine] session is active)
+     * on the dedicated native thread by acquiring the shared `librime` runtime, running [block]
+     * with a [RimeWorkspaceDeployer], and releasing the runtime in `finally`.
+     */
+    public fun <T> runOfflineTransaction(
+        context: Context,
+        distributionVersion: String = "0.1.0",
+        workspaceRoot: File = RimeWorkspaceInstaller.defaultWorkspaceRoot(context),
+        block: (RimeWorkspacePaths, RimeWorkspaceDeployer) -> T
+    ): T {
+        val paths = RimeWorkspaceInstaller.installStarterAssets(context, workspaceRoot)
+        return runOfflineTransaction(
+            bridge = JniRimeNativeBridge.sharedBridge,
+            paths = paths,
+            distributionVersion = distributionVersion,
+            block = block
+        )
+    }
+
+    internal fun <T> runOfflineTransaction(
+        bridge: RimeNativeBridge,
+        paths: RimeWorkspacePaths,
+        distributionVersion: String,
+        block: (RimeWorkspacePaths, RimeWorkspaceDeployer) -> T
+    ): T = runBlocking {
+        check(bridge.acquireRuntime(paths, distributionVersion)) {
+            "Failed to initialize librime runtime for offline workspace transaction"
+        }
+        try {
+            val deployer = RimeWorkspaceDeployer {
+                val deployed = bridge.deployWorkspace()
+                if (!deployed) {
+                    null
+                } else {
+                    RimeWorkspaceInstaller.markWorkspaceDeployed(paths)
+                    toRimeSchemaInfos(bridge.getSchemaList(), includeIncognito = false)
+                }
+            }
+            block(paths, deployer)
+        } finally {
+            runCatching { bridge.releaseRuntime() }
         }
     }
 }

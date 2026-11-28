@@ -10,6 +10,7 @@ import dev.duoime.core.model.KeyboardPrefs
 import dev.duoime.core.model.Language
 import dev.duoime.core.model.migrateLegacyInputMode
 import dev.duoime.core.policy.DisplayPlacementPolicy
+import dev.duoime.engine.rime.RimeEngineMetadata
 import dev.duoime.ui.feedback.KeyFeedbackOptions
 import dev.duoime.ui.feedback.KeySoundStyle
 import dev.duoime.ui.theme.DuoThemePreset
@@ -56,7 +57,8 @@ data class DuoImeSettings(
     val soundEnabled: Boolean = false,
     val soundStyle: KeySoundStyle = KeySoundStyle.MECHANICAL,
     val soundVolume: Float = KeyFeedbackOptions.DEFAULT_SOUND_VOLUME,
-    val followSystemRingerMode: Boolean = false
+    val followSystemRingerMode: Boolean = false,
+    val customRimeSchemaId: String? = null
 ) {
     val darkTheme: Boolean
         get() = themePreset == DuoThemePreset.DARK
@@ -64,14 +66,16 @@ data class DuoImeSettings(
         language = preferredLanguage,
         chineseScheme = chineseScheme,
         variant = chineseVariant,
-        includeNumberRow = includeNumberRow
+        includeNumberRow = includeNumberRow,
+        incognito = alwaysIncognito
     )
 
     fun withKeyboardPrefs(keyboardPrefs: KeyboardPrefs): DuoImeSettings = copy(
         preferredLanguage = keyboardPrefs.language,
         chineseScheme = keyboardPrefs.chineseScheme,
         chineseVariant = keyboardPrefs.variant,
-        includeNumberRow = keyboardPrefs.includeNumberRow
+        includeNumberRow = keyboardPrefs.includeNumberRow,
+        alwaysIncognito = keyboardPrefs.incognito
     )
 
     fun toFeedbackOptions(): KeyFeedbackOptions = KeyFeedbackOptions(
@@ -117,18 +121,22 @@ class DuoImePreferences internal constructor(
             ?.filter { it.isNotEmpty() }
             ?.toSet()
             .orEmpty()
+        val alwaysIncognito = prefs.getBoolean(KEY_ALWAYS_INCOGNITO, false)
         val keyboardPrefs = resolvePersistedKeyboardPrefs(
             rawLanguage = prefs.getString(KEY_PREFERRED_LANGUAGE, null),
             rawScheme = prefs.getString(KEY_CHINESE_SCHEME, null),
             rawVariant = prefs.getString(KEY_CHINESE_VARIANT, null),
             rawLegacyInputMode = prefs.getString(KEY_LEGACY_INPUT_MODE, null),
             includeNumberRow = prefs.getBoolean(KEY_NUMBER_ROW, false)
-        )
+        ).copy(incognito = alwaysIncognito)
         val themePreset = resolvePersistedThemePreset(
             rawThemePreset = prefs.getString(KEY_THEME_PRESET, null),
             legacyDarkTheme = prefs.getBoolean(KEY_DARK_THEME, true)
         )
         val engineBackend = EngineBackend.fromNameOrDefault(prefs.getString(KEY_ENGINE_BACKEND, null))
+        val customRimeSchemaId = prefs.getString(KEY_CUSTOM_RIME_SCHEMA_ID, null)
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
         return DuoImeSettings(
             engineBackend = engineBackend,
             themePreset = themePreset,
@@ -136,7 +144,7 @@ class DuoImePreferences internal constructor(
             preferredLanguage = keyboardPrefs.language,
             chineseScheme = keyboardPrefs.chineseScheme,
             chineseVariant = keyboardPrefs.variant,
-            alwaysIncognito = prefs.getBoolean(KEY_ALWAYS_INCOGNITO, false),
+            alwaysIncognito = keyboardPrefs.incognito,
             heightFraction = DisplayPlacementPolicy.clampHeightFraction(
                 prefs.getFloat(KEY_HEIGHT_FRACTION, DisplayPlacementPolicy.DEFAULT_HEIGHT_FRACTION)
             ),
@@ -153,7 +161,8 @@ class DuoImePreferences internal constructor(
             soundVolume = KeyFeedbackOptions.clampSoundVolume(
                 prefs.getFloat(KEY_SOUND_VOLUME, KeyFeedbackOptions.DEFAULT_SOUND_VOLUME)
             ),
-            followSystemRingerMode = prefs.getBoolean(KEY_FOLLOW_SYSTEM_RINGER_MODE, false)
+            followSystemRingerMode = prefs.getBoolean(KEY_FOLLOW_SYSTEM_RINGER_MODE, false),
+            customRimeSchemaId = customRimeSchemaId
         )
     }
 
@@ -162,7 +171,8 @@ class DuoImePreferences internal constructor(
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .toSet()
-        prefs.edit()
+        val sanitizedCustomSchema = settings.customRimeSchemaId?.trim()?.takeIf { it.isNotEmpty() }
+        val editor = prefs.edit()
             .putString(KEY_ENGINE_BACKEND, settings.engineBackend.name)
             .putString(KEY_THEME_PRESET, settings.themePreset.name)
             .putBoolean(KEY_DARK_THEME, settings.darkTheme)
@@ -183,7 +193,12 @@ class DuoImePreferences internal constructor(
             .putString(KEY_SOUND_STYLE, settings.soundStyle.name)
             .putFloat(KEY_SOUND_VOLUME, KeyFeedbackOptions.clampSoundVolume(settings.soundVolume))
             .putBoolean(KEY_FOLLOW_SYSTEM_RINGER_MODE, settings.followSystemRingerMode)
-            .apply()
+        if (sanitizedCustomSchema == null) {
+            editor.remove(KEY_CUSTOM_RIME_SCHEMA_ID)
+        } else {
+            editor.putString(KEY_CUSTOM_RIME_SCHEMA_ID, sanitizedCustomSchema)
+        }
+        editor.apply()
     }
 
     fun updateKeyboardPrefs(keyboardPrefs: KeyboardPrefs): DuoImeSettings {
@@ -198,18 +213,57 @@ class DuoImePreferences internal constructor(
 
     /**
      * Persists general settings edited from `MainActivity` while preserving live keyboard
-     * language, Chinese scheme, and variant preferences written from the IME service (keeping
-     * [updated]'s `includeNumberRow`, which is controlled by `MainActivity`).
+     * language, Chinese scheme, variant, and custom Rime schema preferences written from the IME
+     * service or Rime coordinator (keeping [updated]'s `includeNumberRow` and `alwaysIncognito`,
+     * which are controlled by `MainActivity`).
      */
     fun saveGeneralSettingsPreservingKeyboardPrefs(updated: DuoImeSettings): DuoImeSettings {
         val live = load()
         val merged = updated.copy(
             preferredLanguage = live.preferredLanguage,
             chineseScheme = live.chineseScheme,
-            chineseVariant = live.chineseVariant
+            chineseVariant = live.chineseVariant,
+            customRimeSchemaId = live.customRimeSchemaId
         )
         save(merged)
         return merged
+    }
+
+    /**
+     * Persists the user's selected Rime schema. Built-in starter schemas clear [DuoImeSettings.customRimeSchemaId]
+     * and activate their matching [ChineseScheme]; custom schemas set `customRimeSchemaId` and
+     * force `Language.CHINESE` + `ChineseScheme.PINYIN_26` so `XIAOHE_SHUANGPIN` or `ENGLISH`
+     * cannot shadow the custom schema. Passing `null` clears `customRimeSchemaId`.
+     */
+    fun updateRimeSchemaSelection(schemaId: String?): DuoImeSettings {
+        val current = load()
+        val normalized = schemaId?.trim()?.takeIf { it.isNotEmpty() }
+        val updated = when (normalized) {
+            null -> current.copy(customRimeSchemaId = null)
+            RimeEngineMetadata.SCHEMA_PINYIN_26 -> current.copy(
+                customRimeSchemaId = null,
+                preferredLanguage = Language.CHINESE,
+                chineseScheme = ChineseScheme.PINYIN_26
+            )
+            RimeEngineMetadata.SCHEMA_T9_PINYIN -> current.copy(
+                customRimeSchemaId = null,
+                preferredLanguage = Language.CHINESE,
+                chineseScheme = ChineseScheme.PINYIN_T9
+            )
+            RimeEngineMetadata.SCHEMA_FLYPY -> current.copy(
+                customRimeSchemaId = null,
+                preferredLanguage = Language.CHINESE,
+                chineseScheme = ChineseScheme.XIAOHE_SHUANGPIN
+            )
+            else -> current.copy(
+                customRimeSchemaId = normalized,
+                preferredLanguage = Language.CHINESE,
+                chineseScheme = ChineseScheme.PINYIN_26
+            )
+        }
+        if (updated == current) return current
+        save(updated)
+        return updated
     }
 
     fun updateHeightFraction(fraction: Float): DuoImeSettings {
@@ -263,6 +317,7 @@ class DuoImePreferences internal constructor(
         private const val KEY_SOUND_STYLE = "sound_style"
         private const val KEY_SOUND_VOLUME = "sound_volume"
         private const val KEY_FOLLOW_SYSTEM_RINGER_MODE = "follow_system_ringer_mode"
+        internal const val KEY_CUSTOM_RIME_SCHEMA_ID = "custom_rime_schema_id"
         private const val NO_PAIRED_DISPLAY = -1
 
         internal fun resolvePersistedThemePreset(rawThemePreset: String?, legacyDarkTheme: Boolean): DuoThemePreset {
@@ -284,7 +339,8 @@ class DuoImePreferences internal constructor(
             val migrated = if (rawLegacyInputMode != null) migrateLegacyInputMode(rawLegacyInputMode) else null
             val language = parseEnumOrNull<Language>(rawLanguage) ?: migrated?.first ?: Language.CHINESE
             val scheme = parseEnumOrNull<ChineseScheme>(rawScheme) ?: migrated?.second ?: ChineseScheme.PINYIN_26
-            val variant = parseEnumOrNull<ChineseVariant>(rawVariant) ?: ChineseVariant.SIMPLIFIED
+            val variant = parseEnumOrNull<ChineseVariant>(rawVariant) ?: migrated?.second?.let { ChineseVariant.SIMPLIFIED }
+                ?: ChineseVariant.SIMPLIFIED
             return KeyboardPrefs(
                 language = language,
                 chineseScheme = scheme,

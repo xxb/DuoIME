@@ -9,9 +9,11 @@ import dev.duoime.app.settings.EngineBackend
 import dev.duoime.core.engine.EngineSchemas
 import dev.duoime.core.engine.InputEngine
 import dev.duoime.core.model.ChineseScheme
+import dev.duoime.core.model.InputMode
 import dev.duoime.core.model.Language
 import dev.duoime.embed.KeyboardController
 import dev.duoime.embed.KeyboardUiState
+import dev.duoime.engine.rime.RimeEngineMetadata
 import dev.duoime.engine.rime.RimeInputEngine
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
@@ -63,12 +65,34 @@ internal object DuoImeEngineStatusRegistry {
     }
 }
 
+internal fun resolveModeSchemaIds(settings: DuoImeSettings): Map<InputMode, String> {
+    val customId = settings.customRimeSchemaId?.trim()?.takeIf { it.isNotEmpty() }
+    return if (settings.engineBackend == EngineBackend.RIME && customId != null) {
+        EngineSchemas.DEFAULT_MODE_MAP + (InputMode.PINYIN_26 to customId)
+    } else {
+        EngineSchemas.DEFAULT_MODE_MAP
+    }
+}
+
+internal fun resolveSelectedRimeSchemaId(settings: DuoImeSettings): String {
+    val customId = settings.customRimeSchemaId?.trim()?.takeIf { it.isNotEmpty() }
+    if (customId != null && settings.chineseScheme == ChineseScheme.PINYIN_26) {
+        return customId
+    }
+    return when (settings.chineseScheme) {
+        ChineseScheme.PINYIN_26 -> RimeEngineMetadata.SCHEMA_PINYIN_26
+        ChineseScheme.PINYIN_T9 -> RimeEngineMetadata.SCHEMA_T9_PINYIN
+        ChineseScheme.XIAOHE_SHUANGPIN -> RimeEngineMetadata.SCHEMA_FLYPY
+    }
+}
+
 internal fun resolveInitialSchemaId(settings: DuoImeSettings): String {
     if (settings.preferredLanguage == Language.ENGLISH) {
         return EngineSchemas.ENGLISH
     }
     return when (settings.chineseScheme) {
-        ChineseScheme.PINYIN_26 -> EngineSchemas.PINYIN_26
+        ChineseScheme.PINYIN_26 -> settings.customRimeSchemaId?.trim()?.takeIf { it.isNotEmpty() }
+            ?: EngineSchemas.PINYIN_26
         ChineseScheme.PINYIN_T9 -> EngineSchemas.T9_PINYIN
         ChineseScheme.XIAOHE_SHUANGPIN -> EngineSchemas.DOUBLE_PINYIN_FLYPY
     }

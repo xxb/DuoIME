@@ -42,6 +42,8 @@ sealed interface KeyAction {
 
     data object ToggleDrawer : KeyAction
 
+    data object ToggleIncognito : KeyAction
+
     data object ToggleNumberRow : KeyAction
 
     data class SelectSymbolTab(val tab: SymbolTabId) : KeyAction

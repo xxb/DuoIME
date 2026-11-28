@@ -58,6 +58,7 @@ import dev.duoime.app.settings.FeedbackSettingsCard
 import dev.duoime.app.settings.HeightControlSection
 import dev.duoime.app.settings.OverlayPermissionCard
 import dev.duoime.app.settings.PerAppInlineOverridesCard
+import dev.duoime.app.settings.RimeWorkspaceCoordinator
 import dev.duoime.app.settings.SettingSwitchRow
 import dev.duoime.app.settings.SystemPinImeCard
 import dev.duoime.app.settings.formatEngineStatusLabel
@@ -145,6 +146,7 @@ private fun DuoImeSettingsScreen(settings: DuoImeSettings, onSettingsChanged: (D
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 snapshot = queryOnboardingSnapshot(context)
+                RimeWorkspaceCoordinator.refreshSchemas(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)

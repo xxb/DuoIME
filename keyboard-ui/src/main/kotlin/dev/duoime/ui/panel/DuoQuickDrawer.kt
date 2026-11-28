@@ -59,7 +59,9 @@ data class DuoQuickDrawerState(
     val canSwapScreen: Boolean = true,
     val canSwitchIme: Boolean = true,
     val effectiveLanguage: Language = Language.CHINESE,
-    val langKeyPlacement: LangKeyPlacement = LangKeyPlacement.TOOLBAR
+    val langKeyPlacement: LangKeyPlacement = LangKeyPlacement.TOOLBAR,
+    val isIncognito: Boolean = false,
+    val canToggleIncognito: Boolean = true
 )
 
 /**
@@ -82,6 +84,7 @@ object DuoQuickDrawerMeta {
         }
         add(KeyAction.ToggleNumberRow)
         add(KeyAction.CycleHeight)
+        if (state.canToggleIncognito) add(KeyAction.ToggleIncognito)
         if (state.canSwapScreen) add(KeyAction.SwapScreen)
         if (state.canSwitchIme) add(KeyAction.SwitchIme)
     }
@@ -181,38 +184,66 @@ fun DuoQuickDrawer(
             )
         }
 
-        if (state.canSwapScreen || state.canSwitchIme) {
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                if (state.canSwapScreen) {
-                    DrawerActionTile(
-                        label = if (state.isOverlayMode) "换屏 · 异屏" else "换屏 · 同屏",
-                        selected = state.isOverlayMode,
-                        enabled = true,
-                        modifier = Modifier.weight(1f),
-                        onClick = {
-                            onKeyPressDown(FeedbackKey(KeyAction.SwapScreen, "换屏", FeedbackZone.TOOLBAR))
-                            onAction(KeyAction.SwapScreen)
-                        }
-                    )
-                }
-                if (state.canSwitchIme) {
-                    DrawerActionTile(
-                        label = "切换输入法",
-                        selected = false,
-                        enabled = true,
-                        modifier = Modifier.weight(1f),
-                        onClick = {
-                            onKeyPressDown(FeedbackKey(KeyAction.SwitchIme, "切换输入法", FeedbackZone.TOOLBAR))
-                            onAction(KeyAction.SwitchIme)
-                        }
-                    )
-                }
+        DrawerUtilityRow(
+            state = state,
+            onAction = onAction,
+            onKeyPressDown = onKeyPressDown,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+        )
+    }
+}
+
+@Composable
+private fun DrawerUtilityRow(
+    state: DuoQuickDrawerState,
+    onAction: (KeyAction) -> Unit,
+    onKeyPressDown: (FeedbackKey) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val incognitoLabel = if (state.isIncognito) {
+        stringResource(R.string.duo_drawer_incognito_on)
+    } else {
+        stringResource(R.string.duo_drawer_incognito_off)
+    }
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        DrawerActionTile(
+            label = incognitoLabel,
+            selected = state.isIncognito,
+            enabled = state.canToggleIncognito,
+            modifier = Modifier.weight(1f),
+            onClick = {
+                onKeyPressDown(FeedbackKey(KeyAction.ToggleIncognito, incognitoLabel, FeedbackZone.TOOLBAR))
+                onAction(KeyAction.ToggleIncognito)
             }
+        )
+        if (state.canSwapScreen) {
+            DrawerActionTile(
+                label = if (state.isOverlayMode) "换屏 · 异屏" else "换屏 · 同屏",
+                selected = state.isOverlayMode,
+                enabled = true,
+                modifier = Modifier.weight(1f),
+                onClick = {
+                    onKeyPressDown(FeedbackKey(KeyAction.SwapScreen, "换屏", FeedbackZone.TOOLBAR))
+                    onAction(KeyAction.SwapScreen)
+                }
+            )
+        }
+        if (state.canSwitchIme) {
+            DrawerActionTile(
+                label = "切换输入法",
+                selected = false,
+                enabled = true,
+                modifier = Modifier.weight(1f),
+                onClick = {
+                    onKeyPressDown(FeedbackKey(KeyAction.SwitchIme, "切换输入法", FeedbackZone.TOOLBAR))
+                    onAction(KeyAction.SwitchIme)
+                }
+            )
         }
     }
 }

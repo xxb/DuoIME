@@ -294,4 +294,48 @@ class KeyboardNavStateTest {
             mergeFieldKindConstraint(FieldKind.TEXT, FieldKind.TEXT, platformIsPassword = true)
         )
     }
+
+    @Test
+    fun orthogonalIncognitoDerivesEffectiveStateGuardsNoLearningAndPreservesDrawerOpen() {
+        val textConstraints = InputConstraints(kind = FieldKind.TEXT, noLearning = false)
+        val openDrawerSession = SessionState(drawerOpen = true)
+
+        val initialDerived = deriveKeyboardState(KeyboardPrefs(), openDrawerSession, textConstraints)
+        assertFalse(initialDerived.effectiveIncognito)
+        assertTrue(initialDerived.canToggleIncognito)
+
+        val enabled = KeyboardNavReducer.toggleIncognito(KeyboardPrefs(), openDrawerSession, textConstraints)
+        assertTrue(enabled.prefs.incognito)
+        assertTrue("ToggleIncognito must preserve drawerOpen", enabled.session.drawerOpen)
+        val enabledDerived = deriveKeyboardState(enabled.prefs, enabled.session, textConstraints)
+        assertTrue(enabledDerived.effectiveIncognito)
+        assertTrue(enabledDerived.canToggleIncognito)
+
+        val disabled = KeyboardNavReducer.setIncognito(enabled.prefs, enabled.session, textConstraints, enabled = false)
+        assertFalse(disabled.prefs.incognito)
+        assertTrue(disabled.session.drawerOpen)
+
+        // Editor-forced noLearning (e.g. PASSWORD / TERMINAL / IME_FLAG_NO_PERSONALIZED_LEARNING) locks incognito ON
+        val passwordConstraints = EditorContext(isPassword = true).toInputConstraints()
+        val lockedDerived =
+            deriveKeyboardState(KeyboardPrefs(incognito = false), openDrawerSession, passwordConstraints)
+        assertTrue(lockedDerived.effectiveIncognito)
+        assertFalse(lockedDerived.canToggleIncognito)
+
+        val guardedToggle = KeyboardNavReducer.toggleIncognito(
+            KeyboardPrefs(incognito = false),
+            openDrawerSession,
+            passwordConstraints
+        )
+        assertFalse("Guarded toggle must not mutate prefs.incognito", guardedToggle.prefs.incognito)
+        assertTrue(guardedToggle.session.drawerOpen)
+
+        val guardedSetOff = KeyboardNavReducer.setIncognito(
+            KeyboardPrefs(incognito = true),
+            openDrawerSession,
+            passwordConstraints,
+            enabled = false
+        )
+        assertTrue("Guarded setIncognito(false) must not weaken editor noLearning", guardedSetOff.prefs.incognito)
+    }
 }

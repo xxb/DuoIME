@@ -33,6 +33,8 @@ import dev.duoime.core.model.ToolbarMode
 import dev.duoime.core.model.resolveEffectiveLangKeyPlacement
 import dev.duoime.core.protocol.ExtensionToolbarButton
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.channels.Channel
 
 internal sealed interface NavCommand {
     data object ToggleLanguage : NavCommand
@@ -58,6 +60,10 @@ internal sealed interface NavCommand {
     data object ToggleShift : NavCommand
 
     data class SetNumberRow(val enabled: Boolean) : NavCommand
+
+    data class SetIncognito(val enabled: Boolean) : NavCommand
+
+    data object ToggleIncognito : NavCommand
 }
 
 internal sealed interface ControllerEvent {
@@ -106,6 +112,16 @@ internal sealed interface ControllerEvent {
         val fallbackEngineFactory: (suspend () -> InputEngine)?,
         val modeSchemaIds: Map<InputMode, String>,
         val chineseSchemeSchemaIds: Map<ChineseScheme, String>
+    ) : ControllerEvent
+
+    data class UpdateSchemaMappings(
+        val modeSchemaIds: Map<InputMode, String>,
+        val chineseSchemeSchemaIds: Map<ChineseScheme, String>?
+    ) : ControllerEvent
+
+    data class RunWithEngine(
+        val action: (InputEngine) -> Any?,
+        val result: CompletableDeferred<Any?>
     ) : ControllerEvent
 }
 
@@ -206,19 +222,37 @@ internal fun closeEngineSafely(engine: InputEngine?) {
 
 @Suppress("TooGenericExceptionCaught")
 internal suspend fun clearSinkComposingSafely(sinkDispatcher: EngineSinkDispatcher) {
+    syncSinkComposingSafely(sinkDispatcher, EngineSnapshot.EMPTY)
+}
+
+@Suppress("TooGenericExceptionCaught")
+internal suspend fun syncSinkComposingSafely(sinkDispatcher: EngineSinkDispatcher, snapshot: EngineSnapshot) {
     try {
-        sinkDispatcher.syncComposingOnly(EngineSnapshot.EMPTY)
+        sinkDispatcher.syncComposingOnly(snapshot)
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (_: Throwable) {
-        // Best-effort composing cleanup during reload or error recovery.
+        // Best-effort composing cleanup during reload, workspace transaction, or error recovery.
     }
 }
+
+internal fun cancelQueuedEngineRequests(channel: Channel<ControllerEvent>) {
+    channel.close()
+    while (true) {
+        val queued = channel.tryReceive().getOrNull() ?: break
+        if (queued is ControllerEvent.RunWithEngine) {
+            queued.result.cancel(CancellationException("KeyboardController closed before executing engine action"))
+        }
+    }
+}
+
+internal fun composingChangedAfterPrivacy(before: EngineSnapshot, after: EngineSnapshot): Boolean =
+    before.isComposing && (!after.isComposing || after.composingText != before.composingText)
 
 internal fun configureBootstrappedEngine(
     boot: EngineBootstrapResult,
     derived: DerivedKeyboardState,
-    variant: ChineseVariant,
+    prefs: KeyboardPrefs,
     effectiveConstraints: InputConstraints,
     editorContext: EditorContext
 ) {
@@ -228,9 +262,9 @@ internal fun configureBootstrappedEngine(
     }
     engine.setOption(
         dev.duoime.core.engine.EngineOptions.TRADITIONALIZATION,
-        variant == ChineseVariant.TRADITIONAL
+        prefs.variant == ChineseVariant.TRADITIONAL
     )
-    applyEnginePrivacyOptions(engine, effectiveConstraints, editorContext)
+    applyEnginePrivacyOptions(engine, prefs, effectiveConstraints, editorContext)
 }
 
 internal fun passThroughFallbackResult(
@@ -248,10 +282,11 @@ internal fun passThroughFallbackResult(
 
 internal fun applyEnginePrivacyOptions(
     engine: InputEngine,
+    prefs: KeyboardPrefs,
     activeConstraints: InputConstraints,
     context: EditorContext
 ) {
-    val noLearning = activeConstraints.noLearning || context.incognito || context.isPassword
+    val noLearning = prefs.incognito || activeConstraints.noLearning || context.incognito || context.isPassword
     engine.setOption(dev.duoime.core.engine.EngineOptions.INCOGNITO, noLearning)
 }
 
@@ -259,6 +294,68 @@ internal fun legacySwitchModeToNavCommand(targetMode: InputMode): NavCommand = w
     InputMode.ENGLISH -> NavCommand.SetLanguage(Language.ENGLISH)
     InputMode.PINYIN_26 -> NavCommand.SelectChineseScheme(ChineseScheme.PINYIN_26)
     InputMode.PINYIN_T9 -> NavCommand.SelectChineseScheme(ChineseScheme.PINYIN_T9)
+}
+
+internal fun mapKeyActionToNavCommand(action: KeyAction, prefs: KeyboardPrefs): NavCommand? = when (action) {
+    is KeyAction.Shift -> NavCommand.ToggleShift
+    is KeyAction.SwitchMode -> legacySwitchModeToNavCommand(action.targetMode)
+    is KeyAction.ToggleLanguage -> NavCommand.ToggleLanguage
+    is KeyAction.SelectChineseScheme -> NavCommand.SelectChineseScheme(action.scheme)
+    is KeyAction.OpenPanel -> NavCommand.OpenPanel(action.panel, action.tab)
+    is KeyAction.ClosePanel -> NavCommand.ClosePanel
+    is KeyAction.TogglePanelLock -> NavCommand.TogglePanelLock
+    is KeyAction.ToggleDrawer -> NavCommand.ToggleDrawer
+    is KeyAction.SelectSymbolTab -> NavCommand.SelectSymbolTab(action.tab)
+    else -> mapPrefKeyActionToNavCommand(action, prefs)
+}
+
+private fun mapPrefKeyActionToNavCommand(action: KeyAction, prefs: KeyboardPrefs): NavCommand? = when (action) {
+    is KeyAction.ToggleIncognito -> NavCommand.ToggleIncognito
+    is KeyAction.ToggleNumberRow -> NavCommand.SetNumberRow(!prefs.includeNumberRow)
+    is KeyAction.SwitchVariant -> NavCommand.SetVariant(
+        if (prefs.variant == ChineseVariant.TRADITIONAL) ChineseVariant.SIMPLIFIED else ChineseVariant.TRADITIONAL
+    )
+    else -> null
+}
+
+internal fun resolvePostDirectTextSession(
+    beforeDerived: DerivedKeyboardState,
+    prefs: KeyboardPrefs,
+    session: SessionState,
+    effectiveConstraints: InputConstraints,
+    keepPanelOpen: Boolean
+): SessionState = when {
+    beforeDerived.panel != KeyboardPanel.PRIMARY -> {
+        if (!keepPanelOpen && !beforeDerived.panelLocked) {
+            KeyboardNavReducer.closePanel(prefs, session, effectiveConstraints).session
+        } else {
+            session
+        }
+    }
+    beforeDerived.effectiveLanguage == Language.ENGLISH ->
+        KeyboardNavReducer.consumeOneShotShift(prefs, session).session
+    else -> session
+}
+
+@Suppress("TooGenericExceptionCaught")
+internal fun runEngineActionSafely(engine: InputEngine, event: ControllerEvent.RunWithEngine): Result<Any?>? {
+    if (event.result.isCancelled) return null
+    return try {
+        Result.success(event.action(engine))
+    } catch (cancelled: CancellationException) {
+        event.result.cancel(cancelled)
+        throw cancelled
+    } catch (error: Throwable) {
+        Result.failure(error)
+    }
+}
+
+internal fun completeRunWithEngine(event: ControllerEvent.RunWithEngine, outcome: Result<Any?>) {
+    if (outcome.isSuccess) {
+        event.result.complete(outcome.getOrNull())
+    } else {
+        event.result.completeExceptionally(outcome.exceptionOrNull()!!)
+    }
 }
 
 internal fun nextHeightPresetFraction(current: Float, presets: List<Float>): Float {
@@ -318,7 +415,10 @@ internal fun reduceNavTransitionCommand(
         NavTransitionOutcome(KeyboardNavReducer.selectSymbolTab(prefs, session, command.tab), recordMemory = false)
     is NavCommand.ToggleShift ->
         NavTransitionOutcome(KeyboardNavReducer.toggleShift(prefs, session), recordMemory = false)
-    is NavCommand.SetVariant, is NavCommand.SetNumberRow -> null
+    is NavCommand.SetVariant,
+    is NavCommand.SetNumberRow,
+    is NavCommand.SetIncognito,
+    is NavCommand.ToggleIncognito -> null
 }
 
 internal fun selectEngineSchemaWithFallback(
@@ -326,14 +426,18 @@ internal fun selectEngineSchemaWithFallback(
     derived: DerivedKeyboardState,
     activeSchemaIds: Map<InputMode, String>
 ) {
-    val selected = engine.selectSchema(derived.activeSchemaId)
-    if (!selected &&
-        derived.effectiveLanguage == Language.CHINESE &&
-        derived.effectiveChineseScheme == ChineseScheme.XIAOHE_SHUANGPIN
-    ) {
-        val fallback = activeSchemaIds[InputMode.PINYIN_26] ?: EngineSchemas.PINYIN_26
-        if (fallback != derived.activeSchemaId) {
-            engine.selectSchema(fallback)
+    if (engine.selectSchema(derived.activeSchemaId) || derived.effectiveLanguage != Language.CHINESE) {
+        return
+    }
+    val fallbackCandidates = buildList {
+        if (derived.effectiveChineseScheme == ChineseScheme.XIAOHE_SHUANGPIN) {
+            add(activeSchemaIds[InputMode.PINYIN_26])
+        }
+        add(EngineSchemas.PINYIN_26)
+    }
+    for (candidate in fallbackCandidates) {
+        if (candidate != null && candidate != derived.activeSchemaId && engine.selectSchema(candidate)) {
+            return
         }
     }
 }

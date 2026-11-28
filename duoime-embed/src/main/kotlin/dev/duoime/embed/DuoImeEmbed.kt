@@ -211,7 +211,9 @@ private fun DuoImeKeyboardContent(
         hasMoreWindowCandidates = state.hasMoreWindowCandidates,
         toolbarPins = chromePolicy.pins,
         toolbarMode = chromePolicy.toolbarMode,
-        langKeyPlacement = surfaceLangPlacement
+        langKeyPlacement = surfaceLangPlacement,
+        isIncognito = derived.effectiveIncognito,
+        canToggleIncognito = derived.canToggleIncognito
     )
 
     DuoTheme(preset = chromePolicy.themePreset) {

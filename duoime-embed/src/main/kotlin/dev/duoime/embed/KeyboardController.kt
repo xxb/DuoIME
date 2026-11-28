@@ -18,6 +18,7 @@ import dev.duoime.core.model.InputMode
 import dev.duoime.core.model.KeyAction
 import dev.duoime.core.model.KeyProcessResult
 import dev.duoime.core.model.KeyboardNavReducer
+import dev.duoime.core.model.KeyboardNavUpdate
 import dev.duoime.core.model.KeyboardPanel
 import dev.duoime.core.model.KeyboardPrefs
 import dev.duoime.core.model.LangKeyPlacement
@@ -33,6 +34,7 @@ import dev.duoime.core.protocol.ExtensionToolbarButton
 import dev.duoime.engine.lite.LiteInputEngine
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -108,6 +110,7 @@ class KeyboardController(
                 }
             } finally {
                 withContext(NonCancellable) {
+                    cancelQueuedEngineRequests(eventChannel)
                     closeEngineSafely(currentEngine)
                 }
             }
@@ -124,9 +127,7 @@ class KeyboardController(
 
     fun onKeyRepeat(feedbackKey: FeedbackKey) = hostCallbacks.onRepeatFeedbackKey(feedbackKey)
 
-    fun dispatchKeyAction(action: KeyAction) {
-        eventChannel.trySend(ControllerEvent.Action(action))
-    }
+    fun dispatchKeyAction(action: KeyAction) = sendEvent(ControllerEvent.Action(action))
 
     fun toggleLanguage() = sendNav(NavCommand.ToggleLanguage)
 
@@ -146,87 +147,80 @@ class KeyboardController(
 
     fun toggleDrawer() = sendNav(NavCommand.ToggleDrawer)
 
-    fun updateConstraints(constraints: InputConstraints, restarting: Boolean = false) {
-        eventChannel.trySend(ControllerEvent.ConstraintsChanged(constraints, restarting))
-    }
+    fun updateConstraints(constraints: InputConstraints, restarting: Boolean = false) =
+        sendEvent(ControllerEvent.ConstraintsChanged(constraints, restarting))
 
-    fun updatePrefs(prefs: KeyboardPrefs) {
-        eventChannel.trySend(ControllerEvent.PrefsChanged(prefs))
-    }
+    fun updatePrefs(prefs: KeyboardPrefs) = sendEvent(ControllerEvent.PrefsChanged(prefs))
 
-    fun setLanguageMemoryKey(key: String?) {
-        eventChannel.trySend(ControllerEvent.HostStateChanged(memoryKeyUpdate = true, languageMemoryKey = key))
-    }
+    fun setLanguageMemoryKey(key: String?) =
+        sendEvent(ControllerEvent.HostStateChanged(memoryKeyUpdate = true, languageMemoryKey = key))
 
-    fun selectCandidate(indexOnPage: Int) {
-        eventChannel.trySend(ControllerEvent.SelectCandidate(indexOnPage))
-    }
+    fun selectCandidate(indexOnPage: Int) = sendEvent(ControllerEvent.SelectCandidate(indexOnPage))
 
-    fun selectWindowCandidate(globalIndex: Int) {
-        eventChannel.trySend(ControllerEvent.SelectWindowCandidate(globalIndex))
-    }
+    fun selectWindowCandidate(globalIndex: Int) = sendEvent(ControllerEvent.SelectWindowCandidate(globalIndex))
 
-    fun loadMoreCandidates() {
-        eventChannel.trySend(ControllerEvent.LoadMoreCandidates)
-    }
+    fun loadMoreCandidates() = sendEvent(ControllerEvent.LoadMoreCandidates)
 
-    fun selectSyllable(index: Int) {
-        eventChannel.trySend(ControllerEvent.SelectSyllable(index))
-    }
+    fun selectSyllable(index: Int) = sendEvent(ControllerEvent.SelectSyllable(index))
 
-    fun unlockSyllablesFrom(fromIndex: Int) {
-        eventChannel.trySend(ControllerEvent.UnlockSyllablesFrom(fromIndex))
-    }
+    fun unlockSyllablesFrom(fromIndex: Int) = sendEvent(ControllerEvent.UnlockSyllablesFrom(fromIndex))
 
-    fun pageCandidates(forward: Boolean) {
-        eventChannel.trySend(ControllerEvent.Page(forward))
-    }
+    fun pageCandidates(forward: Boolean) = sendEvent(ControllerEvent.Page(forward))
 
-    fun dispatchExtensionButton(button: ExtensionToolbarButton) {
-        eventChannel.trySend(ControllerEvent.ExtensionButton(button))
-    }
+    fun dispatchExtensionButton(button: ExtensionToolbarButton) = sendEvent(ControllerEvent.ExtensionButton(button))
 
-    fun updateEditorContext(context: EditorContext, restarting: Boolean = false) {
-        eventChannel.trySend(ControllerEvent.EditorChanged(context, restarting))
-    }
+    fun updateEditorContext(context: EditorContext, restarting: Boolean = false) =
+        sendEvent(ControllerEvent.EditorChanged(context, restarting))
 
-    fun updateOverlayMode(isOverlay: Boolean) {
-        eventChannel.trySend(ControllerEvent.HostStateChanged(isOverlay = isOverlay))
-    }
+    fun updateOverlayMode(isOverlay: Boolean) = sendEvent(ControllerEvent.HostStateChanged(isOverlay = isOverlay))
 
     fun updateHostPolicy(
         langKeyPlacement: LangKeyPlacement = LangKeyPlacement.TOOLBAR,
         initialSymbolTab: SymbolTabId = SymbolTabId.COMMON,
         toolbarMode: ToolbarMode = ToolbarMode.FULL
-    ) {
-        eventChannel.trySend(ControllerEvent.HostPolicyChanged(langKeyPlacement, initialSymbolTab, toolbarMode))
-    }
+    ) = sendEvent(ControllerEvent.HostPolicyChanged(langKeyPlacement, initialSymbolTab, toolbarMode))
 
     fun setIncludeNumberRow(enabled: Boolean) = sendNav(NavCommand.SetNumberRow(enabled))
 
-    fun dismissEngineError() {
-        eventChannel.trySend(ControllerEvent.DismissEngineError)
+    fun setIncognito(enabled: Boolean) = sendNav(NavCommand.SetIncognito(enabled))
+
+    fun toggleIncognito() = sendNav(NavCommand.ToggleIncognito)
+
+    fun updateSchemaMappings(
+        modeSchemaIds: Map<InputMode, String>,
+        chineseSchemeSchemaIds: Map<ChineseScheme, String>? = null
+    ) = sendEvent(ControllerEvent.UpdateSchemaMappings(modeSchemaIds, chineseSchemeSchemaIds))
+
+    /**
+     * Runs [action] exclusively on the controller's single engine actor thread with the currently
+     * active [InputEngine], then resets candidate pagination, syncs composing state, updates
+     * tracked schema state, and republishes [uiState].
+     *
+     * Never invoke [withActiveEngine] or [reloadEngine] synchronously from inside [action].
+     */
+    @Suppress("UNCHECKED_CAST")
+    suspend fun <T> withActiveEngine(action: (InputEngine) -> T): T {
+        val result = CompletableDeferred<Any?>()
+        if (eventChannel.trySend(ControllerEvent.RunWithEngine(action, result)).isFailure) {
+            val err = CancellationException("KeyboardController is closed")
+            result.cancel(err)
+            throw err
+        }
+        return result.await() as T
     }
 
-    fun reset() {
-        eventChannel.trySend(ControllerEvent.Reset)
-    }
+    fun dismissEngineError() = sendEvent(ControllerEvent.DismissEngineError)
+
+    fun reset() = sendEvent(ControllerEvent.Reset)
 
     fun reloadEngine(
         engineFactory: suspend () -> InputEngine,
         fallbackEngineFactory: (suspend () -> InputEngine)? = this.fallbackEngineFactory,
         modeSchemaIds: Map<InputMode, String> = config.modeSchemaIds,
         chineseSchemeSchemaIds: Map<ChineseScheme, String> = config.chineseSchemeSchemaIds
-    ) {
-        eventChannel.trySend(
-            ControllerEvent.ReloadEngine(
-                engineFactory = engineFactory,
-                fallbackEngineFactory = fallbackEngineFactory,
-                modeSchemaIds = modeSchemaIds,
-                chineseSchemeSchemaIds = chineseSchemeSchemaIds
-            )
-        )
-    }
+    ) = sendEvent(
+        ControllerEvent.ReloadEngine(engineFactory, fallbackEngineFactory, modeSchemaIds, chineseSchemeSchemaIds)
+    )
 
     fun close() {
         eventChannel.close()
@@ -257,7 +251,7 @@ class KeyboardController(
             modeSchemaIds = boot.schemaIds,
             chineseSchemeSchemaIds = boot.chineseSchemeSchemaIds
         )
-        configureBootstrappedEngine(boot, initialDerived, nextPrefs.variant, effective, editorContext)
+        configureBootstrappedEngine(boot, initialDerived, nextPrefs, effective, editorContext)
         val engine = boot.engine
 
         activeSchemaIds = boot.schemaIds
@@ -308,9 +302,11 @@ class KeyboardController(
         }
     }
 
-    private fun sendNav(command: NavCommand) {
-        eventChannel.trySend(ControllerEvent.Nav(command))
+    private fun sendEvent(event: ControllerEvent) {
+        eventChannel.trySend(event)
     }
+
+    private fun sendNav(command: NavCommand) = sendEvent(ControllerEvent.Nav(command))
 
     @Suppress("TooGenericExceptionCaught")
     private suspend fun processEventSafely(engine: InputEngine, event: ControllerEvent) {
@@ -377,6 +373,8 @@ class KeyboardController(
                 sinkDispatcher.syncComposingOnly(engine.state.value)
                 publishState(engine)
             }
+            is ControllerEvent.UpdateSchemaMappings -> handleUpdateSchemaMappings(engine, event)
+            is ControllerEvent.RunWithEngine -> handleRunWithEngine(engine, event)
             else -> Unit
         }
     }
@@ -427,7 +425,10 @@ class KeyboardController(
         val before = currentDerived()
         constraints = newConstraints
         val effective = effectiveConstraints(newConstraints)
-        val remembered = if (!restarting && LanguageMemoryStore.isEligibleForMemory(effective, editorContext)) {
+        val remembered = if (!restarting &&
+            !prefs.incognito &&
+            LanguageMemoryStore.isEligibleForMemory(effective, editorContext)
+        ) {
             languageMemory.get(resolveMemoryKey(editorContext))
         } else {
             null
@@ -438,15 +439,14 @@ class KeyboardController(
         val after = currentDerived()
         val prevSnap = engine.state.value
 
-        applyEnginePrivacyOptions(engine, effective, editorContext)
+        applyEnginePrivacyOptions(engine, prefs, effective, editorContext)
         val afterPrivacySnap = engine.state.value
         if (!restarting) {
             engine.reset()
             syncEngineSchemaIfChanged(engine, after)
             sinkDispatcher.syncComposingOnly(engine.state.value)
         } else {
-            val privacyChangedComposing = prevSnap.isComposing &&
-                (!afterPrivacySnap.isComposing || afterPrivacySnap.composingText != prevSnap.composingText)
+            val privacyChangedComposing = composingChangedAfterPrivacy(prevSnap, afterPrivacySnap)
             syncSchemaWithComposingCleanup(engine, before, after)
             if (privacyChangedComposing) {
                 sinkDispatcher.syncComposingOnly(engine.state.value)
@@ -458,38 +458,91 @@ class KeyboardController(
     private suspend fun handlePrefsChanged(engine: InputEngine, updatedPrefs: KeyboardPrefs) {
         val before = currentDerived()
         val previousVariant = prefs.variant
+        val previousIncognito = prefs.incognito
+        val prevSnap = engine.state.value
         prefs = updatedPrefs
         val after = currentDerived()
         if (updatedPrefs.variant != previousVariant || engine.state.value.variant != updatedPrefs.variant) {
             engine.setOption(EngineOptions.TRADITIONALIZATION, prefs.variant == ChineseVariant.TRADITIONAL)
         }
+        val privacyChangedComposing = if (
+            updatedPrefs.incognito != previousIncognito || after.effectiveIncognito != before.effectiveIncognito
+        ) {
+            applyEnginePrivacyOptions(engine, prefs, effectiveConstraints(), editorContext)
+            composingChangedAfterPrivacy(prevSnap, engine.state.value)
+        } else {
+            false
+        }
+        syncSchemaWithComposingCleanup(engine, before, after)
+        if (privacyChangedComposing) {
+            sinkDispatcher.syncComposingOnly(engine.state.value)
+        }
+        publishState(engine)
+    }
+
+    private suspend fun handleUpdateSchemaMappings(engine: InputEngine, event: ControllerEvent.UpdateSchemaMappings) {
+        val before = currentDerived()
+        activeSchemaIds = event.modeSchemaIds
+        event.chineseSchemeSchemaIds?.let { activeChineseSchemeSchemaIds = it }
+        val after = currentDerived()
         syncSchemaWithComposingCleanup(engine, before, after)
         publishState(engine)
     }
 
+    private suspend fun handleRunWithEngine(engine: InputEngine, event: ControllerEvent.RunWithEngine) {
+        val outcome = runEngineActionSafely(engine, event) ?: return
+        candidateWindow.reset()
+        val afterSnap = engine.state.value
+        syncSinkComposingSafely(sinkDispatcher, afterSnap)
+        lastSelectedSchemaId = afterSnap.schemaId.ifEmpty { null }
+        publishState(engine)
+        completeRunWithEngine(event, outcome)
+    }
+
     private suspend fun handleNavCommand(engine: InputEngine, command: NavCommand) {
+        val previousPrefs = prefs
         when (command) {
-            is NavCommand.SetVariant -> applyVariantChange(engine, command.variant)
-            is NavCommand.SetNumberRow -> {
-                val previousPrefs = prefs
-                prefs = prefs.copy(includeNumberRow = command.enabled)
-                publishState(engine)
-                notifyPrefsChangedIfMutated(previousPrefs)
+            is NavCommand.SetVariant -> {
+                prefs = prefs.copy(variant = command.variant)
+                engine.setOption(EngineOptions.TRADITIONALIZATION, command.variant == ChineseVariant.TRADITIONAL)
             }
-            else -> {
-                val previousPrefs = prefs
-                val before = currentDerived()
-                val effective = effectiveConstraints()
-                val outcome = reduceNavTransitionCommand(command, prefs, session, effective) ?: return
-                prefs = outcome.update.prefs
-                session = outcome.update.session
-                val after = currentDerived()
-                syncSchemaWithComposingCleanup(engine, before, after)
-                if (outcome.recordMemory && LanguageMemoryStore.isEligibleForMemory(effective, editorContext)) {
-                    languageMemory.put(resolveMemoryKey(editorContext), after.effectiveLanguage)
-                }
-                publishState(engine)
-                notifyPrefsChangedIfMutated(previousPrefs)
+            is NavCommand.SetNumberRow -> prefs = prefs.copy(includeNumberRow = command.enabled)
+            is NavCommand.SetIncognito -> applyIncognitoUpdate(
+                engine,
+                KeyboardNavReducer.setIncognito(prefs, session, effectiveConstraints(), command.enabled)
+            )
+            is NavCommand.ToggleIncognito -> applyIncognitoUpdate(
+                engine,
+                KeyboardNavReducer.toggleIncognito(prefs, session, effectiveConstraints())
+            )
+            else -> applyReducedNavCommand(engine, command)
+        }
+        publishState(engine)
+        notifyPrefsChangedIfMutated(previousPrefs)
+    }
+
+    private suspend fun applyReducedNavCommand(engine: InputEngine, command: NavCommand) {
+        val before = currentDerived()
+        val effective = effectiveConstraints()
+        val outcome = reduceNavTransitionCommand(command, prefs, session, effective) ?: return
+        prefs = outcome.update.prefs
+        session = outcome.update.session
+        val after = currentDerived()
+        syncSchemaWithComposingCleanup(engine, before, after)
+        if (outcome.recordMemory && !prefs.incognito && LanguageMemoryStore.isEligibleForMemory(effective, editorContext)) {
+            languageMemory.put(resolveMemoryKey(editorContext), after.effectiveLanguage)
+        }
+    }
+
+    private suspend fun applyIncognitoUpdate(engine: InputEngine, update: KeyboardNavUpdate) {
+        val previousPrefs = prefs
+        val prevSnap = engine.state.value
+        prefs = update.prefs
+        session = update.session
+        if (prefs != previousPrefs) {
+            applyEnginePrivacyOptions(engine, prefs, effectiveConstraints(), editorContext)
+            if (composingChangedAfterPrivacy(prevSnap, engine.state.value)) {
+                sinkDispatcher.syncComposingOnly(engine.state.value)
             }
         }
     }
@@ -501,31 +554,27 @@ class KeyboardController(
     ) {
         if (before.effectiveLanguage == Language.CHINESE && after.effectiveLanguage == Language.ENGLISH) {
             sinkDispatcher.commitRawComposingLatin(engine)
-        } else if (before.activeSchemaId != after.activeSchemaId && engine.state.value.isComposing) {
+        } else if ((before.activeSchemaId != after.activeSchemaId || after.activeSchemaId != lastSelectedSchemaId) &&
+            engine.state.value.isComposing
+        ) {
             engine.reset()
             sinkDispatcher.syncComposingOnly(engine.state.value)
         }
         syncEngineSchemaIfChanged(engine, after)
     }
 
-    private suspend fun applyVariantChange(engine: InputEngine, variant: ChineseVariant) {
-        val previousPrefs = prefs
-        prefs = prefs.copy(variant = variant)
-        engine.setOption(EngineOptions.TRADITIONALIZATION, variant == ChineseVariant.TRADITIONAL)
-        publishState(engine)
-        notifyPrefsChangedIfMutated(previousPrefs)
-    }
-
     private suspend fun notifyPrefsChangedIfMutated(previousPrefs: KeyboardPrefs) {
         if (prefs != previousPrefs) {
             val updated = prefs
-            withContext(config.sinkDispatcher) {
-                hostCallbacks.onPrefsChanged(updated)
-            }
+            withContext(config.sinkDispatcher) { hostCallbacks.onPrefsChanged(updated) }
         }
     }
 
     private suspend fun handleKeyAction(engine: InputEngine, action: KeyAction) {
+        mapKeyActionToNavCommand(action, prefs)?.let { navCommand ->
+            handleNavCommand(engine, navCommand)
+            return
+        }
         when (action) {
             is KeyAction.Text -> handleDirectText(engine, action.text)
             is KeyAction.CommitPanelSymbol -> handleDirectText(engine, action.text, keepPanelOpen = action.keepOpen)
@@ -547,52 +596,21 @@ class KeyboardController(
                 sinkDispatcher.dispatchSpace(engine)
                 publishState(engine)
             }
-            is KeyAction.Shift -> handleNavCommand(engine, NavCommand.ToggleShift)
             is KeyAction.SelectSyllable -> handleSelectSyllable(engine, action.index)
             is KeyAction.UnlockSyllablesFrom -> handleUnlockSyllablesFrom(engine, action.fromIndex)
-            else -> handleNavOrHostKeyAction(engine, action)
-        }
-    }
-
-    private suspend fun handleNavOrHostKeyAction(engine: InputEngine, action: KeyAction) {
-        when (action) {
-            is KeyAction.SwitchMode -> handleLegacySwitchMode(engine, action.targetMode)
-            is KeyAction.ToggleLanguage -> handleNavCommand(engine, NavCommand.ToggleLanguage)
-            is KeyAction.SelectChineseScheme ->
-                handleNavCommand(engine, NavCommand.SelectChineseScheme(action.scheme))
-            is KeyAction.OpenPanel -> handleNavCommand(engine, NavCommand.OpenPanel(action.panel, action.tab))
-            is KeyAction.ClosePanel -> handleNavCommand(engine, NavCommand.ClosePanel)
-            is KeyAction.TogglePanelLock -> handleNavCommand(engine, NavCommand.TogglePanelLock)
             is KeyAction.ClearPreedit -> {
                 engine.reset()
                 sinkDispatcher.syncComposingOnly(engine.state.value)
                 publishState(engine)
             }
-            is KeyAction.ToggleDrawer -> handleNavCommand(engine, NavCommand.ToggleDrawer)
-            is KeyAction.ToggleNumberRow ->
-                handleNavCommand(engine, NavCommand.SetNumberRow(!prefs.includeNumberRow))
-            is KeyAction.SelectSymbolTab -> handleNavCommand(engine, NavCommand.SelectSymbolTab(action.tab))
-            is KeyAction.SwitchVariant -> {
-                val nextVariant = if (prefs.variant == ChineseVariant.TRADITIONAL) {
-                    ChineseVariant.SIMPLIFIED
-                } else {
-                    ChineseVariant.TRADITIONAL
-                }
-                applyVariantChange(engine, nextVariant)
-            }
             else -> handleHostKeyAction(engine, action)
         }
-    }
-
-    private suspend fun handleLegacySwitchMode(engine: InputEngine, targetMode: InputMode) {
-        handleNavCommand(engine, legacySwitchModeToNavCommand(targetMode))
     }
 
     private suspend fun handleHostKeyAction(engine: InputEngine, action: KeyAction) {
         when (action) {
             is KeyAction.SwapScreen -> withContext(config.sinkDispatcher) { hostCallbacks.onSwapScreenRequested() }
             is KeyAction.CycleHeight -> cycleHeightPreset(engine)
-            is KeyAction.ToggleToolbar -> Unit
             is KeyAction.SwitchIme -> withContext(config.sinkDispatcher) { hostCallbacks.onSwitchImeRequested() }
             is KeyAction.Dismiss -> withContext(config.sinkDispatcher) { hostCallbacks.onDismissRequested() }
             else -> Unit
@@ -603,13 +621,7 @@ class KeyboardController(
         val beforeDerived = currentDerived()
         sinkDispatcher.flushComposition(engine)
         withSink { it.commitText(text) }
-        if (beforeDerived.panel != KeyboardPanel.PRIMARY) {
-            if (!keepPanelOpen && !beforeDerived.panelLocked) {
-                session = KeyboardNavReducer.closePanel(prefs, session, effectiveConstraints()).session
-            }
-        } else if (beforeDerived.effectiveLanguage == Language.ENGLISH) {
-            session = KeyboardNavReducer.consumeOneShotShift(prefs, session).session
-        }
+        session = resolvePostDirectTextSession(beforeDerived, prefs, session, effectiveConstraints(), keepPanelOpen)
         publishState(engine)
     }
 

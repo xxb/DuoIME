@@ -64,6 +64,7 @@ import dev.duoime.app.dualscreen.SystemImePinDetector
 import dev.duoime.app.settings.DuoImePreferences
 import dev.duoime.app.settings.DuoImeSettings
 import dev.duoime.app.settings.LiveSettingsPlacementAction
+import dev.duoime.app.settings.RimeWorkspaceCoordinator
 import dev.duoime.app.settings.resolveLiveSettingsAction
 import dev.duoime.core.engine.InputSink
 import dev.duoime.core.model.KeyboardPanel
@@ -170,6 +171,7 @@ class DuoImeService : InputMethodService() {
                 sinkDispatcher = Dispatchers.Main.immediate,
                 initialHeightFraction = initialSettings.heightFraction,
                 initialOverlayMode = false,
+                modeSchemaIds = resolveModeSchemaIds(initialSettings),
                 initialPrefs = initialSettings.toKeyboardPrefs()
             ),
             engineFactory = initialEnginePlan.primaryFactory,
@@ -184,6 +186,7 @@ class DuoImeService : InputMethodService() {
             ),
             fallbackEngineFactory = initialEnginePlan.fallbackFactory
         )
+        RimeWorkspaceCoordinator.attachController(controller)
         serviceScope.launch {
             controller.uiState.collect { uiState ->
                 engineSessionFactory.syncUiState(uiState)
@@ -467,6 +470,7 @@ class DuoImeService : InputMethodService() {
         pinObserverHandle = null
         runCatching { prefsObserverHandle?.close() }
         prefsObserverHandle = null
+        RimeWorkspaceCoordinator.detachController(controller)
         controller.close()
         serviceScope.coroutineContext[Job]?.invokeOnCompletion {
             engineExecutor.shutdown()
@@ -578,7 +582,7 @@ class DuoImeService : InputMethodService() {
         val effectivePin = SystemImePinDetector.resolveEffectivePin(detectedPin, settings.manualSystemImePin)
         val pkgName = lastEditorInfo?.packageName
         val isPassword = lastEditorInfo?.let {
-            EditorInfoMapper.fromEditorInfo(it, userIncognito = settings.alwaysIncognito).isPassword
+            EditorInfoMapper.fromEditorInfo(it, userIncognito = false).isPassword
         } ?: false
         return PlacementEvaluationSnapshot(
             input = DisplayPlacementInput(
@@ -658,6 +662,8 @@ class DuoImeService : InputMethodService() {
         }
         if (latest.engineBackend != previous.engineBackend) {
             reloadEngineBackend(latest)
+        } else if (latest.customRimeSchemaId != previous.customRimeSchemaId) {
+            controller.updateSchemaMappings(resolveModeSchemaIds(latest))
         }
     }
 
@@ -671,11 +677,10 @@ class DuoImeService : InputMethodService() {
         if (updatedPrefs != previous.toKeyboardPrefs()) {
             controller.updatePrefs(updatedPrefs)
         }
-        if (updated.alwaysIncognito != previous.alwaysIncognito) {
-            applyEditorInfo(lastEditorInfo, restarting = true)
-        }
         if (updated.engineBackend != previous.engineBackend) {
             reloadEngineBackend(updated)
+        } else if (updated.customRimeSchemaId != previous.customRimeSchemaId) {
+            controller.updateSchemaMappings(resolveModeSchemaIds(updated))
         }
         if (!sessionController.isInputViewActive) return
 
@@ -692,15 +697,15 @@ class DuoImeService : InputMethodService() {
         val plan = engineSessionFactory.prepare(settings)
         controller.reloadEngine(
             engineFactory = plan.primaryFactory,
-            fallbackEngineFactory = plan.fallbackFactory
+            fallbackEngineFactory = plan.fallbackFactory,
+            modeSchemaIds = resolveModeSchemaIds(settings)
         )
     }
 
     private fun applyEditorInfo(info: EditorInfo?, restarting: Boolean = false) {
-        val settings = settingsFlow.value
         val capabilities = EditorInfoMapper.resolveSinkCapabilities(info)
         inputSink.updateCapabilities(capabilities)
-        val context = EditorInfoMapper.fromEditorInfo(info, userIncognito = settings.alwaysIncognito)
+        val context = EditorInfoMapper.fromEditorInfo(info, userIncognito = false)
         controller.updateEditorContext(context, restarting = restarting)
     }
 

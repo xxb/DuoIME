@@ -51,12 +51,18 @@ public object RimeWorkspaceInstaller {
     private const val USER_YAML_FILE: String = "user.yaml"
 
     /**
+     * Returns the default app-private Rime workspace root directory (`filesDir/duoime/rime`).
+     */
+    public fun defaultWorkspaceRoot(context: Context): File =
+        File(context.applicationContext.filesDir, WORKSPACE_SUBDIR)
+
+    /**
      * Ensures starter Rime configs/dicts are unpacked into app-private storage and up-to-date.
      * Performs blocking disk I/O and must never be called on the Android main thread.
      */
     public fun installStarterAssets(
         context: Context,
-        workspaceRoot: File = File(context.applicationContext.filesDir, WORKSPACE_SUBDIR)
+        workspaceRoot: File = defaultWorkspaceRoot(context)
     ): RimeWorkspacePaths {
         val source = AndroidRimeAssetSource(
             assetManager = context.applicationContext.assets,
@@ -116,6 +122,26 @@ public object RimeWorkspaceInstaller {
         val pendingFile = File(paths.stagingDir, DEPLOY_PENDING_FILE)
         if (pendingFile.exists()) {
             pendingFile.delete()
+        }
+    }
+
+    /**
+     * Wipes and recreates `stagingDir` (`userDir/build`) and writes `.deploy_pending` so
+     * `librime`'s 1-second `ConfigNeedsUpdate` timestamp check cannot skip recompiling schemas
+     * after an import, manual re-deploy, rollback, or workspace reset within the same second.
+     */
+    internal fun prepareStagingForRedeploy(paths: RimeWorkspacePaths, reason: String = "redeploy") {
+        if (paths.stagingDir.exists()) {
+            paths.stagingDir.deleteRecursively()
+        }
+        paths.stagingDir.mkdirs()
+        File(paths.stagingDir, DEPLOY_PENDING_FILE).writeText("$reason\n", Charsets.UTF_8)
+    }
+
+    internal fun ensureMinimalUserYaml(userDir: File) {
+        val userYaml = File(userDir, USER_YAML_FILE)
+        if (!userYaml.exists()) {
+            userYaml.writeText("# DuoIME Rime user state\nvar: {}\n", Charsets.UTF_8)
         }
     }
 

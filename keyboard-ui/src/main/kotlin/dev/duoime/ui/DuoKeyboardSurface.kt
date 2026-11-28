@@ -85,7 +85,9 @@ data class DuoKeyboardSurfaceState(
     val hasMoreWindowCandidates: Boolean = false,
     val toolbarPins: List<QuickPin> = DEFAULT_TOOLBAR_PINS,
     val toolbarMode: ToolbarMode = ToolbarMode.FULL,
-    val langKeyPlacement: LangKeyPlacement = LangKeyPlacement.TOOLBAR
+    val langKeyPlacement: LangKeyPlacement = LangKeyPlacement.TOOLBAR,
+    val isIncognito: Boolean = false,
+    val canToggleIncognito: Boolean = true
 )
 
 /**
@@ -181,7 +183,9 @@ fun DuoKeyboardSurfaceState.toQuickDrawerState(): DuoQuickDrawerState = DuoQuick
     canSwapScreen = canSwapScreen,
     canSwitchIme = canSwitchIme,
     effectiveLanguage = effectiveLanguage,
-    langKeyPlacement = langKeyPlacement
+    langKeyPlacement = langKeyPlacement,
+    isIncognito = isIncognito,
+    canToggleIncognito = canToggleIncognito
 )
 
 /**

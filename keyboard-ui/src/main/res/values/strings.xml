@@ -15,4 +15,6 @@
     <string name="duo_lang_chip_action_switch_to_t9">Switch to T9 keypad</string>
     <string name="duo_lang_chip_action_switch_to_26">Switch to 26-key keyboard</string>
     <string name="duo_lang_chip_action_switch_variant">Toggle Simplified or Traditional Chinese</string>
+    <string name="duo_drawer_incognito_on">Incognito · On</string>
+    <string name="duo_drawer_incognito_off">Incognito · Off</string>
 </resources>

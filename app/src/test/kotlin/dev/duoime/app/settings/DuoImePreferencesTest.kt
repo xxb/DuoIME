@@ -7,9 +7,11 @@ import dev.duoime.core.model.ChineseScheme
 import dev.duoime.core.model.ChineseVariant
 import dev.duoime.core.model.KeyboardPrefs
 import dev.duoime.core.model.Language
+import dev.duoime.engine.rime.RimeEngineMetadata
 import dev.duoime.ui.theme.DuoThemePreset
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -333,5 +335,57 @@ class DuoImePreferencesTest {
         // Switching back to RIME persists cleanly
         prefs.save(afterKeyboardUpdate.copy(engineBackend = EngineBackend.RIME))
         assertEquals(EngineBackend.RIME, DuoImePreferences(backing).load().engineBackend)
+    }
+
+    @Test
+    fun alwaysIncognitoAndCustomRimeSchemaPersistAndSurviveGeneralSettingsSaves() {
+        val backing = InMemorySharedPreferences()
+        val prefs = DuoImePreferences(backing)
+
+        // KeyboardPrefs.incognito maps bidirectionally to DuoImeSettings.alwaysIncognito
+        prefs.updateKeyboardPrefs(KeyboardPrefs(incognito = true))
+        val loadedIncognito = DuoImePreferences(backing).load()
+        assertTrue(loadedIncognito.alwaysIncognito)
+        assertTrue(loadedIncognito.toKeyboardPrefs().incognito)
+
+        // Selecting a custom Rime schema while on ENGLISH + XIAOHE_SHUANGPIN forces CHINESE + PINYIN_26
+        prefs.save(
+            loadedIncognito.copy(
+                preferredLanguage = Language.ENGLISH,
+                chineseScheme = ChineseScheme.XIAOHE_SHUANGPIN
+            )
+        )
+        val staleMainSnapshot = prefs.load()
+        val withCustom = prefs.updateRimeSchemaSelection("rime_ice")
+        assertEquals("rime_ice", withCustom.customRimeSchemaId)
+        assertEquals(Language.CHINESE, withCustom.preferredLanguage)
+        assertEquals(ChineseScheme.PINYIN_26, withCustom.chineseScheme)
+
+        // General settings save from stale MainActivity preserves live customRimeSchemaId
+        // while applying MainActivity's updated alwaysIncognito = false
+        val merged = prefs.saveGeneralSettingsPreservingKeyboardPrefs(
+            staleMainSnapshot.copy(alwaysIncognito = false, themePreset = DuoThemePreset.EINK)
+        )
+        assertFalse(merged.alwaysIncognito)
+        assertEquals(DuoThemePreset.EINK, merged.themePreset)
+        assertEquals("rime_ice", merged.customRimeSchemaId)
+        assertEquals(Language.CHINESE, merged.preferredLanguage)
+        assertEquals(ChineseScheme.PINYIN_26, merged.chineseScheme)
+
+        // Selecting built-in starter schema clears customRimeSchemaId and sets matching scheme
+        val toT9 = prefs.updateRimeSchemaSelection(RimeEngineMetadata.SCHEMA_T9_PINYIN)
+        assertNull(toT9.customRimeSchemaId)
+        assertEquals(ChineseScheme.PINYIN_T9, toT9.chineseScheme)
+
+        val toFlypy = prefs.updateRimeSchemaSelection(RimeEngineMetadata.SCHEMA_FLYPY)
+        assertNull(toFlypy.customRimeSchemaId)
+        assertEquals(ChineseScheme.XIAOHE_SHUANGPIN, toFlypy.chineseScheme)
+
+        // Selecting custom then clearing via null removes KEY_CUSTOM_RIME_SCHEMA_ID cleanly
+        prefs.updateRimeSchemaSelection("custom_wb")
+        assertTrue(backing.contains(DuoImePreferences.KEY_CUSTOM_RIME_SCHEMA_ID))
+        val cleared = prefs.updateRimeSchemaSelection(null)
+        assertNull(cleared.customRimeSchemaId)
+        assertFalse(backing.contains(DuoImePreferences.KEY_CUSTOM_RIME_SCHEMA_ID))
     }
 }

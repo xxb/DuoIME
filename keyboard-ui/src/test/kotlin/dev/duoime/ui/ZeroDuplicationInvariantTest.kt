@@ -50,6 +50,7 @@ class ZeroDuplicationInvariantTest {
         TOGGLE_DRAWER,
         CYCLE_HEIGHT,
         TOGGLE_NUMBER_ROW,
+        TOGGLE_INCOGNITO,
         SWAP_SCREEN,
         SWITCH_IME,
         DISMISS
@@ -200,7 +201,9 @@ class ZeroDuplicationInvariantTest {
                             showDismiss = caps.showDismiss,
                             toolbarPins = pins,
                             toolbarMode = toolbarMode,
-                            langKeyPlacement = effectivePlacement
+                            langKeyPlacement = effectivePlacement,
+                            isIncognito = derived.effectiveIncognito,
+                            canToggleIncognito = derived.canToggleIncognito
                         )
                         verifySingleSurfaceState(
                             surfaceState = surfaceState,
@@ -299,6 +302,20 @@ class ZeroDuplicationInvariantTest {
         if (!surfaceState.showDismiss) {
             assertEquals("Dismiss must be hidden when !showDismiss in $label", 0, counts[NavBucket.DISMISS.ordinal])
         }
+        if (surfaceState.drawerOpen && surfaceState.canToggleIncognito) {
+            assertEquals(
+                "ToggleIncognito must appear once in quick drawer when canToggleIncognito in $label",
+                1,
+                counts[NavBucket.TOGGLE_INCOGNITO.ordinal]
+            )
+        }
+        if (!surfaceState.canToggleIncognito) {
+            assertEquals(
+                "ToggleIncognito must be gated off when !canToggleIncognito in $label",
+                0,
+                counts[NavBucket.TOGGLE_INCOGNITO.ordinal]
+            )
+        }
     }
 
     private fun buildLayoutFor(
@@ -378,6 +395,7 @@ class ZeroDuplicationInvariantTest {
                 KeyAction.ToggleDrawer -> record(NavBucket.TOGGLE_DRAWER)
                 KeyAction.CycleHeight -> record(NavBucket.CYCLE_HEIGHT)
                 KeyAction.ToggleNumberRow -> record(NavBucket.TOGGLE_NUMBER_ROW)
+                KeyAction.ToggleIncognito -> record(NavBucket.TOGGLE_INCOGNITO)
                 KeyAction.SwapScreen -> record(NavBucket.SWAP_SCREEN)
                 KeyAction.SwitchIme -> record(NavBucket.SWITCH_IME)
                 KeyAction.Dismiss -> record(NavBucket.DISMISS)

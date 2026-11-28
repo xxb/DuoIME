@@ -3,6 +3,7 @@
 package dev.duoime.embed
 
 import dev.duoime.core.engine.EngineKeyEvent
+import dev.duoime.core.engine.EngineOptions
 import dev.duoime.core.engine.EngineSchemas
 import dev.duoime.core.engine.InputEngine
 import dev.duoime.core.engine.InputSink
@@ -23,7 +24,9 @@ import dev.duoime.core.model.SinkCapabilities
 import dev.duoime.core.model.SymbolTabId
 import dev.duoime.core.protocol.ExtensionConfig
 import dev.duoime.engine.lite.LiteInputEngine
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -640,6 +643,199 @@ class KeyboardControllerOrthogonalStateTest {
         assertEquals(Language.ENGLISH, controller.uiState.value.derived.effectiveLanguage)
         assertFalse(controller.uiState.value.snapshot.isComposing)
         assertEquals(listOf("commit:nihc", "compose:<clear>"), sink.events)
+        controller.close()
+    }
+
+    @Test
+    fun orthogonalIncognitoTogglePrefsSyncAndNoLearningLockWorkEndToEnd() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val sink = RecordingSink(SinkCapabilities.STANDARD_IME)
+        val optionLog = mutableListOf<Pair<String, Boolean>>()
+        val persistedPrefs = mutableListOf<KeyboardPrefs>()
+        val privacyClearingEngine = object : InputEngine {
+            private val _state = MutableStateFlow(
+                EngineSnapshot(
+                    schemaId = EngineSchemas.PINYIN_26,
+                    preedit = "ni",
+                    composingText = "ni",
+                    isComposing = true
+                )
+            )
+            override val state: StateFlow<EngineSnapshot> = _state
+
+            override fun onKey(event: EngineKeyEvent): KeyProcessResult = KeyProcessResult.Consumed
+
+            override fun selectCandidate(indexOnPage: Int): KeyProcessResult = KeyProcessResult.PassThrough
+
+            override fun page(forward: Boolean): Boolean = false
+
+            override fun setOption(name: String, on: Boolean) {
+                optionLog.add(name to on)
+                if (name == EngineOptions.INCOGNITO) {
+                    _state.value = _state.value.copy(preedit = "", composingText = "", isComposing = false)
+                }
+            }
+
+            override fun selectSchema(id: String): Boolean {
+                _state.value = _state.value.copy(schemaId = id)
+                return true
+            }
+
+            override fun reset() {
+                _state.value = _state.value.copy(preedit = "", composingText = "", isComposing = false)
+            }
+        }
+        val controller = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { privacyClearingEngine },
+            hostCallbacks = KeyboardHostCallbacks(onPrefsChanged = { persistedPrefs.add(it) })
+        )
+        controller.attachSink(sink)
+        advanceUntilIdle()
+        optionLog.clear()
+        sink.events.clear()
+
+        // ToggleIncognito via drawer keeps drawer open, sends INCOGNITO=true, and notifies host prefs
+        controller.toggleDrawer()
+        advanceUntilIdle()
+        assertTrue(controller.uiState.value.derived.drawerOpen)
+        controller.dispatchKeyAction(KeyAction.ToggleIncognito)
+        advanceUntilIdle()
+        assertTrue(controller.uiState.value.prefs.incognito)
+        assertTrue(controller.uiState.value.derived.effectiveIncognito)
+        assertTrue(controller.uiState.value.derived.canToggleIncognito)
+        assertTrue("ToggleIncognito must keep drawer open", controller.uiState.value.derived.drawerOpen)
+        assertTrue(EngineOptions.INCOGNITO to true in optionLog)
+        assertEquals(listOf(KeyboardPrefs(incognito = true)), persistedPrefs)
+
+        // Password field locks canToggleIncognito=false & guards ToggleIncognito / setIncognito
+        controller.updateEditorContext(EditorContext(packageName = "dev.auth", isPassword = true))
+        advanceUntilIdle()
+        assertTrue(controller.uiState.value.derived.effectiveIncognito)
+        assertFalse(controller.uiState.value.derived.canToggleIncognito)
+        persistedPrefs.clear()
+        controller.setIncognito(false)
+        controller.dispatchKeyAction(KeyAction.ToggleIncognito)
+        advanceUntilIdle()
+        assertTrue(controller.uiState.value.prefs.incognito)
+        assertTrue(persistedPrefs.isEmpty())
+
+        // Leaving password restores canToggleIncognito=true; external updatePrefs clears composing on privacy swap
+        controller.updateEditorContext(EditorContext(packageName = "dev.notes", fieldKind = FieldKind.TEXT))
+        advanceUntilIdle()
+        assertTrue(controller.uiState.value.derived.canToggleIncognito)
+        controller.withActiveEngine {
+            // Re-seed composing state before external prefs change
+            privacyClearingEngine.selectSchema(EngineSchemas.PINYIN_26)
+        }
+        optionLog.clear()
+        controller.updatePrefs(controller.uiState.value.prefs.copy(incognito = false))
+        advanceUntilIdle()
+        assertFalse(controller.uiState.value.prefs.incognito)
+        assertFalse(controller.uiState.value.derived.effectiveIncognito)
+        assertTrue(EngineOptions.INCOGNITO to false in optionLog)
+        controller.close()
+    }
+
+    @Test
+    fun updateSchemaMappingsAndWithActiveEngineHandleSuccessExceptionsAndCloseCancellation() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val sink = RecordingSink(SinkCapabilities.STANDARD_IME)
+        val selectedSchemas = mutableListOf<String>()
+        val schemaEngine = object : InputEngine {
+            private val _state = MutableStateFlow(
+                EngineSnapshot(
+                    schemaId = EngineSchemas.PINYIN_26,
+                    preedit = "ni",
+                    composingText = "ni",
+                    isComposing = true
+                )
+            )
+            override val state: StateFlow<EngineSnapshot> = _state
+
+            override fun onKey(event: EngineKeyEvent): KeyProcessResult = KeyProcessResult.Consumed
+
+            override fun selectCandidate(indexOnPage: Int): KeyProcessResult = KeyProcessResult.PassThrough
+
+            override fun page(forward: Boolean): Boolean = false
+
+            override fun setOption(name: String, on: Boolean) = Unit
+
+            override fun selectSchema(id: String): Boolean {
+                selectedSchemas.add(id)
+                if (id == "missing_custom") return false
+                _state.value = _state.value.copy(schemaId = id)
+                return true
+            }
+
+            override fun reset() {
+                _state.value = _state.value.copy(preedit = "", composingText = "", isComposing = false)
+            }
+        }
+        val controller = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { schemaEngine }
+        )
+        controller.attachSink(sink)
+        advanceUntilIdle()
+        selectedSchemas.clear()
+        sink.events.clear()
+
+        // updateSchemaMappings switches active schema to custom ID and clears composing span
+        controller.updateSchemaMappings(
+            modeSchemaIds = EngineSchemas.DEFAULT_MODE_MAP + (InputMode.PINYIN_26 to "custom_rime_ice")
+        )
+        advanceUntilIdle()
+        assertEquals("custom_rime_ice", controller.uiState.value.derived.activeSchemaId)
+        assertEquals(listOf("custom_rime_ice"), selectedSchemas)
+        assertTrue("compose:<clear>" in sink.events)
+
+        // Unsupported custom schema falls back cleanly to EngineSchemas.PINYIN_26
+        selectedSchemas.clear()
+        controller.updateSchemaMappings(
+            modeSchemaIds = EngineSchemas.DEFAULT_MODE_MAP + (InputMode.PINYIN_26 to "missing_custom")
+        )
+        advanceUntilIdle()
+        assertEquals(listOf("missing_custom", EngineSchemas.PINYIN_26), selectedSchemas)
+
+        // withActiveEngine executes exclusively on actor thread, returns result, and survives exceptions
+        val value = controller.withActiveEngine { engine ->
+            engine.selectSchema("custom_rime_ice")
+            "ok:${engine.state.value.schemaId}"
+        }
+        assertEquals("ok:custom_rime_ice", value)
+        assertEquals("custom_rime_ice", controller.uiState.value.snapshot.schemaId)
+
+        val caught = runCatching {
+            controller.withActiveEngine<Unit> { error("boom") }
+        }.exceptionOrNull()
+        assertTrue("Expected IllegalStateException, got $caught", caught is IllegalStateException)
+        assertEquals("boom", caught?.message)
+        // Controller stays healthy after caller-caught exception in withActiveEngine
+        assertEquals("still_alive", controller.withActiveEngine { "still_alive" })
+
+        // Closing controller cancels queued and subsequent withActiveEngine calls with CancellationException
+        val closedController = KeyboardController(
+            scope = this,
+            config = KeyboardControllerConfig(engineDispatcher = dispatcher, sinkDispatcher = dispatcher),
+            engineFactory = { LiteInputEngine.createDefault() }
+        )
+        val pendingCall = async { closedController.withActiveEngine { "never" } }
+        closedController.close()
+        advanceUntilIdle()
+        val queuedErr = runCatching { pendingCall.await() }.exceptionOrNull()
+        assertTrue(
+            "Expected CancellationException for queued call on close, got $queuedErr",
+            queuedErr is CancellationException
+        )
+
+        val postCloseErr = runCatching { closedController.withActiveEngine { "never" } }.exceptionOrNull()
+        assertTrue(
+            "Expected CancellationException after close, got $postCloseErr",
+            postCloseErr is CancellationException
+        )
         controller.close()
     }
 }

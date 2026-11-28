@@ -15,4 +15,6 @@
     <string name="duo_lang_chip_action_switch_to_t9">切换九宫格</string>
     <string name="duo_lang_chip_action_switch_to_26">切换26键</string>
     <string name="duo_lang_chip_action_switch_variant">切换简繁体</string>
+    <string name="duo_drawer_incognito_on">无痕 · 开</string>
+    <string name="duo_drawer_incognito_off">无痕 · 关</string>
 </resources>

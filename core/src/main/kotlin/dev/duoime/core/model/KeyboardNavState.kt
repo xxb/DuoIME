@@ -129,7 +129,8 @@ data class KeyboardPrefs(
     val language: Language = Language.CHINESE,
     val chineseScheme: ChineseScheme = ChineseScheme.PINYIN_26,
     val variant: ChineseVariant = ChineseVariant.SIMPLIFIED,
-    val includeNumberRow: Boolean = false
+    val includeNumberRow: Boolean = false,
+    val incognito: Boolean = false
 )
 
 /**
@@ -180,7 +181,9 @@ data class DerivedKeyboardState(
     val canToggleLanguage: Boolean,
     val langKeyPlacement: LangKeyPlacement?,
     val candidatePaging: CandidatePaging?,
-    val fieldKind: FieldKind
+    val fieldKind: FieldKind,
+    val effectiveIncognito: Boolean = false,
+    val canToggleIncognito: Boolean = true
 )
 
 /**
@@ -241,7 +244,9 @@ fun deriveKeyboardState(
         canToggleLanguage = canToggleLanguage,
         langKeyPlacement = constraints.langKeyPlacementOverride,
         candidatePaging = constraints.candidatePagingOverride,
-        fieldKind = constraints.kind
+        fieldKind = constraints.kind,
+        effectiveIncognito = prefs.incognito || constraints.noLearning,
+        canToggleIncognito = !constraints.noLearning
     )
 }
 
@@ -401,6 +406,21 @@ object KeyboardNavReducer {
 
     fun toggleDrawer(prefs: KeyboardPrefs, session: SessionState): KeyboardNavUpdate =
         KeyboardNavUpdate(prefs, session.copy(drawerOpen = !session.drawerOpen))
+
+    fun toggleIncognito(prefs: KeyboardPrefs, session: SessionState, constraints: InputConstraints): KeyboardNavUpdate =
+        setIncognito(prefs, session, constraints, enabled = !prefs.incognito)
+
+    fun setIncognito(
+        prefs: KeyboardPrefs,
+        session: SessionState,
+        constraints: InputConstraints,
+        enabled: Boolean
+    ): KeyboardNavUpdate {
+        if (constraints.noLearning) {
+            return KeyboardNavUpdate(prefs, session)
+        }
+        return KeyboardNavUpdate(prefs.copy(incognito = enabled), session)
+    }
 
     fun toggleShift(prefs: KeyboardPrefs, session: SessionState): KeyboardNavUpdate {
         val nextShift = if (session.shiftState == ShiftState.OFF) ShiftState.ONCE else ShiftState.OFF

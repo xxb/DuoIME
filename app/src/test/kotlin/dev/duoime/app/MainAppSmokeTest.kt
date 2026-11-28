@@ -10,16 +10,20 @@ import dev.duoime.app.ime.DuoImeEngineStatusRegistry
 import dev.duoime.app.ime.TAG_FALLBACK_LITE
 import dev.duoime.app.ime.TAG_FALLBACK_PASSTHROUGH_PREFIX
 import dev.duoime.app.ime.resolveInitialSchemaId
+import dev.duoime.app.ime.resolveModeSchemaIds
+import dev.duoime.app.ime.resolveSelectedRimeSchemaId
 import dev.duoime.app.ime.resolveStatusFromUiState
 import dev.duoime.app.settings.DuoImeSettings
 import dev.duoime.app.settings.EngineBackend
 import dev.duoime.core.engine.EngineSchemas
 import dev.duoime.core.model.ChineseScheme
+import dev.duoime.core.model.InputMode
 import dev.duoime.core.model.Language
 import dev.duoime.embed.DuoImeEmbed
 import dev.duoime.embed.EngineIssue
 import dev.duoime.embed.EngineIssueKind
 import dev.duoime.embed.KeyboardUiState
+import dev.duoime.engine.rime.RimeEngineMetadata
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -60,6 +64,24 @@ class MainAppSmokeTest {
                 DuoImeSettings(preferredLanguage = Language.ENGLISH, chineseScheme = ChineseScheme.PINYIN_T9)
             )
         )
+
+        // Custom Rime schema maps PINYIN_26 on RIME backend and falls back cleanly on LITE
+        val customRime = DuoImeSettings(
+            engineBackend = EngineBackend.RIME,
+            preferredLanguage = Language.CHINESE,
+            chineseScheme = ChineseScheme.PINYIN_26,
+            customRimeSchemaId = "rime_ice"
+        )
+        assertEquals("rime_ice", resolveInitialSchemaId(customRime))
+        assertEquals("rime_ice", resolveModeSchemaIds(customRime)[InputMode.PINYIN_26])
+        assertEquals("rime_ice", resolveSelectedRimeSchemaId(customRime))
+
+        val customLite = customRime.copy(engineBackend = EngineBackend.LITE)
+        assertEquals(EngineSchemas.PINYIN_26, resolveModeSchemaIds(customLite)[InputMode.PINYIN_26])
+
+        val t9WithCustomSaved = customRime.copy(chineseScheme = ChineseScheme.PINYIN_T9)
+        assertEquals(EngineSchemas.T9_PINYIN, resolveInitialSchemaId(t9WithCustomSaved))
+        assertEquals(RimeEngineMetadata.SCHEMA_T9_PINYIN, resolveSelectedRimeSchemaId(t9WithCustomSaved))
     }
 
     @Test

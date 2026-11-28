@@ -299,4 +299,42 @@ class RimeBridgeAndWorkspaceTest {
         assertEquals("config_version: '2.0'\n", File(paths.sharedDir, "default.yaml").readText())
         assertEquals("custom: true\n", customUserFile.readText())
     }
+
+    @Test
+    fun offlineTransactionAcquiresDeploysClearsPendingAndAlwaysReleasesRuntime() {
+        val raw = FakeRawRimeCalls()
+        val bridge = RefCountedRimeBridge(raw)
+        val paths = tempWorkspacePaths()
+        val pendingFile = File(paths.stagingDir, RimeWorkspaceInstaller.DEPLOY_PENDING_FILE)
+
+        val schemas = RimeNativeExecutor.runOfflineTransaction(
+            bridge = bridge,
+            paths = paths,
+            distributionVersion = "0.1.0"
+        ) { txPaths, deployer ->
+            RimeWorkspaceInstaller.prepareStagingForRedeploy(txPaths, "offline_test")
+            assertTrue(pendingFile.isFile)
+            deployer.deployAndListSchemas()
+        }
+
+        assertEquals(1, raw.initCount)
+        assertEquals(1, raw.deployCount)
+        assertEquals(1, raw.finalizeCount)
+        assertEquals(0, bridge.activeInstanceCount)
+        assertFalse(pendingFile.exists())
+        assertEquals(listOf(RimeSchemaInfo("duoime_pinyin_26", "26-Key", isBuiltIn = true)), schemas)
+
+        // Exception inside block still releases runtime cleanly
+        val err = runCatching {
+            RimeNativeExecutor.runOfflineTransaction<Unit>(
+                bridge = bridge,
+                paths = paths,
+                distributionVersion = "0.1.0"
+            ) { _, _ -> error("offline boom") }
+        }.exceptionOrNull()
+        assertTrue(err is IllegalStateException)
+        assertEquals(2, raw.initCount)
+        assertEquals(2, raw.finalizeCount)
+        assertEquals(0, bridge.activeInstanceCount)
+    }
 }
