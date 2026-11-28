@@ -13,11 +13,13 @@
 
 #include <cstdint>
 #include <cstring>
-#include <limits>
 #include <mutex>
 #include <string>
-#include <unordered_map>
 #include <vector>
+
+#include "session_handle_table.h"
+
+static_assert(sizeof(jlong) == sizeof(int64_t), "jlong must match int64_t");
 
 #define DUOIME_JNI_EXPORT extern "C" __attribute__((visibility("default")))
 
@@ -29,8 +31,7 @@ constexpr size_t kSchemaIdBufSize = 256;
 std::mutex g_rime_mutex;
 bool g_setup_done = false;
 bool g_initialized = false;
-std::unordered_map<jlong, RimeSessionId> g_session_handles;
-jlong g_next_session_handle = 1;
+duoime::rime::SessionHandleTable g_session_handles;
 
 // Owned copies of trait strings kept alive across librime initialization.
 std::string g_shared_data_dir;
@@ -201,28 +202,16 @@ bool setSlotAndRelease(JNIEnv* env, jobjectArray arr, jsize idx, jobject obj) {
 }
 
 jlong allocateSessionHandleLocked(RimeSessionId sid) {
-  if (sid == 0) {
-    return 0;
-  }
-  constexpr jlong kMaxHandle = std::numeric_limits<jlong>::max();
-  while (true) {
-    const jlong candidate = g_next_session_handle;
-    g_next_session_handle =
-        (g_next_session_handle == kMaxHandle) ? 1 : (g_next_session_handle + 1);
-    if (candidate > 0 &&
-        g_session_handles.find(candidate) == g_session_handles.end()) {
-      g_session_handles.emplace(candidate, sid);
-      return candidate;
-    }
-  }
+  return static_cast<jlong>(
+      g_session_handles.allocate(static_cast<uint64_t>(sid)));
 }
 
 RimeSessionId resolveSessionIdLocked(jlong handle) {
-  if (!g_initialized || handle <= 0) {
+  if (!g_initialized) {
     return 0;
   }
-  const auto it = g_session_handles.find(handle);
-  return it != g_session_handles.end() ? it->second : 0;
+  return static_cast<RimeSessionId>(
+      g_session_handles.resolve(static_cast<int64_t>(handle)));
 }
 
 struct CommitGuard {
@@ -327,12 +316,11 @@ Java_dev_duoime_engine_rime_JniRimeNativeBridge_nativeInitialize(
       return JNI_FALSE;
     }
 
+    g_session_handles.clear();
     if (g_initialized && api->finalize != nullptr) {
-      g_session_handles.clear();
       api->finalize();
       g_initialized = false;
     }
-    g_session_handles.clear();
 
     g_shared_data_dir = shared;
     g_user_data_dir = user;
@@ -456,15 +444,14 @@ Java_dev_duoime_engine_rime_JniRimeNativeBridge_nativeDestroySession(
     jlong sessionId) {
   try {
     std::lock_guard<std::mutex> lock(g_rime_mutex);
-    if (!g_initialized || sessionId <= 0) {
+    if (!g_initialized) {
       return JNI_FALSE;
     }
-    const auto it = g_session_handles.find(sessionId);
-    if (it == g_session_handles.end()) {
+    const RimeSessionId sid = static_cast<RimeSessionId>(
+        g_session_handles.erase(static_cast<int64_t>(sessionId)));
+    if (sid == 0) {
       return JNI_FALSE;
     }
-    const RimeSessionId sid = it->second;
-    g_session_handles.erase(it);
     RimeApi* api = rime_get_api();
     if (api == nullptr || api->destroy_session == nullptr) {
       return JNI_FALSE;

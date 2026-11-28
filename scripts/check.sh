@@ -25,6 +25,25 @@ bash scripts/pii_check.sh
 bash scripts/license_check.sh
 python3 scripts/test_generate_rime_starter_assets.py
 
+CXX_TEST_BIN="$(command -v clang++ || command -v g++ || true)"
+if [[ -n "$CXX_TEST_BIN" ]]; then
+    echo "==> Running native JNI SessionHandleTable C++17 unit tests (${CXX_TEST_BIN})..."
+    (
+        cpp_tmp_dir="$(mktemp -d)"
+        trap 'rm -rf "$cpp_tmp_dir"' EXIT
+        "$CXX_TEST_BIN" -std=c++17 -Wall -Wextra -Werror \
+            -I"${REPO_ROOT}/native/rime/jni" \
+            "${REPO_ROOT}/native/rime/jni/session_handle_table_test.cc" \
+            -o "${cpp_tmp_dir}/session_handle_table_test"
+        "${cpp_tmp_dir}/session_handle_table_test"
+    )
+elif [[ "$MODE" == "--ci-fast" ]]; then
+    echo "ERROR: clang++ or g++ is required in --ci-fast mode for native JNI unit tests." >&2
+    exit 1
+else
+    echo "==> Notice: clang++/g++ not found; skipping native JNI SessionHandleTable C++17 unit tests."
+fi
+
 if command -v shellcheck >/dev/null 2>&1; then
     echo "==> Running shellcheck..."
     shellcheck -x -P SCRIPTDIR scripts/*.sh native/rime/*.sh .githooks/pre-commit

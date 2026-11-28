@@ -51,11 +51,17 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Lint native build scripts & check Option A license hygiene
+      - name: Lint native build scripts, run JNI handle-table unit tests & check Option A license hygiene
         run: |
           shellcheck -x -P SCRIPTDIR native/rime/build_android.sh scripts/fetch_rime_prebuilt.sh
           bash scripts/license_check.sh
           bash scripts/pii_check.sh --no-commits
+          CXX_BIN="$(command -v clang++ || command -v g++)"
+          "$CXX_BIN" -std=c++17 -Wall -Wextra -Werror \
+            -Inative/rime/jni \
+            native/rime/jni/session_handle_table_test.cc \
+            -o "${RUNNER_TEMP}/session_handle_table_test"
+          "${RUNNER_TEMP}/session_handle_table_test"
 
       - name: Install host build tools (ninja-build)
         run: |

@@ -26,9 +26,11 @@ class RimeInputEngineTest {
         var releaseCount: Int = 0
         var deployCount: Int = 0
         var nextSession: Long = 1L
+        var failNextCreateSession: Boolean = false
         val destroyedSessions = mutableListOf<Long>()
         val selectedSchemas = mutableListOf<String>()
         val setOptionsLog = mutableListOf<Pair<String, Boolean>>()
+        val lifecycleEvents = mutableListOf<String>()
 
         private var currentSchema: String = RimeEngineMetadata.SCHEMA_PINYIN_26
         private val options = mutableMapOf<String, Boolean>()
@@ -76,13 +78,24 @@ class RimeInputEngineTest {
 
         override fun deployWorkspace(): Boolean {
             deployCount++
+            lifecycleEvents.add("deploy")
             return !failDeploy
         }
 
-        override fun createSession(): Long = nextSession++
+        override fun createSession(): Long {
+            if (failNextCreateSession) {
+                failNextCreateSession = false
+                lifecycleEvents.add("create:0")
+                return 0L
+            }
+            val id = nextSession++
+            lifecycleEvents.add("create:$id")
+            return id
+        }
 
         override fun destroySession(sessionId: Long): Boolean {
             destroyedSessions.add(sessionId)
+            lifecycleEvents.add("destroy:$sessionId")
             return true
         }
 
@@ -198,6 +211,7 @@ class RimeInputEngineTest {
             if (schemaId == "unsupported_schema") return false
             currentSchema = schemaId
             selectedSchemas.add(schemaId)
+            lifecycleEvents.add("selectSchema:$sessionId:$schemaId")
             // Mirror librime behavior: switching schema resets per-schema switches until re-applied
             options[EngineOptions.TRADITIONALIZATION] = false
             clearComposition(sessionId)
@@ -509,7 +523,8 @@ class RimeInputEngineTest {
         assertTrue(engine.deployWorkspace())
 
         engine.close()
-        assertEquals(listOf(taggedSessionId), bridge.destroyedSessions)
+        // deployWorkspace destroyed taggedSessionId and created taggedSessionId + 1, which close() destroys
+        assertEquals(listOf(taggedSessionId, taggedSessionId + 1L), bridge.destroyedSessions)
         assertEquals(1, bridge.releaseCount)
 
         // Initial schema selection failure with negative tagged ID must destroySession(taggedId) & release runtime
@@ -561,5 +576,45 @@ class RimeInputEngineTest {
         assertEquals(1, failingDeployBridge.acquireCount)
         assertEquals(1, failingDeployBridge.releaseCount)
         assertTrue(failingDeployBridge.destroyedSessions.isEmpty())
+    }
+
+    @Test
+    fun deployWorkspaceDestroysOldSessionBeforeDeployAndRecreatesSessionAfterward() {
+        val bridge = FakeRimeNativeBridge()
+        val engine = createEngine(bridge)
+        bridge.lifecycleEvents.clear()
+
+        assertTrue(engine.deployWorkspace())
+        assertEquals(
+            listOf("destroy:1", "deploy", "create:2", "selectSchema:2:${RimeEngineMetadata.SCHEMA_PINYIN_26}"),
+            bridge.lifecycleEvents
+        )
+        typeChars(engine, "nihao")
+        assertEquals(KeyProcessResult.CommitText("你好"), engine.selectCandidate(0))
+        engine.close()
+        assertEquals(listOf(1L, 2L), bridge.destroyedSessions)
+
+        // When deploy returns false, engine still recreates a usable session and returns false
+        val failDeployBridge = FakeRimeNativeBridge(failDeploy = true)
+        val failDeployEngine = createEngine(
+            bridge = failDeployBridge,
+            paths = testPaths(assetsUpdated = false, withStagingDefaultYaml = true)
+        )
+        failDeployBridge.lifecycleEvents.clear()
+        assertFalse(failDeployEngine.deployWorkspace())
+        assertEquals(
+            listOf("destroy:1", "deploy", "create:2", "selectSchema:2:${RimeEngineMetadata.SCHEMA_PINYIN_26}"),
+            failDeployBridge.lifecycleEvents
+        )
+        failDeployEngine.close()
+
+        // When post-deploy createSession returns 0, snapshot resets cleanly and close() does not destroy 0L
+        val zeroRecreateBridge = FakeRimeNativeBridge()
+        val zeroRecreateEngine = createEngine(zeroRecreateBridge)
+        zeroRecreateBridge.failNextCreateSession = true
+        assertFalse(zeroRecreateEngine.deployWorkspace())
+        assertFalse(zeroRecreateEngine.state.value.isComposing)
+        zeroRecreateEngine.close()
+        assertEquals(listOf(1L), zeroRecreateBridge.destroyedSessions)
     }
 }

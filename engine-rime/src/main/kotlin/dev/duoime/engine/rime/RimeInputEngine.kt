@@ -70,7 +70,7 @@ public class RimeInputEngine internal constructor(
                     check(bridge.deployWorkspace()) { "Failed to deploy Rime starter workspace" }
                 }
                 createdSession = bridge.createSession()
-                check(createdSession != 0L) { "librime createSession returned 0" }
+                check(createdSession != 0L) { "librime createSession failed (returned 0)" }
                 sessionId = createdSession
                 check(applyLogicalSchemaLocked(logicalSchemaId)) {
                     "Failed to select initial Rime schema: $logicalSchemaId"
@@ -217,16 +217,23 @@ public class RimeInputEngine internal constructor(
     }
 
     /**
-     * Triggers a synchronous Rime workspace re-deploy (for M2-2 schema reload / user import).
+     * Triggers a synchronous Rime workspace re-deploy (for M2-2 schema reload / user import),
+     * destroying the active native session prior to deploy and recreating it cleanly afterward so
+     * no session handle remains bound to stale deployed tables.
      */
     public fun deployWorkspace(): Boolean = invokeNative {
         if (closed || sessionId == 0L) return@invokeNative false
         t9Coordinator.clear()
-        bridge.clearComposition(sessionId)
-        val ok = bridge.deployWorkspace()
-        applyLogicalSchemaLocked(logicalSchemaId)
+        val previousSession = sessionId
+        sessionId = 0L
+        runCatching { bridge.clearComposition(previousSession) }
+        runCatching { bridge.destroySession(previousSession) }
+        val deployed = bridge.deployWorkspace()
+        val recreated = bridge.createSession()
+        sessionId = recreated
+        val schemaOk = recreated != 0L && applyLogicalSchemaLocked(logicalSchemaId)
         publishSnapshotLocked()
-        ok
+        deployed && schemaOk
     }
 
     public override fun close(): Unit = invokeNative {
@@ -342,6 +349,10 @@ public class RimeInputEngine internal constructor(
     }
 
     private fun publishSnapshotLocked(preFetched: RimeNativeSnapshot? = null) {
+        if (sessionId == 0L) {
+            _state.value = EngineSnapshot.EMPTY
+            return
+        }
         if (logicalSchemaId == EngineSchemas.ENGLISH) {
             _state.value = EngineSnapshot(
                 mode = InputMode.ENGLISH,
