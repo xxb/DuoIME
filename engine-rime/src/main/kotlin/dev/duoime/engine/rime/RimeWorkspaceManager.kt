@@ -251,7 +251,6 @@ public object RimeWorkspaceManager {
      * `stagingDir` + writes `.deploy_pending`, deploys via [deployer], and rolls back + re-deploys
      * automatically on failure.
      */
-    @Suppress("TooGenericExceptionCaught")
     public fun commitStagedWorkspace(
         paths: RimeWorkspacePaths,
         staged: RimeStagingResult.Success,
@@ -261,19 +260,9 @@ public object RimeWorkspaceManager {
             ?: return RimeImportResult.Failure(RimeImportFailureReason.IO_ERROR, "Invalid userDir", rolledBack = false)
         val backupDir = File(workspaceRoot, ".import_backup_${System.nanoTime()}")
         return try {
-            preserveUserRuntimeState(paths.userDir, staged.stagedDir)
-            commitSwapAndDeploy(paths, staged.stagedDir, backupDir, staged, deployer)
-        } catch (err: Throwable) {
-            val rolledBack = if (backupDir.exists()) {
-                rollbackUserDirAndRedeploy(paths, backupDir, deployer, "rollback")
-            } else {
-                false
+            WorkspaceTxRecovery.withWorkspaceTransaction {
+                executeCommitTransaction(paths, staged, backupDir, deployer)
             }
-            RimeImportResult.Failure(
-                reason = RimeImportFailureReason.IO_ERROR,
-                detail = err.message ?: err::class.simpleName.orEmpty(),
-                rolledBack = rolledBack
-            )
         } finally {
             if (staged.stagedDir.exists()) {
                 staged.stagedDir.deleteRecursively()
@@ -281,12 +270,33 @@ public object RimeWorkspaceManager {
         }
     }
 
+    @Suppress("TooGenericExceptionCaught")
+    private fun executeCommitTransaction(
+        paths: RimeWorkspacePaths,
+        staged: RimeStagingResult.Success,
+        backupDir: File,
+        deployer: RimeWorkspaceDeployer
+    ): RimeImportResult = try {
+        preserveUserRuntimeState(paths.userDir, staged.stagedDir)
+        commitSwapAndDeploy(paths, staged.stagedDir, backupDir, staged, deployer)
+    } catch (err: Throwable) {
+        val rolledBack = if (backupDir.exists()) {
+            rollbackUserDirAndRedeploy(paths, backupDir, deployer, "rollback")
+        } else {
+            false
+        }
+        RimeImportResult.Failure(
+            reason = RimeImportFailureReason.IO_ERROR,
+            detail = err.message ?: err::class.simpleName.orEmpty(),
+            rolledBack = rolledBack
+        )
+    }
+
     /**
      * Resets `paths.userDir` back to a clean starter workspace (preserving a fresh minimal
      * `user.yaml`), wipes + recreates `stagingDir` + `.deploy_pending`, and re-deploys via
      * [deployer] with automatic rollback if deploy fails.
      */
-    @Suppress("TooGenericExceptionCaught")
     public fun resetToStarterWorkspace(paths: RimeWorkspacePaths, deployer: RimeWorkspaceDeployer): RimeImportResult {
         val workspaceRoot = paths.userDir.parentFile
             ?: return RimeImportResult.Failure(RimeImportFailureReason.IO_ERROR, "Invalid userDir", rolledBack = false)
@@ -295,39 +305,9 @@ public object RimeWorkspaceManager {
         val backupDir = File(workspaceRoot, ".reset_backup_$token")
 
         return try {
-            freshDir.mkdirs()
-            RimeWorkspaceInstaller.ensureMinimalUserYaml(freshDir)
-            swapIntoUserDir(paths.userDir, freshDir, backupDir)
-            RimeWorkspaceInstaller.prepareStagingForRedeploy(paths, "reset")
-            val deployed = runCatching { deployer.deployAndListSchemas() }.getOrNull()
-            if (deployed.isNullOrEmpty()) {
-                val rolledBack = rollbackUserDirAndRedeploy(paths, backupDir, deployer, "reset_rollback")
-                RimeImportResult.Failure(
-                    reason = RimeImportFailureReason.DEPLOY_FAILED,
-                    detail = "Starter workspace re-deploy failed",
-                    rolledBack = rolledBack
-                )
-            } else {
-                backupDir.deleteRecursively()
-                deleteTxMarker(workspaceRoot)
-                RimeImportResult.Success(
-                    schemas = deployed,
-                    importedCustomSchemaIds = emptyList(),
-                    fileCount = 0,
-                    totalBytes = 0L
-                )
+            WorkspaceTxRecovery.withWorkspaceTransaction {
+                executeResetTransaction(paths, workspaceRoot, freshDir, backupDir, deployer)
             }
-        } catch (err: Throwable) {
-            val rolledBack = if (backupDir.exists()) {
-                rollbackUserDirAndRedeploy(paths, backupDir, deployer, "reset_rollback")
-            } else {
-                false
-            }
-            RimeImportResult.Failure(
-                reason = RimeImportFailureReason.IO_ERROR,
-                detail = err.message ?: err::class.simpleName.orEmpty(),
-                rolledBack = rolledBack
-            )
         } finally {
             if (freshDir.exists()) {
                 freshDir.deleteRecursively()
@@ -335,14 +315,57 @@ public object RimeWorkspaceManager {
         }
     }
 
+    @Suppress("TooGenericExceptionCaught")
+    private fun executeResetTransaction(
+        paths: RimeWorkspacePaths,
+        workspaceRoot: File,
+        freshDir: File,
+        backupDir: File,
+        deployer: RimeWorkspaceDeployer
+    ): RimeImportResult = try {
+        freshDir.mkdirs()
+        RimeWorkspaceInstaller.ensureMinimalUserYaml(freshDir)
+        swapIntoUserDir(paths.userDir, freshDir, backupDir)
+        RimeWorkspaceInstaller.prepareStagingForRedeploy(paths, "reset")
+        val deployed = runCatching { deployer.deployAndListSchemas() }.getOrNull()
+        if (deployed.isNullOrEmpty()) {
+            val rolledBack = rollbackUserDirAndRedeploy(paths, backupDir, deployer, "reset_rollback")
+            RimeImportResult.Failure(
+                reason = RimeImportFailureReason.DEPLOY_FAILED,
+                detail = "Starter workspace re-deploy failed",
+                rolledBack = rolledBack
+            )
+        } else {
+            commitAndCleanupBackup(workspaceRoot, backupDir)
+            RimeImportResult.Success(
+                schemas = deployed,
+                importedCustomSchemaIds = emptyList(),
+                fileCount = 0,
+                totalBytes = 0L
+            )
+        }
+    } catch (err: Throwable) {
+        val rolledBack = if (backupDir.exists()) {
+            rollbackUserDirAndRedeploy(paths, backupDir, deployer, "reset_rollback")
+        } else {
+            false
+        }
+        RimeImportResult.Failure(
+            reason = RimeImportFailureReason.IO_ERROR,
+            detail = err.message ?: err::class.simpleName.orEmpty(),
+            rolledBack = rolledBack
+        )
+    }
+
     /**
      * Prepares `stagingDir` for a forced recompile (wiping `userDir/build` + writing
      * `.deploy_pending`) and invokes [deployer].
      */
-    public fun redeployWorkspace(paths: RimeWorkspacePaths, deployer: RimeWorkspaceDeployer): List<RimeSchemaInfo>? {
-        RimeWorkspaceInstaller.prepareStagingForRedeploy(paths, "manual_redeploy")
-        return deployer.deployAndListSchemas()?.takeIf { it.isNotEmpty() }
-    }
+    public fun redeployWorkspace(paths: RimeWorkspacePaths, deployer: RimeWorkspaceDeployer): List<RimeSchemaInfo>? =
+        WorkspaceTxRecovery.withWorkspaceLock {
+            RimeWorkspaceInstaller.prepareStagingForRedeploy(paths, "manual_redeploy")
+            deployer.deployAndListSchemas()?.takeIf { it.isNotEmpty() }
+        }
 
     /**
      * Fast pure-JVM disk scan discovering installed schemas from `sharedDir` and `userDir`
@@ -401,6 +424,8 @@ public object RimeWorkspaceManager {
         }
     }
 
+    internal fun <T> withWorkspaceLock(block: () -> T): T = WorkspaceTxRecovery.withWorkspaceLock(block)
+
     /**
      * Checks for a `.workspace_tx_in_progress` marker left behind if a previous import or reset
      * crashed mid-deploy (for example, native `SIGSEGV` or process kill). When a valid backup
@@ -437,8 +462,7 @@ public object RimeWorkspaceManager {
             )
         }
 
-        backupDir.deleteRecursively()
-        deleteTxMarker(paths.userDir.parentFile)
+        commitAndCleanupBackup(paths.userDir.parentFile, backupDir)
         val finalSchemas = deployedSchemas!!
         val deployedIds = finalSchemas.map { it.id }.toSet()
         val activeCustomIds = staged.discoveredCustomSchemaIds.filter { it in deployedIds }
@@ -491,7 +515,7 @@ public object RimeWorkspaceManager {
             if (!userDir.exists() && backupDir.exists()) {
                 val restored = runCatching { moveDirectory(backupDir, userDir) }.isSuccess
                 if (restored) {
-                    deleteTxMarker(workspaceRoot)
+                    WorkspaceTxRecovery.clearMarkerVerified(workspaceRoot)
                 }
             }
             throw err
@@ -518,14 +542,18 @@ public object RimeWorkspaceManager {
             true
         }.getOrDefault(false)
         if (restored) {
-            deleteTxMarker(paths.userDir.parentFile)
+            WorkspaceTxRecovery.clearMarkerVerified(paths.userDir.parentFile)
             runCatching { deployer.deployAndListSchemas() }
         }
         return restored
     }
 
-    private fun deleteTxMarker(workspaceRoot: File?) {
-        WorkspaceTxRecovery.deleteMarker(workspaceRoot)
+    private fun commitAndCleanupBackup(workspaceRoot: File?, backupDir: File) {
+        // Commit on disk FIRST (clear & verify marker removal) before destructively deleting backupDir
+        // so a crash mid-cleanup can never cause next startup to restore a half-deleted backup.
+        if (WorkspaceTxRecovery.clearMarkerVerified(workspaceRoot) && backupDir.exists()) {
+            backupDir.deleteRecursively()
+        }
     }
 
     private fun moveDirectory(source: File, target: File) {
@@ -733,18 +761,37 @@ private object WorkspaceTxRecovery {
         ".saf_stage_"
     )
 
+    // Leaf lock strictly below KeyboardController actor / operationMutex / RimeNativeExecutor.
+    // Serializes startup recovery & starter installation against active import/reset/redeploy
+    // disk mutations without ever calling back into native executor or coroutine locks.
+    private val txLock = Any()
+    private var activeTransactions: Int = 0
+
+    inline fun <T> withWorkspaceLock(block: () -> T): T = synchronized(txLock) {
+        block()
+    }
+
+    inline fun <T> withWorkspaceTransaction(block: () -> T): T = synchronized(txLock) {
+        activeTransactions++
+        try {
+            block()
+        } finally {
+            activeTransactions--
+        }
+    }
+
     fun writeMarker(workspaceRoot: File?, backupDirName: String) {
         if (workspaceRoot == null) return
         File(workspaceRoot, RimeWorkspaceManager.WORKSPACE_TX_MARKER_FILE)
             .writeText("$backupDirName\n", Charsets.UTF_8)
     }
 
-    fun deleteMarker(workspaceRoot: File?) {
-        if (workspaceRoot == null) return
+    fun clearMarkerVerified(workspaceRoot: File?): Boolean {
+        if (workspaceRoot == null) return true
         val marker = File(workspaceRoot, RimeWorkspaceManager.WORKSPACE_TX_MARKER_FILE)
-        if (marker.exists()) {
-            marker.deleteRecursively()
-        }
+        if (!marker.exists()) return true
+        marker.deleteRecursively()
+        return !marker.exists()
     }
 
     @Suppress("TooGenericExceptionCaught")
@@ -753,11 +800,12 @@ private object WorkspaceTxRecovery {
         userDir: File,
         stagingDir: File,
         moveDirectory: (File, File) -> Unit
-    ): Boolean {
+    ): Boolean = synchronized(txLock) {
+        if (activeTransactions > 0) return false
         val marker = File(workspaceRoot, RimeWorkspaceManager.WORKSPACE_TX_MARKER_FILE)
         if (!marker.exists()) return false
 
-        return try {
+        try {
             val backupName = runCatching { marker.readText(Charsets.UTF_8).trim() }.getOrNull().orEmpty()
             val backupDir = resolveValidatedBackupDir(workspaceRoot, backupName) ?: return false
             if (userDir.exists()) {

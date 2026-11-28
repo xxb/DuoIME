@@ -5,6 +5,10 @@ package dev.duoime.engine.rime
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -617,5 +621,103 @@ class RimeWorkspaceManagerTest {
             assertFalse("Marker '$payload' must still be deleted to avoid loops", marker.exists())
             assertTrue("userDir must remain untouched for '$payload'", sentinelFile.isFile)
         }
+
+        // Post-commit crash mid-backup cleanup: marker already cleared, half-deleted backup left behind.
+        // Startup recovery must NOT restore the incomplete backup over the healthy deployed userDir.
+        val halfDeletedBackup = File(workspaceRoot, ".import_backup_3003").apply { mkdirs() }
+        File(halfDeletedBackup, "partial.yaml").writeText("incomplete: true\n")
+        assertFalse(marker.exists())
+        assertFalse(
+            RimeWorkspaceManager.recoverInterruptedTransactionIfNeeded(
+                workspaceRoot = workspaceRoot,
+                userDir = paths.userDir,
+                stagingDir = paths.stagingDir
+            )
+        )
+        assertTrue("Healthy userDir must stay untouched when marker is already cleared", sentinelFile.isFile)
+        assertFalse(File(paths.userDir, "partial.yaml").exists())
+    }
+
+    @Test
+    fun recoverySerializesWithConcurrentAndReentrantActiveTransactions() {
+        val paths = createWorkspace()
+        val workspaceRoot = paths.userDir.parentFile!!
+        val marker = File(workspaceRoot, RimeWorkspaceManager.WORKSPACE_TX_MARKER_FILE)
+        val enteredDeploy = CountDownLatch(1)
+        val releaseDeploy = CountDownLatch(1)
+        val reentrantRecoveryResult = AtomicBoolean(true)
+        val txResultRef = AtomicReference<RimeImportResult?>(null)
+        val txErrorRef = AtomicReference<Throwable?>(null)
+
+        val txThread = Thread {
+            try {
+                txResultRef.set(
+                    RimeWorkspaceManager.importEntries(
+                        paths,
+                        sequenceOf(entry("live_pack.schema.yaml", sampleSchemaYaml("live_pack", "Live Pack")))
+                    ) {
+                        // Same-thread reentrant recovery during live deploy must be a no-op
+                        reentrantRecoveryResult.set(
+                            RimeWorkspaceManager.recoverInterruptedTransactionIfNeeded(
+                                workspaceRoot = workspaceRoot,
+                                userDir = paths.userDir,
+                                stagingDir = paths.stagingDir
+                            )
+                        )
+                        assertTrue("Marker must stay present during live deploy", marker.isFile)
+                        enteredDeploy.countDown()
+                        assertTrue(releaseDeploy.await(5, TimeUnit.SECONDS))
+                        listOf(
+                            RimeSchemaInfo("duoime_pinyin_26", "DuoIME 26键拼音", isBuiltIn = true),
+                            RimeSchemaInfo("live_pack", "Live Pack", isBuiltIn = false)
+                        )
+                    }
+                )
+            } catch (err: Throwable) {
+                txErrorRef.set(err)
+            }
+        }
+        txThread.start()
+        assertTrue("Transaction should reach deploy hook", enteredDeploy.await(5, TimeUnit.SECONDS))
+        assertFalse("Reentrant recovery during active tx must return false", reentrantRecoveryResult.get())
+
+        // Concurrent recovery from another thread (e.g., IME startup) must block until active tx completes
+        val concurrentDone = CountDownLatch(1)
+        val concurrentRecovered = AtomicBoolean(true)
+        val recoveryThread = Thread {
+            concurrentRecovered.set(
+                RimeWorkspaceManager.recoverInterruptedTransactionIfNeeded(
+                    workspaceRoot = workspaceRoot,
+                    userDir = paths.userDir,
+                    stagingDir = paths.stagingDir
+                )
+            )
+            concurrentDone.countDown()
+        }
+        recoveryThread.start()
+
+        assertFalse(
+            "Concurrent recovery must wait on workspace lock while active deploy holds it",
+            concurrentDone.await(150, TimeUnit.MILLISECONDS)
+        )
+        assertTrue("Active transaction marker must still be intact while blocked", marker.isFile)
+        assertTrue(
+            "New staged schema must still be in userDir during deploy",
+            File(paths.userDir, "live_pack.schema.yaml").isFile
+        )
+
+        releaseDeploy.countDown()
+        assertTrue(
+            "Recovery thread should finish once active tx releases lock",
+            concurrentDone.await(5, TimeUnit.SECONDS)
+        )
+        txThread.join(5_000)
+        recoveryThread.join(5_000)
+
+        assertEquals(null, txErrorRef.get())
+        assertTrue("Expected Success, got ${txResultRef.get()}", txResultRef.get() is RimeImportResult.Success)
+        assertFalse("Concurrent recovery after committed tx must return false", concurrentRecovered.get())
+        assertFalse("Committed tx must clear transaction marker", marker.exists())
+        assertTrue("Imported schema must survive intact", File(paths.userDir, "live_pack.schema.yaml").isFile)
     }
 }

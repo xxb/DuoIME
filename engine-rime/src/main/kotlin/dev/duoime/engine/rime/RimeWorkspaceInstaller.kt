@@ -71,58 +71,59 @@ public object RimeWorkspaceInstaller {
         return installFromSource(source = source, workspaceRoot = workspaceRoot)
     }
 
-    internal fun installFromSource(source: RimeAssetSource, workspaceRoot: File): RimeWorkspacePaths {
-        val sharedDir = File(workspaceRoot, "shared")
-        val userDir = File(workspaceRoot, "user")
-        val prebuiltDir = File(sharedDir, "build")
-        val stagingDir = File(userDir, "build")
-        val recoveredTx = RimeWorkspaceManager.recoverInterruptedTransactionIfNeeded(
-            workspaceRoot = workspaceRoot,
-            userDir = userDir,
-            stagingDir = stagingDir
-        )
-        sharedDir.mkdirs()
-        userDir.mkdirs()
-        prebuiltDir.mkdirs()
-        stagingDir.mkdirs()
+    internal fun installFromSource(source: RimeAssetSource, workspaceRoot: File): RimeWorkspacePaths =
+        RimeWorkspaceManager.withWorkspaceLock {
+            val sharedDir = File(workspaceRoot, "shared")
+            val userDir = File(workspaceRoot, "user")
+            val prebuiltDir = File(sharedDir, "build")
+            val stagingDir = File(userDir, "build")
+            val recoveredTx = RimeWorkspaceManager.recoverInterruptedTransactionIfNeeded(
+                workspaceRoot = workspaceRoot,
+                userDir = userDir,
+                stagingDir = stagingDir
+            )
+            sharedDir.mkdirs()
+            userDir.mkdirs()
+            prebuiltDir.mkdirs()
+            stagingDir.mkdirs()
 
-        val assetFiles = collectRelativeFiles(source, "")
-        require(assetFiles.isNotEmpty()) {
-            "No bundled Rime starter assets found under '${RimeEngineMetadata.ASSET_ROOT_PATH}'"
+            val assetFiles = collectRelativeFiles(source, "")
+            require(assetFiles.isNotEmpty()) {
+                "No bundled Rime starter assets found under '${RimeEngineMetadata.ASSET_ROOT_PATH}'"
+            }
+
+            val expectedFingerprint = computeFingerprint(source, assetFiles)
+            val fingerprintFile = File(sharedDir, FINGERPRINT_FILE)
+            val isUpToDate = fingerprintFile.isFile &&
+                fingerprintFile.readText(Charsets.UTF_8).trim() == expectedFingerprint &&
+                File(sharedDir, DEFAULT_YAML_FILE).isFile &&
+                File(sharedDir, STARTER_DICT_FILE).isFile
+
+            val deployPendingFile = File(stagingDir, DEPLOY_PENDING_FILE)
+            if (!isUpToDate) {
+                extractAssetFiles(source, sharedDir, assetFiles)
+                fingerprintFile.writeText("$expectedFingerprint\n", Charsets.UTF_8)
+                deployPendingFile.writeText("$expectedFingerprint\n", Charsets.UTF_8)
+            }
+
+            val userYaml = File(userDir, USER_YAML_FILE)
+            if (!userYaml.exists()) {
+                userYaml.writeText("# DuoIME Rime user state\nvar: {}\n", Charsets.UTF_8)
+            }
+
+            val needsDeploy = !isUpToDate ||
+                recoveredTx ||
+                deployPendingFile.isFile ||
+                !File(stagingDir, DEFAULT_YAML_FILE).isFile
+
+            RimeWorkspacePaths(
+                sharedDir = sharedDir,
+                userDir = userDir,
+                prebuiltDir = prebuiltDir,
+                stagingDir = stagingDir,
+                assetsUpdated = needsDeploy
+            )
         }
-
-        val expectedFingerprint = computeFingerprint(source, assetFiles)
-        val fingerprintFile = File(sharedDir, FINGERPRINT_FILE)
-        val isUpToDate = fingerprintFile.isFile &&
-            fingerprintFile.readText(Charsets.UTF_8).trim() == expectedFingerprint &&
-            File(sharedDir, DEFAULT_YAML_FILE).isFile &&
-            File(sharedDir, STARTER_DICT_FILE).isFile
-
-        val deployPendingFile = File(stagingDir, DEPLOY_PENDING_FILE)
-        if (!isUpToDate) {
-            extractAssetFiles(source, sharedDir, assetFiles)
-            fingerprintFile.writeText("$expectedFingerprint\n", Charsets.UTF_8)
-            deployPendingFile.writeText("$expectedFingerprint\n", Charsets.UTF_8)
-        }
-
-        val userYaml = File(userDir, USER_YAML_FILE)
-        if (!userYaml.exists()) {
-            userYaml.writeText("# DuoIME Rime user state\nvar: {}\n", Charsets.UTF_8)
-        }
-
-        val needsDeploy = !isUpToDate ||
-            recoveredTx ||
-            deployPendingFile.isFile ||
-            !File(stagingDir, DEFAULT_YAML_FILE).isFile
-
-        return RimeWorkspacePaths(
-            sharedDir = sharedDir,
-            userDir = userDir,
-            prebuiltDir = prebuiltDir,
-            stagingDir = stagingDir,
-            assetsUpdated = needsDeploy
-        )
-    }
 
     internal fun markWorkspaceDeployed(paths: RimeWorkspacePaths) {
         val pendingFile = File(paths.stagingDir, DEPLOY_PENDING_FILE)

@@ -6,6 +6,9 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
 import java.nio.file.Files
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -339,6 +342,66 @@ class RimeBridgeAndWorkspaceTest {
         File(recovered.stagingDir, "default.yaml").writeText("deployed: true\n")
         RimeWorkspaceInstaller.markWorkspaceDeployed(recovered)
         assertFalse(RimeWorkspaceInstaller.installFromSource(source, root).assetsUpdated)
+    }
+
+    @Test
+    fun concurrentInstallFromSourceWaitsForActiveResetTransactionWithoutCorruptingIt() {
+        val root = Files.createTempDirectory("duoime-rime-concurrent-install-test").toFile()
+        root.deleteOnExit()
+
+        val source = MemoryAssetSource(
+            mapOf(
+                "default.yaml" to "config_version: '1.0'\n".toByteArray(),
+                "duoime_pinyin.dict.yaml" to "name: duoime_pinyin\n".toByteArray(),
+                "starter_manifest.json" to "{\"schema_version\":1,\"v\":1}\n".toByteArray()
+            )
+        )
+        val paths = RimeWorkspaceInstaller.installFromSource(source, root)
+        File(paths.userDir, "custom_before_reset.yaml").writeText("old: true\n")
+        File(paths.stagingDir, "default.yaml").writeText("deployed: true\n")
+        RimeWorkspaceInstaller.markWorkspaceDeployed(paths)
+
+        val enteredDeploy = CountDownLatch(1)
+        val releaseDeploy = CountDownLatch(1)
+        val resetResult = AtomicReference<RimeImportResult?>(null)
+        val resetThread = Thread {
+            resetResult.set(
+                RimeWorkspaceManager.resetToStarterWorkspace(paths) {
+                    enteredDeploy.countDown()
+                    assertTrue(releaseDeploy.await(5, TimeUnit.SECONDS))
+                    File(paths.stagingDir, "default.yaml").writeText("deployed: true\n")
+                    RimeWorkspaceInstaller.markWorkspaceDeployed(paths)
+                    listOf(RimeSchemaInfo("duoime_pinyin_26", "DuoIME 26键拼音", isBuiltIn = true))
+                }
+            )
+        }
+        resetThread.start()
+        assertTrue(enteredDeploy.await(5, TimeUnit.SECONDS))
+
+        val installDone = CountDownLatch(1)
+        val installedPaths = AtomicReference<RimeWorkspacePaths?>(null)
+        val installThread = Thread {
+            installedPaths.set(RimeWorkspaceInstaller.installFromSource(source, root))
+            installDone.countDown()
+        }
+        installThread.start()
+
+        assertFalse(
+            "installFromSource must serialize behind active reset transaction",
+            installDone.await(150, TimeUnit.MILLISECONDS)
+        )
+        releaseDeploy.countDown()
+        assertTrue(installDone.await(5, TimeUnit.SECONDS))
+        resetThread.join(5_000)
+        installThread.join(5_000)
+
+        assertTrue("Expected Reset Success, got ${resetResult.get()}", resetResult.get() is RimeImportResult.Success)
+        assertFalse(
+            "Reset must not be undone by concurrent installFromSource",
+            File(paths.userDir, "custom_before_reset.yaml").exists()
+        )
+        assertFalse(File(root, RimeWorkspaceManager.WORKSPACE_TX_MARKER_FILE).exists())
+        assertFalse(installedPaths.get()!!.assetsUpdated)
     }
 
     @Test
