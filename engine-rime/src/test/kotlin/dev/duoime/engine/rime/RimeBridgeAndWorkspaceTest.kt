@@ -336,5 +336,24 @@ class RimeBridgeAndWorkspaceTest {
         assertEquals(2, raw.initCount)
         assertEquals(2, raw.finalizeCount)
         assertEquals(0, bridge.activeInstanceCount)
+
+        // When a live session already holds refcount > 0, acquireExclusiveRuntime rejects without running block
+        assertTrue(bridge.acquireRuntime(paths, "0.1.0"))
+        assertEquals(1, bridge.activeInstanceCount)
+        var blockExecuted = false
+        val busyErr = runCatching {
+            RimeNativeExecutor.runOfflineTransaction<Unit>(
+                bridge = bridge,
+                paths = paths,
+                distributionVersion = "0.1.0"
+            ) { _, _ ->
+                blockExecuted = true
+            }
+        }.exceptionOrNull()
+        assertTrue("Expected RimeWorkspaceBusyException, got $busyErr", busyErr is RimeWorkspaceBusyException)
+        assertFalse("Offline block must NEVER execute while live runtime is active", blockExecuted)
+        assertEquals("Refcount must remain unchanged at 1", 1, bridge.activeInstanceCount)
+        bridge.releaseRuntime()
+        assertEquals(0, bridge.activeInstanceCount)
     }
 }

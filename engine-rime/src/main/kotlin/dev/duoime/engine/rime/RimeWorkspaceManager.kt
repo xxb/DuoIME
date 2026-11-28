@@ -256,7 +256,7 @@ public object RimeWorkspaceManager {
             ?: return RimeImportResult.Failure(RimeImportFailureReason.IO_ERROR, "Invalid userDir", rolledBack = false)
         val backupDir = File(workspaceRoot, ".import_backup_${System.nanoTime()}")
         return try {
-            preserveOrInitUserYaml(paths.userDir, staged.stagedDir)
+            preserveUserRuntimeState(paths.userDir, staged.stagedDir)
             commitSwapAndDeploy(paths, staged.stagedDir, backupDir, staged, deployer)
         } catch (err: Throwable) {
             val rolledBack = if (backupDir.exists()) {
@@ -511,14 +511,26 @@ public object RimeWorkspaceManager {
         source.deleteRecursively()
     }
 
-    private fun preserveOrInitUserYaml(existingUserDir: File, stageDir: File) {
+    private fun preserveUserRuntimeState(existingUserDir: File, stageDir: File) {
         val stagedUserYaml = File(stageDir, USER_YAML_FILE)
-        if (stagedUserYaml.isFile) return
-        val existingUserYaml = File(existingUserDir, USER_YAML_FILE)
-        if (existingUserYaml.isFile) {
-            existingUserYaml.copyTo(stagedUserYaml, overwrite = true)
-        } else {
-            RimeWorkspaceInstaller.ensureMinimalUserYaml(stageDir)
+        if (!stagedUserYaml.isFile) {
+            val existingUserYaml = File(existingUserDir, USER_YAML_FILE)
+            if (existingUserYaml.isFile) {
+                existingUserYaml.copyTo(stagedUserYaml, overwrite = true)
+            } else {
+                RimeWorkspaceInstaller.ensureMinimalUserYaml(stageDir)
+            }
+        }
+        val existingEntries = existingUserDir.listFiles().orEmpty()
+        for (child in existingEntries) {
+            val lower = child.name.lowercase()
+            val isUserDb = (child.isDirectory && lower.endsWith(".userdb")) ||
+                (child.isFile && lower.endsWith(".userdb.txt"))
+            if (!isUserDb) continue
+            val target = File(stageDir, child.name)
+            if (!target.exists()) {
+                child.copyRecursively(target, overwrite = false)
+            }
         }
     }
 

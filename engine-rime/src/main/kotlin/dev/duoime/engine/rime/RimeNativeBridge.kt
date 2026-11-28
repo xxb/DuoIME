@@ -29,11 +29,20 @@ internal data class RimeNativeSnapshot(
 )
 
 /**
+ * Thrown by [RimeNativeExecutor.runOfflineTransaction] when a live `RimeInputEngine` already holds
+ * the native runtime, preventing unsynchronized disk mutations while a session is active.
+ */
+public class RimeWorkspaceBusyException(message: String) : IllegalStateException(message)
+
+/**
  * Pure-JVM seam over the native `librime` bridge so `:engine-rime` unit tests run cleanly on JVM
  * without Android NDK or `.so` loading.
  */
 internal interface RimeNativeBridge {
     fun acquireRuntime(paths: RimeWorkspacePaths, distributionVersion: String): Boolean
+
+    fun acquireExclusiveRuntime(paths: RimeWorkspacePaths, distributionVersion: String): Boolean =
+        acquireRuntime(paths, distributionVersion)
 
     fun releaseRuntime()
 
@@ -159,6 +168,12 @@ internal class RefCountedRimeBridge(
             true
         }
     }
+
+    override fun acquireExclusiveRuntime(paths: RimeWorkspacePaths, distributionVersion: String): Boolean =
+        synchronized(lock) {
+            if (activeInstances != 0) return false
+            acquireRuntime(paths, distributionVersion)
+        }
 
     override fun releaseRuntime() {
         synchronized(lock) {
@@ -336,8 +351,10 @@ public object RimeNativeExecutor {
         distributionVersion: String,
         block: (RimeWorkspacePaths, RimeWorkspaceDeployer) -> T
     ): T = runBlocking {
-        check(bridge.acquireRuntime(paths, distributionVersion)) {
-            "Failed to initialize librime runtime for offline workspace transaction"
+        if (!bridge.acquireExclusiveRuntime(paths, distributionVersion)) {
+            throw RimeWorkspaceBusyException(
+                "Cannot run offline Rime workspace transaction while an active runtime session exists"
+            )
         }
         try {
             val deployer = RimeWorkspaceDeployer {

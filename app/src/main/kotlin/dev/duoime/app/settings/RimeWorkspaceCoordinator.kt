@@ -12,6 +12,7 @@ import dev.duoime.engine.rime.RimeInputEngine
 import dev.duoime.engine.rime.RimeNativeExecutor
 import dev.duoime.engine.rime.RimeSchemaInfo
 import dev.duoime.engine.rime.RimeStagingResult
+import dev.duoime.engine.rime.RimeWorkspaceBusyException
 import dev.duoime.engine.rime.RimeWorkspaceDeployer
 import dev.duoime.engine.rime.RimeWorkspaceInstaller
 import dev.duoime.engine.rime.RimeWorkspaceManager
@@ -371,31 +372,46 @@ internal object RimeWorkspaceCoordinator {
         }
 
         override suspend fun <T> runTransaction(block: (RimeWorkspacePaths, RimeWorkspaceDeployer) -> T): T {
-            val controller = activeControllerRef.get()
-            if (controller != null) {
-                val liveAttempt = try {
-                    controller.withActiveEngine { activeEngine ->
-                        if (activeEngine is RimeInputEngine) {
-                            LiveAttempt.Ran(activeEngine.runWorkspaceTransaction(block))
-                        } else {
-                            LiveAttempt.NotRime
-                        }
-                    }
-                } catch (cancelled: CancellationException) {
-                    if (!currentCoroutineContext().isActive) throw cancelled
-                    LiveAttempt.NotRime
+            val liveFirst = tryRunOnLiveController(block)
+            if (liveFirst is LiveAttempt.Ran) {
+                @Suppress("UNCHECKED_CAST")
+                return liveFirst.value as T
+            }
+            return try {
+                withContext(Dispatchers.IO) {
+                    RimeNativeExecutor.runOfflineTransaction(
+                        context = appContext,
+                        distributionVersion = BuildConfig.VERSION_NAME,
+                        block = block
+                    )
                 }
-                if (liveAttempt is LiveAttempt.Ran) {
+            } catch (busy: RimeWorkspaceBusyException) {
+                // Live RimeInputEngine attached while switching from offline path -> retry through live actor
+                val liveRetry = tryRunOnLiveController(block)
+                if (liveRetry is LiveAttempt.Ran) {
                     @Suppress("UNCHECKED_CAST")
-                    return liveAttempt.value as T
+                    liveRetry.value as T
+                } else {
+                    throw busy
                 }
             }
-            return withContext(Dispatchers.IO) {
-                RimeNativeExecutor.runOfflineTransaction(
-                    context = appContext,
-                    distributionVersion = BuildConfig.VERSION_NAME,
-                    block = block
-                )
+        }
+
+        private suspend fun <T> tryRunOnLiveController(
+            block: (RimeWorkspacePaths, RimeWorkspaceDeployer) -> T
+        ): LiveAttempt {
+            val controller = activeControllerRef.get() ?: return LiveAttempt.NotRime
+            return try {
+                controller.withActiveEngine { activeEngine ->
+                    if (activeEngine is RimeInputEngine) {
+                        LiveAttempt.Ran(activeEngine.runWorkspaceTransaction(block))
+                    } else {
+                        LiveAttempt.NotRime
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                if (!currentCoroutineContext().isActive) throw cancelled
+                LiveAttempt.NotRime
             }
         }
 

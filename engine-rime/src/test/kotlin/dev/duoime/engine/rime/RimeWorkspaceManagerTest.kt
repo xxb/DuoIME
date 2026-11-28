@@ -438,5 +438,43 @@ class RimeWorkspaceManagerTest {
             tempFolder.newFolder("protected_incognito_stage")
         )
         assertEquals(RimeImportFailureReason.UNSAFE_PATH, (protectedPatch as RimeStagingResult.Failure).reason)
+
+        // Plain scalars containing embedded quotes (e.g. "Press ' to separate syllables" or embedded ") are valid YAML
+        val plainScalarWithQuotes = """
+            schema:
+              schema_id: plain_quotes
+              name: Plain Quote Schema
+              description: Press ' to separate syllables and "space" to commit
+              note: Unquoted trailing " mark inside plain scalar
+        """.trimIndent() + "\n"
+        val plainQuotesStaged = RimeWorkspaceManager.stageEntries(
+            sequenceOf(entry("plain_quotes.schema.yaml", plainScalarWithQuotes)),
+            tempFolder.newFolder("plain_quotes_stage")
+        )
+        assertTrue(
+            "Expected plain scalar with embedded quotes to pass, got $plainQuotesStaged",
+            plainQuotesStaged is RimeStagingResult.Success
+        )
+    }
+
+    @Test
+    fun importPreservesExistingUserDbLearningDirectoriesAndSnapshotFiles() {
+        val paths = createWorkspace()
+        val userDbDir = File(paths.userDir, "duoime_pinyin.userdb").apply { mkdirs() }
+        File(userDbDir, "CURRENT").writeText("MANIFEST-000001\n")
+        File(paths.userDir, "duoime_pinyin.userdb.txt").writeText("# Rime user dict snapshot\n你好\tni hao\t5\n")
+
+        val result = RimeWorkspaceManager.importEntries(
+            paths,
+            sequenceOf(entry("rime_ice.schema.yaml", sampleSchemaYaml("rime_ice", "雾凇拼音")))
+        ) {
+            listOf(
+                RimeSchemaInfo("duoime_pinyin_26", "DuoIME 26键拼音", isBuiltIn = true),
+                RimeSchemaInfo("rime_ice", "雾凇拼音", isBuiltIn = false)
+            )
+        }
+        assertTrue("Expected Success, got $result", result is RimeImportResult.Success)
+        assertEquals("MANIFEST-000001\n", File(paths.userDir, "duoime_pinyin.userdb/CURRENT").readText())
+        assertTrue(File(paths.userDir, "duoime_pinyin.userdb.txt").readText().contains("你好"))
     }
 }

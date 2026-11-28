@@ -345,6 +345,7 @@ internal object RimeYamlOverlay {
         var square = startSquare
         var curly = startCurly
         var quote = startQuote
+        var canStartQuote = startQuote == null
         var sawMappingKey = false
         var effectiveEnd = text.length
 
@@ -363,7 +364,12 @@ internal object RimeYamlOverlay {
                 }
                 if (ch == quote) {
                     quote = null
+                    canStartQuote = false
                 }
+                i++
+                continue
+            }
+            if (ch.isWhitespace()) {
                 i++
                 continue
             }
@@ -371,27 +377,44 @@ internal object RimeYamlOverlay {
                 effectiveEnd = i
                 break
             }
-            if ((ch == '"' || ch == '\'') && isTokenStart(prev)) {
+            if ((ch == '"' || ch == '\'') && canStartQuote) {
                 quote = ch
+                canStartQuote = false
                 i++
                 continue
             }
             if (ch == ':' && i > 0 && (i + 1 == text.length || text[i + 1].isWhitespace())) {
                 sawMappingKey = true
+                canStartQuote = true
+                i++
+                continue
+            }
+            if (ch == '-' && canStartQuote && (i + 1 == text.length || text[i + 1].isWhitespace())) {
+                canStartQuote = true
+                i++
+                continue
             }
             val inFlow = square > 0 || curly > 0
-            if (ch == '[' && (inFlow || isTokenStart(prev)) && prev != '\\') {
+            if (ch == ',' && inFlow) {
+                canStartQuote = true
+            } else if (ch == '[' && (inFlow || canStartQuote) && prev != '\\') {
                 square++
+                canStartQuote = true
             } else if (ch == ']' && square > 0 && prev != '\\') {
                 square--
-            } else if (ch == '{' && (inFlow || isTokenStart(prev)) && prev != '\\') {
+                canStartQuote = false
+            } else if (ch == '{' && (inFlow || canStartQuote) && prev != '\\') {
                 curly++
+                canStartQuote = true
             } else if (ch == '}' && curly > 0 && prev != '\\') {
                 curly--
+                canStartQuote = false
             } else if ((ch == ']' && square == 0 && prev != '\\' && inFlow) ||
                 (ch == '}' && curly == 0 && prev != '\\' && inFlow)
             ) {
                 return LineScanResult(square, curly, quote, sawMappingKey, false, "Unexpected closing '$ch'")
+            } else {
+                canStartQuote = false
             }
             i++
         }
@@ -416,8 +439,6 @@ internal object RimeYamlOverlay {
         }
         return idx
     }
-
-    private fun isTokenStart(prev: Char): Boolean = prev.isWhitespace() || prev in ":,-[{"
 
     private fun parseSchemaListItem(trimmed: String): String? {
         if (!trimmed.startsWith('-')) return null
