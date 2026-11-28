@@ -158,6 +158,10 @@ if [[ -z "$LLVM_READELF" ]]; then
     echo "ERROR: executable llvm-readelf not found under NDK prebuilt toolchain: ${NDK_DIR}" >&2
     exit 1
 fi
+if ! command -v patch >/dev/null 2>&1; then
+    echo "ERROR: required host tool 'patch' not found in PATH." >&2
+    exit 1
+fi
 
 SRC_DIR="${WORK_DIR}/src"
 BUILD_DIR="${WORK_DIR}/build-${ABI}"
@@ -220,6 +224,20 @@ fetch_verified "opencc-${OPENCC_VERSION}.tar.xz" "$OPENCC_URL" "$OPENCC_SHA256"
 
 echo "==> Extracting sources into ${SRC_DIR}..."
 extract_to_dir "${CACHE_DIR}/librime-${LIBRIME_VERSION}.tar.gz" "${SRC_DIR}/librime"
+
+if [[ -d "${SCRIPT_DIR}/patches" ]]; then
+    shopt -s nullglob
+    PATCH_FILES=("${SCRIPT_DIR}/patches/"*.patch)
+    shopt -u nullglob
+    if (( ${#PATCH_FILES[@]} > 0 )); then
+        mapfile -t PATCH_FILES < <(printf '%s\n' "${PATCH_FILES[@]}" | LC_ALL=C sort)
+        for patch_file in "${PATCH_FILES[@]}"; do
+            echo "==> Applying librime patch: $(basename "$patch_file")..."
+            patch -d "${SRC_DIR}/librime" -p1 --batch --forward -E --fuzz=0 < "$patch_file"
+        done
+    fi
+fi
+
 extract_to_dir "${CACHE_DIR}/librime-lua-${LIBRIME_LUA_VERSION}.tar.gz" "${SRC_DIR}/librime/plugins/lua"
 extract_to_dir "${CACHE_DIR}/lua-${LUA_VERSION}.tar.gz" "${SRC_DIR}/lua"
 extract_to_dir "${CACHE_DIR}/boost-${BOOST_VERSION}.tar.xz" "${SRC_DIR}/boost"

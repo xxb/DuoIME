@@ -76,6 +76,11 @@ public object RimeWorkspaceInstaller {
         val userDir = File(workspaceRoot, "user")
         val prebuiltDir = File(sharedDir, "build")
         val stagingDir = File(userDir, "build")
+        val recoveredTx = RimeWorkspaceManager.recoverInterruptedTransactionIfNeeded(
+            workspaceRoot = workspaceRoot,
+            userDir = userDir,
+            stagingDir = stagingDir
+        )
         sharedDir.mkdirs()
         userDir.mkdirs()
         prebuiltDir.mkdirs()
@@ -106,6 +111,7 @@ public object RimeWorkspaceInstaller {
         }
 
         val needsDeploy = !isUpToDate ||
+            recoveredTx ||
             deployPendingFile.isFile ||
             !File(stagingDir, DEFAULT_YAML_FILE).isFile
 

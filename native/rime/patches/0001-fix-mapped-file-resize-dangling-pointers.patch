@@ -1,0 +1,654 @@
+diff --git a/src/rime/dict/mapped_file.cc b/src/rime/dict/mapped_file.cc
+index 5a5f75c..d914870 100644
+--- a/src/rime/dict/mapped_file.cc
++++ b/src/rime/dict/mapped_file.cc
+@@ -10,6 +10,7 @@
+ #include <filesystem>
+ #include <boost/interprocess/file_mapping.hpp>
+ #include <boost/interprocess/mapped_region.hpp>
++#include <cstdint>
+ #include <rime/dict/mapped_file.h>
+ 
+ namespace rime {
+@@ -137,22 +138,45 @@ bool MappedFile::Resize(size_t capacity) {
+   return true;
+ }
+ 
++size_t MappedFile::OffsetOf(const void* ptr) const {
++  if (!IsOpen() || !ptr)
++    return kInvalidOffset;
++  const auto base = reinterpret_cast<uintptr_t>(address());
++  const auto addr = reinterpret_cast<uintptr_t>(ptr);
++  if (addr < base || addr - base > size_)
++    return kInvalidOffset;
++  return static_cast<size_t>(addr - base);
++}
++
+ String* MappedFile::CreateString(const string& str) {
+   String* ret = Allocate<String>();
+-  if (ret && !str.empty()) {
+-    CopyString(str, ret);
++  if (!ret)
++    return NULL;
++  if (!str.empty()) {
++    const size_t ret_offset = OffsetOf(ret);
++    if (!CopyString(str, ret))
++      return NULL;
++    ret = Find<String>(ret_offset);
+   }
+   return ret;
+ }
+ 
+ bool MappedFile::CopyString(const string& src, String* dest) {
+-  if (!dest)
++  if (!dest || !IsOpen())
++    return false;
++  const size_t dest_offset = OffsetOf(dest);
++  if (dest_offset == kInvalidOffset || sizeof(String) > size_ - dest_offset) {
++    LOG(ERROR) << "CopyString destination is outside mapped file.";
+     return false;
++  }
+   size_t size = src.length() + 1;
+   char* ptr = Allocate<char>(size);
+   if (!ptr)
+     return false;
+   std::strncpy(ptr, src.c_str(), size);
++  dest = Find<String>(dest_offset);
++  if (!dest)
++    return false;
+   dest->data = ptr;
+   return true;
+ }
+diff --git a/src/rime/dict/mapped_file.h b/src/rime/dict/mapped_file.h
+index bd469ee..9d096d9 100644
+--- a/src/rime/dict/mapped_file.h
++++ b/src/rime/dict/mapped_file.h
+@@ -115,9 +115,13 @@ class RIME_DLL MappedFile {
+   void Close();
+   bool Remove();
+ 
++  static constexpr size_t kInvalidOffset = static_cast<size_t>(-1);
++
+   template <class T>
+   T* Find(size_t offset);
+ 
++  size_t OffsetOf(const void* ptr) const;
++
+   const path& file_path() const { return file_path_; }
+   size_t file_size() const { return size_; }
+ 
+diff --git a/src/rime/dict/prism.cc b/src/rime/dict/prism.cc
+index 146c23b..bbb1761 100644
+--- a/src/rime/dict/prism.cc
++++ b/src/rime/dict/prism.cc
+@@ -173,7 +173,7 @@ bool Prism::Build(const Syllabary& syllabary,
+   size_t estimated_map_size =
+       num_spellings * 12 +
+       map_size * (4 + sizeof(prism::SpellingDescriptor) + kDescriptorExtraSize);
+-  const size_t kReservedSize = 1024;
++  const size_t kReservedSize = 16384;
+   if (!Create(image_size + estimated_map_size + kReservedSize)) {
+     LOG(ERROR) << "Error creating prism file '" << file_path() << "'.";
+     return false;
+@@ -208,6 +208,11 @@ bool Prism::Build(const Syllabary& syllabary,
+     LOG(ERROR) << "Error creating double-array image.";
+     return false;
+   }
++  metadata = metadata_ = Find<prism::Metadata>(0);
++  if (!metadata) {
++    LOG(ERROR) << "Error locating metadata in file '" << file_path() << "'.";
++    return false;
++  }
+   std::memcpy(array, trie_->array(), image_size);
+   metadata->double_array = array;
+   metadata->double_array_size = array_size;
+@@ -223,34 +228,54 @@ bool Prism::Build(const Syllabary& syllabary,
+       LOG(ERROR) << "Error creating spelling map.";
+       return false;
+     }
++    const size_t spelling_map_offset = OffsetOf(spelling_map);
+     auto i = script->begin();
+-    auto item = spelling_map->begin();
+-    for (; i != script->end(); ++i, ++item) {
++    for (size_t item_index = 0; i != script->end(); ++i, ++item_index) {
+       size_t list_size = i->second.size();
+-      item->size = list_size;
+-      item->at = Allocate<prism::SpellingDescriptor>(list_size);
+-      if (!item->at) {
++      prism::SpellingDescriptor* descriptors =
++          Allocate<prism::SpellingDescriptor>(list_size);
++      if (!descriptors) {
+         LOG(ERROR) << "Error creating spelling descriptors.";
+         return false;
+       }
++      const size_t descriptors_offset = OffsetOf(descriptors);
++      spelling_map = Find<prism::SpellingMap>(spelling_map_offset);
++      if (!spelling_map) {
++        LOG(ERROR) << "Error locating spelling map.";
++        return false;
++      }
++      auto& item = spelling_map->at[item_index];
++      item.size = list_size;
++      item.at = descriptors;
+       auto j = i->second.begin();
+-      auto desc = item->begin();
+-      for (; j != i->second.end(); ++j, ++desc) {
+-        desc->syllable_id = syllable_to_id[j->str];
++      for (size_t desc_index = 0; j != i->second.end(); ++j, ++desc_index) {
++        descriptors = Find<prism::SpellingDescriptor>(descriptors_offset);
++        if (!descriptors) {
++          LOG(ERROR) << "Error locating spelling descriptors.";
++          return false;
++        }
++        auto& desc = descriptors[desc_index];
++        desc.syllable_id = syllable_to_id[j->str];
+         // 打包寫入 type + is_correction
+         int32_t packed_type = static_cast<int32_t>(j->properties.type);
+         if (j->properties.is_correction) {
+           packed_type |= kTypeIsCorrectionMask;
+         }
+-        desc->type = packed_type;
+-        desc->credibility = j->properties.credibility;
++        desc.type = packed_type;
++        desc.credibility = j->properties.credibility;
+         if (!j->properties.tips.empty() &&
+-            !CopyString(j->properties.tips, &desc->tips)) {
++            !CopyString(j->properties.tips, &desc.tips)) {
+           LOG(ERROR) << "Error creating spelling properties.";
+           return false;
+         }
+       }
+     }
++    metadata = metadata_ = Find<prism::Metadata>(0);
++    spelling_map = Find<prism::SpellingMap>(spelling_map_offset);
++    if (!metadata || !spelling_map) {
++      LOG(ERROR) << "Error locating prism metadata after building spelling map.";
++      return false;
++    }
+     metadata->spelling_map = spelling_map;
+     spelling_map_ = spelling_map;
+   }
+diff --git a/src/rime/dict/reverse_lookup_dictionary.cc b/src/rime/dict/reverse_lookup_dictionary.cc
+index 89346f1..64c6d31 100644
+--- a/src/rime/dict/reverse_lookup_dictionary.cc
++++ b/src/rime/dict/reverse_lookup_dictionary.cc
+@@ -215,7 +215,7 @@ bool ReverseDb::Build(DictSettings* settings,
+   }
+ 
+   // creating reversedb file
+-  const size_t kReservedSize = 1024;
++  const size_t kReservedSize = 16384;
+   const size_t key_trie_image_size = key_trie_image.size();
+   const size_t value_trie_image_size = value_trie_image.size();
+   size_t estimated_data_size = kReservedSize + dict_settings.length() +
+@@ -238,6 +238,11 @@ bool ReverseDb::Build(DictSettings* settings,
+       LOG(ERROR) << "Error saving dict settings.";
+       return false;
+     }
++    metadata_ = Find<reverse::Metadata>(0);
++    if (!metadata_) {
++      LOG(ERROR) << "Error locating metadata in file '" << file_path() << "'.";
++      return false;
++    }
+   }
+ 
+   auto index = Allocate<StringId>(entry_count);
+@@ -247,6 +252,11 @@ bool ReverseDb::Build(DictSettings* settings,
+   for (size_t k = 0; k < entry_count; ++k) {
+     index[key_ids[k]] = value_ids[k];
+   }
++  metadata_ = Find<reverse::Metadata>(0);
++  if (!metadata_) {
++    LOG(ERROR) << "Error locating metadata in file '" << file_path() << "'.";
++    return false;
++  }
+   metadata_->index.size = entry_count;
+   metadata_->index.at = index;
+ 
+@@ -257,6 +267,11 @@ bool ReverseDb::Build(DictSettings* settings,
+     return false;
+   }
+   std::memcpy(key_trie_ptr, key_trie_image.data(), key_trie_image_size);
++  metadata_ = Find<reverse::Metadata>(0);
++  if (!metadata_) {
++    LOG(ERROR) << "Error locating metadata in file '" << file_path() << "'.";
++    return false;
++  }
+   metadata_->key_trie = key_trie_ptr;
+   metadata_->key_trie_size = key_trie_image_size;
+ 
+@@ -267,6 +282,11 @@ bool ReverseDb::Build(DictSettings* settings,
+     return false;
+   }
+   std::memcpy(value_trie_ptr, value_trie_image.data(), value_trie_image_size);
++  metadata_ = Find<reverse::Metadata>(0);
++  if (!metadata_) {
++    LOG(ERROR) << "Error locating metadata in file '" << file_path() << "'.";
++    return false;
++  }
+   metadata_->value_trie = value_trie_ptr;
+   metadata_->value_trie_size = value_trie_image_size;
+ 
+diff --git a/src/rime/dict/string_table.cc b/src/rime/dict/string_table.cc
+index 047714d..a3ec3ab 100644
+--- a/src/rime/dict/string_table.cc
++++ b/src/rime/dict/string_table.cc
+@@ -8,6 +8,7 @@
+ #include <sstream>
+ #include <rime/common.h>
+ #include <rime/dict/string_table.h>
++#include <cstring>
+ 
+ namespace rime {
+ 
+@@ -106,6 +107,26 @@ void StringTableBuilder::UpdateReferences() {
+   }
+ }
+ 
++bool StringTableBuilder::CopyIdsToOffsets(
++    char* base,
++    size_t base_size,
++    const vector<size_t>& offsets) const {
++  if (!base || keys_.size() != offsets.size()) {
++    LOG(ERROR) << "invalid arguments for CopyIdsToOffsets: keys="
++               << keys_.size() << ", offsets=" << offsets.size();
++    return false;
++  }
++  for (size_t i = 0; i < keys_.size(); ++i) {
++    if (offsets[i] > base_size || sizeof(StringId) > base_size - offsets[i]) {
++      LOG(ERROR) << "string reference offset out of range: " << offsets[i];
++      return false;
++    }
++    const StringId id = static_cast<StringId>(keys_[i].id());
++    std::memcpy(base + offsets[i], &id, sizeof(StringId));
++  }
++  return true;
++}
++
+ void StringTableBuilder::Dump(char* ptr, size_t size) {
+   if (size < BinarySize()) {
+     LOG(ERROR) << "insufficient memory to dump string table.";
+diff --git a/src/rime/dict/string_table.h b/src/rime/dict/string_table.h
+index 3ed000b..3aed485 100644
+--- a/src/rime/dict/string_table.h
++++ b/src/rime/dict/string_table.h
+@@ -51,6 +51,9 @@ class RIME_DLL StringTableBuilder : public StringTable {
+                StringId* reference = nullptr);
+   void Clear();
+   void Build();
++  bool CopyIdsToOffsets(char* base,
++                        size_t base_size,
++                        const vector<size_t>& offsets) const;
+   void Dump(char* ptr, size_t size);
+ 
+  private:
+diff --git a/src/rime/dict/table.cc b/src/rime/dict/table.cc
+index 3a10bb1..38ae7ab 100644
+--- a/src/rime/dict/table.cc
++++ b/src/rime/dict/table.cc
+@@ -232,31 +232,60 @@ string Table::GetString(const table::StringType& x) {
+ bool Table::AddString(const string& src,
+                       table::StringType* dest,
+                       double weight) {
+-  string_table_builder_->Add(src, weight, &dest->str_id());
+-  return true;
++  return AddString(std::string_view(src), dest, weight);
+ }
+ 
+ bool Table::AddString(std::string_view src,
+                       table::StringType* dest,
+                       double weight) {
+-  string_table_builder_->AddView(src, weight, &dest->str_id());
++  if (!dest)
++    return false;
++  const size_t offset = OffsetOf(&dest->str_id());
++  if (offset == kInvalidOffset || sizeof(StringId) > file_size() - offset) {
++    LOG(ERROR) << "string destination is outside mapped table file.";
++    return false;
++  }
++  string_ref_offsets_.push_back(offset);
++  string_table_builder_->AddView(src, weight, nullptr);
+   return true;
+ }
+ 
+ bool Table::OnBuildStart() {
+   string_table_builder_.reset(new StringTableBuilder);
++  string_ref_offsets_.clear();
+   return true;
+ }
+ 
+ bool Table::OnBuildFinish() {
+   string_table_builder_->Build();
++  if (!string_table_builder_->CopyIdsToOffsets(address(), file_size(),
++                                               string_ref_offsets_)) {
++    string_ref_offsets_.clear();
++    string_table_builder_.reset();
++    return false;
++  }
++  string_ref_offsets_.clear();
+   // saving string table image
+   size_t image_size = string_table_builder_->BinarySize();
+   char* image = Allocate<char>(image_size);
+   if (!image) {
+     LOG(ERROR) << "Error creating string table image.";
++    metadata_ = nullptr;
++    syllabary_ = nullptr;
++    index_ = nullptr;
++    string_table_builder_.reset();
+     return false;
+   }
++  metadata_ = Find<table::Metadata>(0);
++  if (!metadata_) {
++    LOG(ERROR) << "Error locating table metadata.";
++    syllabary_ = nullptr;
++    index_ = nullptr;
++    string_table_builder_.reset();
++    return false;
++  }
++  syllabary_ = metadata_->syllabary.get();
++  index_ = metadata_->index.get();
+   string_table_builder_->Dump(image, image_size);
+   metadata_->string_table = image;
+   metadata_->string_table_size = image_size;
+@@ -338,7 +367,7 @@ uint32_t Table::dict_file_checksum() const {
+ bool Table::BeginBuild(const Syllabary& syllabary,
+                        size_t num_entries,
+                        uint32_t dict_file_checksum) {
+-  const size_t kReservedSize = 4096;
++  const size_t kReservedSize = 65536;
+   const size_t num_syllables = syllabary.size();
+   const size_t estimated_file_size =
+       kReservedSize + 32 * num_syllables + 64 * num_entries;
+@@ -369,9 +398,16 @@ bool Table::BeginBuild(const Syllabary& syllabary,
+     LOG(ERROR) << "Error creating syllabary.";
+     return false;
+   }
++  metadata_ = Find<table::Metadata>(0);
++  if (!metadata_) {
++    LOG(ERROR) << "Error locating metadata in file '" << file_path() << "'.";
++    return false;
++  }
+   size_t syllable_id = 0;
+-  for (const string& syllable : syllabary)
+-    AddString(syllable, &syllabary_->at[syllable_id++], 0.0);
++  for (const string& syllable : syllabary) {
++    if (!AddString(syllable, &syllabary_->at[syllable_id++], 0.0))
++      return false;
++  }
+   metadata_->syllabary = syllabary_;
+   return true;
+ }
+@@ -402,6 +438,12 @@ bool Table::Build(const Syllabary& syllabary,
+     LOG(ERROR) << "Error creating table index.";
+     return false;
+   }
++  metadata_ = Find<table::Metadata>(0);
++  if (!metadata_) {
++    LOG(ERROR) << "Error locating table metadata.";
++    return false;
++  }
++  syllabary_ = metadata_->syllabary.get();
+   metadata_->index = index_;
+ 
+   // The index keeps only syllable ids, so callers may extract data that still
+@@ -428,6 +470,12 @@ bool Table::Build(const Syllabary& syllabary,
+     LOG(ERROR) << "Error creating table index.";
+     return false;
+   }
++  metadata_ = Find<table::Metadata>(0);
++  if (!metadata_) {
++    LOG(ERROR) << "Error locating table metadata.";
++    return false;
++  }
++  syllabary_ = metadata_->syllabary.get();
+   metadata_->index = index_;
+ 
+   return FinishBuild();
+@@ -441,16 +489,22 @@ table::Index* Table::BuildIndex(const Vocabulary& vocabulary,
+ 
+ table::Index* Table::BuildIndex(const CompactDictEntryList& entries,
+                                 size_t num_syllables) {
++  if (entries.page_offsets.size() != num_syllables + 1)
++    return NULL;
+   auto index = CreateArray<table::HeadIndexNode>(num_syllables);
+-  if (!index || entries.page_offsets.size() != num_syllables + 1)
++  if (!index)
+     return NULL;
++  const size_t index_offset = OffsetOf(index);
+   for (size_t syllable_id = 0; syllable_id < num_syllables; ++syllable_id) {
++    index = Find<table::HeadIndex>(index_offset);
++    if (!index)
++      return NULL;
+     auto& node(index->at[syllable_id]);
+     if (!BuildEntryList(entries, entries.page_offsets[syllable_id],
+                         entries.page_offsets[syllable_id + 1], &node.entries))
+       return NULL;
+   }
+-  return reinterpret_cast<table::Index*>(index);
++  return Find<table::Index>(index_offset);
+ }
+ 
+ table::HeadIndex* Table::BuildHeadIndex(const Vocabulary& vocabulary,
+@@ -459,11 +513,15 @@ table::HeadIndex* Table::BuildHeadIndex(const Vocabulary& vocabulary,
+   if (!index) {
+     return NULL;
+   }
++  const size_t index_offset = OffsetOf(index);
+   for (const auto& v : vocabulary) {
+     int syllable_id = v.first;
+-    auto& node(index->at[syllable_id]);
++    index = Find<table::HeadIndex>(index_offset);
++    if (!index) {
++      return NULL;
++    }
+     const auto& entries(v.second.entries);
+-    if (!BuildEntryList(entries, &node.entries)) {
++    if (!BuildEntryList(entries, &index->at[syllable_id].entries)) {
+       return NULL;
+     }
+     if (v.second.next_level) {
+@@ -473,10 +531,15 @@ table::HeadIndex* Table::BuildHeadIndex(const Vocabulary& vocabulary,
+       if (!next_level_index) {
+         return NULL;
+       }
+-      node.next_level = reinterpret_cast<table::PhraseIndex*>(next_level_index);
++      index = Find<table::HeadIndex>(index_offset);
++      if (!index) {
++        return NULL;
++      }
++      index->at[syllable_id].next_level =
++          reinterpret_cast<table::PhraseIndex*>(next_level_index);
+     }
+   }
+-  return index;
++  return Find<table::HeadIndex>(index_offset);
+ }
+ 
+ table::TrunkIndex* Table::BuildTrunkIndex(const Code& prefix,
+@@ -485,35 +548,46 @@ table::TrunkIndex* Table::BuildTrunkIndex(const Code& prefix,
+   if (!index) {
+     return NULL;
+   }
++  const size_t index_offset = OffsetOf(index);
+   size_t count = 0;
+   for (const auto& v : vocabulary) {
+     int syllable_id = v.first;
+-    auto& node(index->at[count++]);
+-    node.key = syllable_id;
++    const size_t node_index = count++;
++    index = Find<table::TrunkIndex>(index_offset);
++    if (!index) {
++      return NULL;
++    }
++    index->at[node_index].key = syllable_id;
+     const auto& entries(v.second.entries);
+-    if (!BuildEntryList(entries, &node.entries)) {
++    if (!BuildEntryList(entries, &index->at[node_index].entries)) {
+       return NULL;
+     }
+     if (v.second.next_level) {
+       Code code(prefix);
+       code.push_back(syllable_id);
++      table::PhraseIndex* next_level_ptr = nullptr;
+       if (code.size() < Code::kIndexCodeMaxLength) {
+         auto next_level_index = BuildTrunkIndex(code, *v.second.next_level);
+         if (!next_level_index) {
+           return NULL;
+         }
+-        node.next_level =
++        next_level_ptr =
+             reinterpret_cast<table::PhraseIndex*>(next_level_index);
+       } else {
+         auto tail_index = BuildTailIndex(code, *v.second.next_level);
+         if (!tail_index) {
+           return NULL;
+         }
+-        node.next_level = reinterpret_cast<table::PhraseIndex*>(tail_index);
++        next_level_ptr = reinterpret_cast<table::PhraseIndex*>(tail_index);
++      }
++      index = Find<table::TrunkIndex>(index_offset);
++      if (!index) {
++        return NULL;
+       }
++      index->at[node_index].next_level = next_level_ptr;
+     }
+   }
+-  return index;
++  return Find<table::TrunkIndex>(index_offset);
+ }
+ 
+ table::TailIndex* Table::BuildTailIndex(const Code&,
+@@ -527,24 +601,33 @@ table::TailIndex* Table::BuildTailIndex(const Code&,
+   if (!index) {
+     return NULL;
+   }
++  const size_t index_offset = OffsetOf(index);
+   size_t count = 0;
+   for (const auto& src : page.entries) {
+     DLOG(INFO) << "count: " << count;
+     DLOG(INFO) << "entry: " << src.text;
+-    auto& dest(index->at[count++]);
++    const size_t entry_index = count++;
+     size_t extra_code_length = src.code.size() - Code::kIndexCodeMaxLength;
+     DLOG(INFO) << "extra code length: " << extra_code_length;
+-    dest.extra_code.size = extra_code_length;
+-    dest.extra_code.at = Allocate<SyllableId>(extra_code_length);
+-    if (!dest.extra_code.at) {
++    SyllableId* extra_code_ptr = Allocate<SyllableId>(extra_code_length);
++    if (!extra_code_ptr) {
+       LOG(ERROR) << "Error creating code sequence; file size: " << file_size();
+       return NULL;
+     }
++    index = Find<table::TailIndex>(index_offset);
++    if (!index) {
++      return NULL;
++    }
++    auto& dest(index->at[entry_index]);
++    dest.extra_code.size = extra_code_length;
++    dest.extra_code.at = extra_code_ptr;
+     std::copy(src.code.begin() + Code::kIndexCodeMaxLength, src.code.end(),
+               dest.extra_code.begin());
+-    BuildEntry(src, &dest.entry);
++    if (!BuildEntry(src, &dest.entry)) {
++      return NULL;
++    }
+   }
+-  return index;
++  return Find<table::TailIndex>(index_offset);
+ }
+ 
+ Array<table::Entry>* Table::BuildEntryArray(const ShortDictEntryList& entries) {
+@@ -552,27 +635,44 @@ Array<table::Entry>* Table::BuildEntryArray(const ShortDictEntryList& entries) {
+   if (!array) {
+     return NULL;
+   }
++  const size_t array_offset = OffsetOf(array);
+   for (size_t i = 0; i < entries.size(); ++i) {
+-    if (!BuildEntry(entries[i], &array->at[i])) {
++    array = Find<Array<table::Entry>>(array_offset);
++    if (!array || !BuildEntry(entries[i], &array->at[i])) {
+       return NULL;
+     }
+   }
+-  return array;
++  return Find<Array<table::Entry>>(array_offset);
+ }
+ 
+ bool Table::BuildEntryList(const ShortDictEntryList& src,
+                            List<table::Entry>* dest) {
+   if (!dest)
+     return false;
++  const size_t dest_offset = OffsetOf(dest);
++  if (dest_offset == kInvalidOffset ||
++      sizeof(List<table::Entry>) > file_size() - dest_offset) {
++    LOG(ERROR) << "entry list destination is outside mapped table file.";
++    return false;
++  }
+   dest->size = src.size();
+-  dest->at = Allocate<table::Entry>(src.size());
+-  if (!dest->at) {
++  if (src.empty()) {
++    dest->at = nullptr;
++    return true;
++  }
++  table::Entry* entries_ptr = Allocate<table::Entry>(src.size());
++  if (!entries_ptr) {
+     LOG(ERROR) << "Error creating table entries; file size: " << file_size();
+     return false;
+   }
++  dest = Find<List<table::Entry>>(dest_offset);
++  if (!dest)
++    return false;
++  dest->at = entries_ptr;
+   size_t i = 0;
+   for (auto d = src.begin(); d != src.end(); ++d, ++i) {
+-    if (!BuildEntry(*d, &dest->at[i]))
++    dest = Find<List<table::Entry>>(dest_offset);
++    if (!dest || !BuildEntry(*d, &dest->at[i]))
+       return false;
+   }
+   return true;
+@@ -584,16 +684,27 @@ bool Table::BuildEntryList(const CompactDictEntryList& src,
+                            List<table::Entry>* dest) {
+   if (!dest || begin > end || end > src.entries.size())
+     return false;
+-  dest->size = end - begin;
+-  if (begin == end) {
++  const size_t dest_offset = OffsetOf(dest);
++  if (dest_offset == kInvalidOffset ||
++      sizeof(List<table::Entry>) > file_size() - dest_offset) {
++    LOG(ERROR) << "entry list destination is outside mapped table file.";
++    return false;
++  }
++  const size_t count = end - begin;
++  dest->size = count;
++  if (count == 0) {
+     dest->at = nullptr;
+     return true;
+   }
+-  dest->at = Allocate<table::Entry>(dest->size);
+-  if (!dest->at) {
++  table::Entry* entries_ptr = Allocate<table::Entry>(count);
++  if (!entries_ptr) {
+     LOG(ERROR) << "Error creating table entries; file size: " << file_size();
+     return false;
+   }
++  dest = Find<List<table::Entry>>(dest_offset);
++  if (!dest)
++    return false;
++  dest->at = entries_ptr;
+   for (size_t i = begin; i < end; ++i) {
+     const auto& entry = src.entries[i];
+     if (!AddString(src.text_of(entry), &dest->at[i - begin].text, entry.weight))
+diff --git a/src/rime/dict/table.h b/src/rime/dict/table.h
+index 34fad91..39ab812 100644
+--- a/src/rime/dict/table.h
++++ b/src/rime/dict/table.h
+@@ -252,6 +252,7 @@ class Table : public MappedFile {
+ 
+   the<StringTable> string_table_;
+   the<StringTableBuilder> string_table_builder_;
++  vector<size_t> string_ref_offsets_;
+ };
+ 
+ }  // namespace rime

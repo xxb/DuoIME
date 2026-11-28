@@ -301,6 +301,47 @@ class RimeBridgeAndWorkspaceTest {
     }
 
     @Test
+    fun installFromSourceRecoversInterruptedTransactionAndTriggersRedeploy() {
+        val root = Files.createTempDirectory("duoime-rime-crash-recover-test").toFile()
+        root.deleteOnExit()
+
+        val source = MemoryAssetSource(
+            mapOf(
+                "default.yaml" to "config_version: '1.0'\n".toByteArray(),
+                "duoime_pinyin.dict.yaml" to "name: duoime_pinyin\n".toByteArray(),
+                "starter_manifest.json" to "{\"schema_version\":1,\"v\":1}\n".toByteArray()
+            )
+        )
+        val initial = RimeWorkspaceInstaller.installFromSource(source, root)
+        File(initial.stagingDir, "default.yaml").writeText("deployed: true\n")
+        RimeWorkspaceInstaller.markWorkspaceDeployed(initial)
+        assertFalse(RimeWorkspaceInstaller.installFromSource(source, root).assetsUpdated)
+
+        // Simulate native crash mid-import: corrupt userDir, backup present, stale stages, tx marker
+        File(initial.userDir, "crashing_pack.schema.yaml").writeText("schema:\n  schema_id: crashing\n")
+        val backupDir = File(root, ".import_backup_987654").apply { mkdirs() }
+        File(backupDir, "user.yaml").writeText("var:\n  previously_selected_schema: duoime_pinyin_26\n")
+        File(backupDir, "known_good.yaml").writeText("ok: true\n")
+        val staleSafStage = File(root, ".saf_stage_987654").apply { mkdirs() }
+        val marker = File(root, RimeWorkspaceManager.WORKSPACE_TX_MARKER_FILE)
+        marker.writeText("${backupDir.name}\n", Charsets.UTF_8)
+
+        val recovered = RimeWorkspaceInstaller.installFromSource(source, root)
+        assertTrue("Recovered transaction must require redeploy (assetsUpdated=true)", recovered.assetsUpdated)
+        assertTrue(File(recovered.userDir, "known_good.yaml").isFile)
+        assertFalse(File(recovered.userDir, "crashing_pack.schema.yaml").exists())
+        assertTrue(File(recovered.stagingDir, RimeWorkspaceInstaller.DEPLOY_PENDING_FILE).isFile)
+        assertFalse(marker.exists())
+        assertFalse(backupDir.exists())
+        assertFalse(staleSafStage.exists())
+
+        // Once redeployed cleanly, subsequent startup does not re-trigger recovery or deploy
+        File(recovered.stagingDir, "default.yaml").writeText("deployed: true\n")
+        RimeWorkspaceInstaller.markWorkspaceDeployed(recovered)
+        assertFalse(RimeWorkspaceInstaller.installFromSource(source, root).assetsUpdated)
+    }
+
+    @Test
     fun offlineTransactionAcquiresDeploysClearsPendingAndAlwaysReleasesRuntime() {
         val raw = FakeRawRimeCalls()
         val bridge = RefCountedRimeBridge(raw)

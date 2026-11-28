@@ -78,8 +78,12 @@ class RimeWorkspaceManagerTest {
         )
 
         var sawPendingDuringDeploy = false
+        var sawTxMarkerDuringDeploy = false
+        val txMarker = File(paths.userDir.parentFile, RimeWorkspaceManager.WORKSPACE_TX_MARKER_FILE)
         val result = RimeWorkspaceManager.importEntries(paths, entries) {
             sawPendingDuringDeploy = File(paths.stagingDir, RimeWorkspaceInstaller.DEPLOY_PENDING_FILE).isFile
+            sawTxMarkerDuringDeploy = txMarker.isFile &&
+                txMarker.readText(Charsets.UTF_8).trim().startsWith(".import_backup_")
             assertFalse(
                 "Stale build artifact must be wiped before deploy",
                 File(paths.stagingDir, "stale.prism.bin").exists()
@@ -91,6 +95,8 @@ class RimeWorkspaceManagerTest {
         }
 
         assertTrue(sawPendingDuringDeploy)
+        assertTrue("Transaction marker must exist during native deploy", sawTxMarkerDuringDeploy)
+        assertFalse("Successful import must delete transaction marker", txMarker.exists())
         assertTrue("Expected Success, got $result", result is RimeImportResult.Success)
         val success = result as RimeImportResult.Success
         assertEquals(listOf("rime_ice"), success.importedCustomSchemaIds)
@@ -325,6 +331,10 @@ class RimeWorkspaceManagerTest {
         assertTrue(missingResult.rolledBack)
         assertEquals(2, missingCalls)
         assertTrue(existingCustom.isFile)
+        assertFalse(
+            "In-process rollback must delete transaction marker",
+            File(paths.userDir.parentFile, RimeWorkspaceManager.WORKSPACE_TX_MARKER_FILE).exists()
+        )
     }
 
     @Test
@@ -351,6 +361,10 @@ class RimeWorkspaceManagerTest {
         assertTrue(okReset is RimeImportResult.Success)
         assertFalse(RimeWorkspaceManager.hasCustomUserFiles(paths))
         assertTrue(File(paths.userDir, "user.yaml").isFile)
+        assertFalse(
+            "Reset must not leave transaction marker behind",
+            File(paths.userDir.parentFile, RimeWorkspaceManager.WORKSPACE_TX_MARKER_FILE).exists()
+        )
     }
 
     @Test
@@ -510,5 +524,98 @@ class RimeWorkspaceManagerTest {
         assertTrue("Expected Success, got $result", result is RimeImportResult.Success)
         assertEquals("MANIFEST-000001\n", File(paths.userDir, "duoime_pinyin.userdb/CURRENT").readText())
         assertTrue(File(paths.userDir, "duoime_pinyin.userdb.txt").readText().contains("你好"))
+    }
+
+    @Test
+    fun crashRecoveryRestoresBackupCleansStaleStagesAndRejectsUnsafeMarkers() {
+        val paths = createWorkspace()
+        val workspaceRoot = paths.userDir.parentFile!!
+        val marker = File(workspaceRoot, RimeWorkspaceManager.WORKSPACE_TX_MARKER_FILE)
+
+        // Fast path when no transaction marker exists
+        assertFalse(
+            RimeWorkspaceManager.recoverInterruptedTransactionIfNeeded(
+                workspaceRoot = workspaceRoot,
+                userDir = paths.userDir,
+                stagingDir = paths.stagingDir
+            )
+        )
+
+        // Simulate native crash mid-import: corrupt userDir + valid .import_backup_* + stale stages + marker
+        File(paths.userDir, "corrupt_new.schema.yaml").writeText("broken: true\n")
+        val importBackup = File(workspaceRoot, ".import_backup_1001").apply { mkdirs() }
+        File(importBackup, "user.yaml").writeText("var:\n  restored_from: import_backup\n")
+        File(importBackup, "previous_good.yaml").writeText("good: true\n")
+        val staleImportStage = File(workspaceRoot, ".import_stage_1001").apply { mkdirs() }
+        val staleResetStage = File(workspaceRoot, ".reset_stage_1002").apply { mkdirs() }
+        val staleSafStage = File(workspaceRoot, ".saf_stage_1003").apply { mkdirs() }
+        marker.writeText("${importBackup.name}\n", Charsets.UTF_8)
+
+        assertTrue(
+            RimeWorkspaceManager.recoverInterruptedTransactionIfNeeded(
+                workspaceRoot = workspaceRoot,
+                userDir = paths.userDir,
+                stagingDir = paths.stagingDir
+            )
+        )
+        assertFalse("Recovery must delete transaction marker", marker.exists())
+        assertFalse("Backup dir must be moved back into userDir", importBackup.exists())
+        assertFalse("Corrupt userDir file must be removed", File(paths.userDir, "corrupt_new.schema.yaml").exists())
+        assertTrue("Previous good file must be restored", File(paths.userDir, "previous_good.yaml").isFile)
+        assertTrue(
+            File(paths.userDir, "user.yaml").readText(Charsets.UTF_8).contains("restored_from: import_backup")
+        )
+        assertEquals(
+            "crash_recovery",
+            File(paths.stagingDir, RimeWorkspaceInstaller.DEPLOY_PENDING_FILE).readText(Charsets.UTF_8).trim()
+        )
+        assertFalse(staleImportStage.exists())
+        assertFalse(staleResetStage.exists())
+        assertFalse(staleSafStage.exists())
+        assertTrue("Unrelated shared directory must remain untouched", paths.sharedDir.isDirectory)
+
+        // Simulate crash mid-reset with .reset_backup_*
+        val resetBackup = File(workspaceRoot, ".reset_backup_2002").apply { mkdirs() }
+        File(resetBackup, "user.yaml").writeText("var:\n  restored_from: reset_backup\n")
+        marker.writeText("${resetBackup.name}\n", Charsets.UTF_8)
+        assertTrue(
+            RimeWorkspaceManager.recoverInterruptedTransactionIfNeeded(
+                workspaceRoot = workspaceRoot,
+                userDir = paths.userDir,
+                stagingDir = paths.stagingDir
+            )
+        )
+        assertFalse(marker.exists())
+        assertTrue(
+            File(paths.userDir, "user.yaml").readText(Charsets.UTF_8).contains("restored_from: reset_backup")
+        )
+
+        // Unsafe or missing marker contents are ignored, marker is deleted, and userDir is untouched
+        val sentinelFile = File(paths.userDir, "keep_untouched.yaml").apply { writeText("keep: 1\n") }
+        val badPayloads = listOf(
+            "../escape",
+            "shared",
+            ".import_backup_../evil",
+            ".import_backup_/sub",
+            ".import_backup_\\sub",
+            ".import_backup_",
+            ".reset_backup_",
+            "",
+            "   ",
+            ".import_backup_nonexistent"
+        )
+        for (payload in badPayloads) {
+            marker.writeText("$payload\n", Charsets.UTF_8)
+            assertFalse(
+                "Unsafe/missing marker '$payload' must not trigger recovery",
+                RimeWorkspaceManager.recoverInterruptedTransactionIfNeeded(
+                    workspaceRoot = workspaceRoot,
+                    userDir = paths.userDir,
+                    stagingDir = paths.stagingDir
+                )
+            )
+            assertFalse("Marker '$payload' must still be deleted to avoid loops", marker.exists())
+            assertTrue("userDir must remain untouched for '$payload'", sentinelFile.isFile)
+        }
     }
 }

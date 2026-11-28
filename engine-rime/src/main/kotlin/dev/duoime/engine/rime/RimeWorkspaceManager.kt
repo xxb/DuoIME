@@ -83,6 +83,8 @@ public object RimeWorkspaceManager {
     public const val MAX_SINGLE_FILE_BYTES: Long = 64L * 1024L * 1024L
     public const val MAX_TOTAL_IMPORT_BYTES: Long = 200L * 1024L * 1024L
 
+    internal const val WORKSPACE_TX_MARKER_FILE: String = ".workspace_tx_in_progress"
+
     private const val COPY_BUFFER_BYTES: Int = 16 * 1024
     private const val USER_YAML_FILE: String = "user.yaml"
     private const val BUILD_DIR_NAME: String = "build"
@@ -307,6 +309,7 @@ public object RimeWorkspaceManager {
                 )
             } else {
                 backupDir.deleteRecursively()
+                deleteTxMarker(workspaceRoot)
                 RimeImportResult.Success(
                     schemas = deployed,
                     importedCustomSchemaIds = emptyList(),
@@ -398,6 +401,20 @@ public object RimeWorkspaceManager {
         }
     }
 
+    /**
+     * Checks for a `.workspace_tx_in_progress` marker left behind if a previous import or reset
+     * crashed mid-deploy (for example, native `SIGSEGV` or process kill). When a valid backup
+     * directory is referenced, atomically restores it over `userDir`, prepares `stagingDir` for a
+     * clean re-deploy, cleans up stale sibling stage directories, and deletes the marker.
+     */
+    internal fun recoverInterruptedTransactionIfNeeded(workspaceRoot: File, userDir: File, stagingDir: File): Boolean =
+        WorkspaceTxRecovery.recoverInterruptedTransactionIfNeeded(
+            workspaceRoot = workspaceRoot,
+            userDir = userDir,
+            stagingDir = stagingDir,
+            moveDirectory = ::moveDirectory
+        )
+
     private fun commitSwapAndDeploy(
         paths: RimeWorkspacePaths,
         stageDir: File,
@@ -421,6 +438,7 @@ public object RimeWorkspaceManager {
         }
 
         backupDir.deleteRecursively()
+        deleteTxMarker(paths.userDir.parentFile)
         val finalSchemas = deployedSchemas!!
         val deployedIds = finalSchemas.map { it.id }.toSet()
         val activeCustomIds = staged.discoveredCustomSchemaIds.filter { it in deployedIds }
@@ -457,6 +475,7 @@ public object RimeWorkspaceManager {
     }
 
     private fun swapIntoUserDir(userDir: File, stageDir: File, backupDir: File) {
+        val workspaceRoot = userDir.parentFile
         if (backupDir.exists()) {
             backupDir.deleteRecursively()
         }
@@ -465,11 +484,15 @@ public object RimeWorkspaceManager {
         } else {
             backupDir.mkdirs()
         }
+        WorkspaceTxRecovery.writeMarker(workspaceRoot, backupDir.name)
         try {
             moveDirectory(stageDir, userDir)
         } catch (err: IOException) {
             if (!userDir.exists() && backupDir.exists()) {
-                runCatching { moveDirectory(backupDir, userDir) }
+                val restored = runCatching { moveDirectory(backupDir, userDir) }.isSuccess
+                if (restored) {
+                    deleteTxMarker(workspaceRoot)
+                }
             }
             throw err
         }
@@ -495,9 +518,14 @@ public object RimeWorkspaceManager {
             true
         }.getOrDefault(false)
         if (restored) {
+            deleteTxMarker(paths.userDir.parentFile)
             runCatching { deployer.deployAndListSchemas() }
         }
         return restored
+    }
+
+    private fun deleteTxMarker(workspaceRoot: File?) {
+        WorkspaceTxRecovery.deleteMarker(workspaceRoot)
     }
 
     private fun moveDirectory(source: File, target: File) {
@@ -693,5 +721,91 @@ public object RimeWorkspaceManager {
     private fun containsAnyYamlFile(dir: File): Boolean = dir.walkTopDown().any { file ->
         file.isFile &&
             (file.name.endsWith(".yaml", ignoreCase = true) || file.name.endsWith(".yml", ignoreCase = true))
+    }
+}
+
+private object WorkspaceTxRecovery {
+    private const val IMPORT_BACKUP_PREFIX: String = ".import_backup_"
+    private const val RESET_BACKUP_PREFIX: String = ".reset_backup_"
+    private val STALE_STAGE_PREFIXES: List<String> = listOf(
+        ".import_stage_",
+        ".reset_stage_",
+        ".saf_stage_"
+    )
+
+    fun writeMarker(workspaceRoot: File?, backupDirName: String) {
+        if (workspaceRoot == null) return
+        File(workspaceRoot, RimeWorkspaceManager.WORKSPACE_TX_MARKER_FILE)
+            .writeText("$backupDirName\n", Charsets.UTF_8)
+    }
+
+    fun deleteMarker(workspaceRoot: File?) {
+        if (workspaceRoot == null) return
+        val marker = File(workspaceRoot, RimeWorkspaceManager.WORKSPACE_TX_MARKER_FILE)
+        if (marker.exists()) {
+            marker.deleteRecursively()
+        }
+    }
+
+    @Suppress("TooGenericExceptionCaught")
+    fun recoverInterruptedTransactionIfNeeded(
+        workspaceRoot: File,
+        userDir: File,
+        stagingDir: File,
+        moveDirectory: (File, File) -> Unit
+    ): Boolean {
+        val marker = File(workspaceRoot, RimeWorkspaceManager.WORKSPACE_TX_MARKER_FILE)
+        if (!marker.exists()) return false
+
+        return try {
+            val backupName = runCatching { marker.readText(Charsets.UTF_8).trim() }.getOrNull().orEmpty()
+            val backupDir = resolveValidatedBackupDir(workspaceRoot, backupName) ?: return false
+            if (userDir.exists()) {
+                userDir.deleteRecursively()
+            }
+            moveDirectory(backupDir, userDir)
+            if (stagingDir.exists()) {
+                stagingDir.deleteRecursively()
+            }
+            stagingDir.mkdirs()
+            File(stagingDir, RimeWorkspaceInstaller.DEPLOY_PENDING_FILE)
+                .writeText("crash_recovery\n", Charsets.UTF_8)
+            cleanupStaleStageDirs(workspaceRoot)
+            true
+        } catch (_: Throwable) {
+            false
+        } finally {
+            if (marker.exists()) {
+                marker.deleteRecursively()
+            }
+        }
+    }
+
+    private fun resolveValidatedBackupDir(workspaceRoot: File, backupName: String): File? {
+        if (!isValidBackupDirName(backupName)) return null
+        val backupDir = File(workspaceRoot, backupName)
+        if (!backupDir.isDirectory || Files.isSymbolicLink(backupDir.toPath())) return null
+        val canonicalRoot = workspaceRoot.canonicalFile
+        val canonicalBackup = backupDir.canonicalFile
+        return backupDir.takeIf { canonicalBackup.parentFile == canonicalRoot }
+    }
+
+    private fun isValidBackupDirName(name: String): Boolean {
+        if (name.isEmpty() || name == "." || name.contains("..")) return false
+        if (name.contains('/') || name.contains('\\') || name.indexOf('\u0000') >= 0) return false
+        return when {
+            name.startsWith(IMPORT_BACKUP_PREFIX) -> name.length > IMPORT_BACKUP_PREFIX.length
+            name.startsWith(RESET_BACKUP_PREFIX) -> name.length > RESET_BACKUP_PREFIX.length
+            else -> false
+        }
+    }
+
+    private fun cleanupStaleStageDirs(workspaceRoot: File) {
+        for (sibling in workspaceRoot.listFiles().orEmpty()) {
+            val isStaleStage = STALE_STAGE_PREFIXES.any { sibling.name.startsWith(it) }
+            if (isStaleStage && sibling.isDirectory && !Files.isSymbolicLink(sibling.toPath())) {
+                sibling.deleteRecursively()
+            }
+        }
     }
 }
