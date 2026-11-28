@@ -27,6 +27,9 @@ class RimeInputEngineTest {
         var deployCount: Int = 0
         var nextSession: Long = 1L
         var failNextCreateSession: Boolean = false
+        var throwOnNextDeploy: Boolean = false
+        var throwOnNextCreateSession: Boolean = false
+        var throwOnNextSelectSchema: Boolean = false
         val destroyedSessions = mutableListOf<Long>()
         val selectedSchemas = mutableListOf<String>()
         val setOptionsLog = mutableListOf<Pair<String, Boolean>>()
@@ -79,10 +82,19 @@ class RimeInputEngineTest {
         override fun deployWorkspace(): Boolean {
             deployCount++
             lifecycleEvents.add("deploy")
+            if (throwOnNextDeploy) {
+                throwOnNextDeploy = false
+                error("Simulated deploy failure")
+            }
             return !failDeploy
         }
 
         override fun createSession(): Long {
+            if (throwOnNextCreateSession) {
+                throwOnNextCreateSession = false
+                lifecycleEvents.add("create:throw")
+                error("Simulated createSession failure")
+            }
             if (failNextCreateSession) {
                 failNextCreateSession = false
                 lifecycleEvents.add("create:0")
@@ -208,6 +220,10 @@ class RimeInputEngineTest {
         }
 
         override fun selectSchema(sessionId: Long, schemaId: String): Boolean {
+            if (throwOnNextSelectSchema) {
+                throwOnNextSelectSchema = false
+                error("Simulated selectSchema failure")
+            }
             if (schemaId == "unsupported_schema") return false
             currentSchema = schemaId
             selectedSchemas.add(schemaId)
@@ -608,13 +624,98 @@ class RimeInputEngineTest {
         )
         failDeployEngine.close()
 
-        // When post-deploy createSession returns 0, snapshot resets cleanly and close() does not destroy 0L
+        // When post-deploy createSession returns 0, engine closes cleanly releasing refcount once
         val zeroRecreateBridge = FakeRimeNativeBridge()
         val zeroRecreateEngine = createEngine(zeroRecreateBridge)
         zeroRecreateBridge.failNextCreateSession = true
         assertFalse(zeroRecreateEngine.deployWorkspace())
         assertFalse(zeroRecreateEngine.state.value.isComposing)
+        assertEquals(1, zeroRecreateBridge.releaseCount)
         zeroRecreateEngine.close()
+        assertEquals(1, zeroRecreateBridge.releaseCount)
         assertEquals(listOf(1L), zeroRecreateBridge.destroyedSessions)
+    }
+
+    @Test
+    fun deployWorkspaceExceptionSafetyAndReloadOverlapExclusivity() {
+        // 1) Throw inside bridge.deployWorkspace() still recreates session & keeps engine usable
+        val throwDeployBridge = FakeRimeNativeBridge()
+        val throwDeployEngine = createEngine(throwDeployBridge)
+        throwDeployBridge.throwOnNextDeploy = true
+        val deployErr = runCatching { throwDeployEngine.deployWorkspace() }.exceptionOrNull()
+        assertTrue("Expected IllegalStateException, got $deployErr", deployErr is IllegalStateException)
+        assertEquals(0, throwDeployBridge.releaseCount)
+        typeChars(throwDeployEngine, "nihao")
+        assertEquals(KeyProcessResult.CommitText("你好"), throwDeployEngine.selectCandidate(0))
+        throwDeployEngine.close()
+        assertEquals(listOf(1L, 2L), throwDeployBridge.destroyedSessions)
+        assertEquals(1, throwDeployBridge.releaseCount)
+
+        // 2) Throw inside post-deploy createSession() closes engine & releases runtime refcount
+        val throwCreateBridge = FakeRimeNativeBridge()
+        val throwCreateEngine = createEngine(throwCreateBridge)
+        throwCreateBridge.throwOnNextCreateSession = true
+        val createErr = runCatching { throwCreateEngine.deployWorkspace() }.exceptionOrNull()
+        assertTrue("Expected IllegalStateException, got $createErr", createErr is IllegalStateException)
+        assertEquals(1, throwCreateBridge.releaseCount)
+        assertEquals(listOf(1L), throwCreateBridge.destroyedSessions)
+        throwCreateEngine.close()
+        assertEquals(1, throwCreateBridge.releaseCount)
+
+        // 3) Throw inside post-deploy selectSchema() destroys the newly created session & releases runtime
+        val throwSchemaBridge = FakeRimeNativeBridge()
+        val throwSchemaEngine = createEngine(throwSchemaBridge)
+        throwSchemaBridge.throwOnNextSelectSchema = true
+        val schemaErr = runCatching { throwSchemaEngine.deployWorkspace() }.exceptionOrNull()
+        assertTrue("Expected IllegalStateException, got $schemaErr", schemaErr is IllegalStateException)
+        assertEquals(1, throwSchemaBridge.releaseCount)
+        assertEquals(listOf(1L, 2L), throwSchemaBridge.destroyedSessions)
+        throwSchemaEngine.close()
+        assertEquals(1, throwSchemaBridge.releaseCount)
+
+        // 4) Reload overlap: Engine #2 init(assetsUpdated=true) rejects deploy while Engine #1 stays alive
+        val sharedBridge = FakeRimeNativeBridge()
+        val overlapBridge = object : RimeNativeBridge by sharedBridge {
+            var activeCount: Int = 0
+            override fun acquireRuntime(paths: RimeWorkspacePaths, distributionVersion: String): Boolean {
+                val ok = sharedBridge.acquireRuntime(paths, distributionVersion)
+                if (ok) activeCount++
+                return ok
+            }
+
+            override fun releaseRuntime() {
+                if (activeCount > 0) activeCount--
+                sharedBridge.releaseRuntime()
+            }
+
+            override fun deployWorkspace(): Boolean {
+                if (activeCount != 1) return false
+                return sharedBridge.deployWorkspace()
+            }
+        }
+        val sharedPaths = testPaths(assetsUpdated = false, withStagingDefaultYaml = true)
+        val engine1 = RimeInputEngine(
+            bridge = overlapBridge,
+            paths = sharedPaths,
+            distributionVersion = "0.1.0",
+            runNative = { block -> block() }
+        )
+        assertEquals(1, overlapBridge.activeCount)
+        val overlapErr = runCatching {
+            RimeInputEngine(
+                bridge = overlapBridge,
+                paths = sharedPaths.copy(assetsUpdated = true),
+                distributionVersion = "0.1.0",
+                runNative = { block -> block() }
+            )
+        }.exceptionOrNull()
+        assertTrue("Expected deploy rejection during overlap, got $overlapErr", overlapErr is IllegalStateException)
+        assertEquals(1, overlapBridge.activeCount)
+        assertEquals(0, sharedBridge.deployCount)
+        // Engine #1 remains intact and fully functional
+        typeChars(engine1, "nihao")
+        assertEquals(KeyProcessResult.CommitText("你好"), engine1.selectCandidate(0))
+        engine1.close()
+        assertEquals(0, overlapBridge.activeCount)
     }
 }

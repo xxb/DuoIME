@@ -169,7 +169,10 @@ internal class RefCountedRimeBridge(
         }
     }
 
-    override fun deployWorkspace(): Boolean = synchronized(lock) { raw.nativeDeployWorkspace() }
+    override fun deployWorkspace(): Boolean = synchronized(lock) {
+        if (activeInstances != 1) return false
+        raw.nativeDeployWorkspace()
+    }
 
     override fun createSession(): Long = synchronized(lock) { raw.nativeCreateSession() }
 

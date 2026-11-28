@@ -220,6 +220,9 @@ public class RimeInputEngine internal constructor(
      * Triggers a synchronous Rime workspace re-deploy (for M2-2 schema reload / user import),
      * destroying the active native session prior to deploy and recreating it cleanly afterward so
      * no session handle remains bound to stale deployed tables.
+     *
+     * Exception-safe: if session recreation fails or throws, closes this engine and releases its
+     * runtime refcount so no open sessionless engine or leaked native handle remains.
      */
     public fun deployWorkspace(): Boolean = invokeNative {
         if (closed || sessionId == 0L) return@invokeNative false
@@ -228,16 +231,41 @@ public class RimeInputEngine internal constructor(
         sessionId = 0L
         runCatching { bridge.clearComposition(previousSession) }
         runCatching { bridge.destroySession(previousSession) }
-        val deployed = bridge.deployWorkspace()
-        val recreated = bridge.createSession()
-        sessionId = recreated
-        val schemaOk = recreated != 0L && applyLogicalSchemaLocked(logicalSchemaId)
-        publishSnapshotLocked()
-        deployed && schemaOk
+
+        var sessionRestored = false
+        try {
+            val (deployed, deployError) = invokeBridgeDeploySafely()
+            val recreated = bridge.createSession()
+            if (recreated == 0L) {
+                if (deployError != null) throw deployError
+                return@invokeNative false
+            }
+            sessionId = recreated
+            val schemaOk = applyLogicalSchemaLocked(logicalSchemaId)
+            publishSnapshotLocked()
+            sessionRestored = true
+            if (deployError != null) throw deployError
+            deployed && schemaOk
+        } finally {
+            if (!sessionRestored && !closed) {
+                closeLocked()
+            }
+        }
     }
 
     public override fun close(): Unit = invokeNative {
-        if (closed) return@invokeNative
+        closeLocked()
+    }
+
+    @Suppress("TooGenericExceptionCaught")
+    private fun invokeBridgeDeploySafely(): Pair<Boolean, Throwable?> = try {
+        bridge.deployWorkspace() to null
+    } catch (err: Throwable) {
+        false to err
+    }
+
+    private fun closeLocked() {
+        if (closed) return
         closed = true
         val sid = sessionId
         sessionId = 0L

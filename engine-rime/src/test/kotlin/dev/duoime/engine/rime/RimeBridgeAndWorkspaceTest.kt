@@ -21,6 +21,7 @@ class RimeBridgeAndWorkspaceTest {
     ) : RawRimeCalls {
         var initCount: Int = 0
         var finalizeCount: Int = 0
+        var deployCount: Int = 0
         var nextSessionId: Long = 1L
         val activeSessions = LinkedHashSet<Long>()
 
@@ -43,7 +44,10 @@ class RimeBridgeAndWorkspaceTest {
             finalizeCount++
         }
 
-        override fun nativeDeployWorkspace(): Boolean = true
+        override fun nativeDeployWorkspace(): Boolean {
+            deployCount++
+            return true
+        }
 
         override fun nativeCreateSession(): Long {
             val id = nextSessionId++
@@ -126,21 +130,32 @@ class RimeBridgeAndWorkspaceTest {
         assertEquals(1, raw.initCount)
         assertEquals(0, raw.finalizeCount)
         assertEquals(1, bridge.activeInstanceCount)
+        assertTrue("Sole active instance may deploy workspace", bridge.deployWorkspace())
+        assertEquals(1, raw.deployCount)
 
         // Simulate reloadEngine creating engine #2 BEFORE closing engine #1
         assertTrue(bridge.acquireRuntime(paths, "1.0"))
         assertEquals("Re-acquire on same workspace must not re-initialize", 1, raw.initCount)
         assertEquals(2, bridge.activeInstanceCount)
+        assertFalse(
+            "Concurrent overlap must reject deployWorkspace without invoking nativeDeployWorkspace",
+            bridge.deployWorkspace()
+        )
+        assertEquals(1, raw.deployCount)
 
         // Closing engine #1 must NOT call nativeFinalize while engine #2 is still active
         bridge.releaseRuntime()
         assertEquals(0, raw.finalizeCount)
         assertEquals(1, bridge.activeInstanceCount)
+        assertTrue("Sole remaining instance may deploy again", bridge.deployWorkspace())
+        assertEquals(2, raw.deployCount)
 
         // Closing engine #2 drops refcount to 0 and calls nativeFinalize exactly once
         bridge.releaseRuntime()
         assertEquals(1, raw.finalizeCount)
         assertEquals(0, bridge.activeInstanceCount)
+        assertFalse("Uninitialized bridge must reject deployWorkspace", bridge.deployWorkspace())
+        assertEquals(2, raw.deployCount)
 
         // Extra release is safely idempotent
         bridge.releaseRuntime()

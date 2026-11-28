@@ -58,6 +58,8 @@ class SessionHandleTable {
 
   void clear() noexcept { handles_.clear(); }
 
+  bool empty() const noexcept { return handles_.empty(); }
+
   size_t size() const noexcept { return handles_.size(); }
 
   void setNextHandleForTesting(int64_t next_handle) noexcept {

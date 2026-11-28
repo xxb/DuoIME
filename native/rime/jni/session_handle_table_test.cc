@@ -30,12 +30,15 @@ void testArm64TaggedPointerAndInvalidLookups() {
   constexpr uint64_t kArm64TaggedPtr = 0xb4000072a1c34000ULL;
 
   // Reject zero native IDs.
+  EXPECT_TRUE(table.empty());
   EXPECT_EQ(table.allocate(0), 0);
+  EXPECT_TRUE(table.empty());
   EXPECT_EQ(table.size(), static_cast<size_t>(0));
 
   // Map ARM64 Scudo tagged pointer (top byte 0xb4, negative as signed int64_t)
   // to an opaque positive handle without exposing raw pointer bits.
   const int64_t handle = table.allocate(kArm64TaggedPtr);
+  EXPECT_TRUE(!table.empty());
   EXPECT_EQ(handle, 1);
   EXPECT_TRUE(handle > 0);
   EXPECT_TRUE(static_cast<uint64_t>(handle) != kArm64TaggedPtr);
@@ -104,6 +107,7 @@ void testClearInvalidatesAllAndContinuesMonotonically() {
   const int64_t h2 = table.allocate(kPtr2);
   table.clear();
 
+  EXPECT_TRUE(table.empty());
   EXPECT_EQ(table.size(), static_cast<size_t>(0));
   EXPECT_EQ(table.resolve(h1), 0ULL);
   EXPECT_EQ(table.resolve(h2), 0ULL);

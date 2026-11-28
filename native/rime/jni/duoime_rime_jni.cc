@@ -388,7 +388,7 @@ Java_dev_duoime_engine_rime_JniRimeNativeBridge_nativeDeployWorkspace(
     jclass /*clazz*/) {
   try {
     std::lock_guard<std::mutex> lock(g_rime_mutex);
-    if (!g_initialized) {
+    if (!g_initialized || !g_session_handles.empty()) {
       return JNI_FALSE;
     }
     RimeApi* api = rime_get_api();
